@@ -64,6 +64,11 @@ jobs:
         working-directory: build
         run: Move-Item -Path .\${{ matrix.configuration }}\* -Destination .\
 
+      - name: Test Verbose
+        working-directory: build
+        run: |
+          ./coro_test_verbose${{ matrix.env.BIN_SUFFIX }}
+
       - name: Test
         working-directory: build
         run: |

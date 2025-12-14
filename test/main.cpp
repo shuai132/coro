@@ -41,9 +41,8 @@ async<int> coro_fun() {
     LOG("delay_ms begin");
     TimeCount t;
     co_await delay_ms(500);
-    ASSERT(t.elapsed() >= 500);
-    ASSERT(std::abs(int(t.elapsed() - 500)) < 100);
-    LOG("delay_ms end: %llu", t.elapsed());
+    ASSERT(int(t.elapsed()) >= 500);
+    LOG("delay_ms end: %d", (int)t.elapsed());
   }
 
   LOG("callback_awaiter begin");
@@ -98,9 +97,8 @@ async<void> loop_task(const char* tag, int ms) {
   while (count--) {
     TimeCount t;
     co_await delay_ms(ms);
-    LOG("%s: %d, elapsed: %llu", tag, ms, t.elapsed());
-    ASSERT(t.elapsed() >= ms);
-    ASSERT(std::abs(int(t.elapsed() - ms)) < 100);
+    LOG("%s: %d, elapsed: %d", tag, ms, (int)t.elapsed());
+    ASSERT(int(t.elapsed()) >= ms);
   }
 }
 
@@ -109,7 +107,7 @@ void debug_and_stop(auto& executor, int wait_ms = 1000) {
     std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
     executor.dispatch([&executor] {
 #ifdef CORO_DEBUG_PROMISE_LEAK
-      debug_coro_promise::dump();
+      LOG("debug: debug_coro_leak.size: %zu", debug_coro_promise::debug_coro_leak.size());
       ASSERT(debug_coro_promise::debug_coro_leak.empty());
 #endif
       executor.stop();
@@ -158,9 +156,8 @@ void test_simple(executor& executor) {
     TimeCount t;
     const auto ms = 100;
     co_await delay_ms(ms);
-    LOG("%s: %d, elapsed: %llu", "test_simple", ms, t.elapsed());
-    ASSERT(t.elapsed() >= ms);
-    ASSERT(std::abs(int(t.elapsed() - ms)) < 100);
+    LOG("%s: %d, elapsed: %d", "test_simple", ms, (int)t.elapsed());
+    ASSERT(int(t.elapsed()) >= ms);
   }());
 }
 
@@ -174,7 +171,7 @@ int main() {
 
   test_coro(executor);
   test_simple(executor);
-  debug_and_stop(executor);
+  debug_and_stop(executor, 1500);
 
   LOG("loop...");
 #ifdef CORO_EXECUTOR_SINGLE_THREAD

@@ -76,8 +76,9 @@ namespace coro {
 
 template <typename T>
 struct awaitable_promise_value {
-  void return_value(T&& val) noexcept {
-    value_.template emplace<T>(std::forward<T>(val));
+  template <typename R>
+  void return_value(R&& val) noexcept {
+    value_.template emplace<T>(std::forward<R>(val));
   }
 
   void unhandled_exception() noexcept {
