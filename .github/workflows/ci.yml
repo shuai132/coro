@@ -73,3 +73,8 @@ jobs:
         working-directory: build
         run: |
           ./coro_test${{ matrix.env.BIN_SUFFIX }}
+
+      - name: Test
+        working-directory: build
+        run: |
+          ./coro_test_mutex${{ matrix.env.BIN_SUFFIX }}

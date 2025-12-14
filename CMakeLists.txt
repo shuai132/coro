@@ -44,4 +44,8 @@ if (CORO_BUILD_TEST)
     set(TARGET_NAME ${PROJECT_NAME}_test_verbose)
     add_executable(${TARGET_NAME} ${SRCS})
     target_compile_definitions(${TARGET_NAME} PUBLIC -DCORO_DEBUG_LEAK_LOG=LOG -DCORO_DEBUG_LIFECYCLE=LOG)
+
+    # test mutex
+    set(TARGET_NAME ${PROJECT_NAME}_test_mutex)
+    add_executable(${TARGET_NAME} test/main_mutex.cpp)
 endif ()
