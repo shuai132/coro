@@ -1,7 +1,5 @@
 #pragma once
 
-#include <atomic>
-#include <mutex>
 #include <queue>
 
 #include "coro/coro.hpp"
@@ -12,7 +10,7 @@ struct mutex {
   mutex() : locked_(false) {}
 
   bool is_locked() const {
-    return locked_.load();
+    return locked_;
   }
 
   auto lock() {
@@ -20,26 +18,18 @@ struct mutex {
       mutex* m_;
 
       bool await_ready() noexcept {
-        // Try to acquire the lock atomically
-        bool expected = false;
-        return m_->locked_.compare_exchange_strong(expected, true);
+        // In a single-threaded environment, if the lock is free, acquire it atomically and return true to prevent suspension
+        if (!m_->locked_) {
+          m_->locked_ = true;
+          return true;  // Don't suspend, we have the lock
+        }
+        return false;  // Suspend, as the lock is already taken
       }
 
-      std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
-        std::unique_lock<std::mutex> lock(m_->internal_mutex_);
-        if (!m_->locked_.load()) {
-          // The lock is available, try to acquire it atomically
-          bool expected = false;
-          if (m_->locked_.compare_exchange_strong(expected, true)) {
-            // Successfully acquired the lock, continue execution
-            return h;
-          }
-        }
-        // Either the lock was already taken or we just failed to acquire it
-        // Add this coroutine to the waiting queue
+      void await_suspend(std::coroutine_handle<> h) {
+        // If we reach here, it means await_ready() returned false, so the lock is definitely held by another coroutine
         m_->waiting_queue_.push(h);
-        // Return noop_coroutine to suspend the current coroutine
-        return std::noop_coroutine();
+        // The coroutine will remain suspended until another coroutine calls unlock()
       }
 
       auto await_resume() {
@@ -52,25 +42,19 @@ struct mutex {
   }
 
   void unlock() {
-    std::unique_lock<std::mutex> lock(internal_mutex_);
-    // Mark the lock as free
-    locked_.store(false);
+    // mark the lock as free
+    locked_ = false;
 
     if (!waiting_queue_.empty()) {
       auto next_coro = waiting_queue_.front();
       waiting_queue_.pop();
-      // Mark the lock as taken by the next coroutine
-      locked_.store(true);
-      lock.unlock();       // Release internal lock before resuming
-      next_coro.resume();  // Resume the next coroutine waiting for the lock
-    } else {
-      lock.unlock();  // Just release the internal lock
+      locked_ = true;      // mark the lock as taken by the next coroutine
+      next_coro.resume();  // resume the next coroutine waiting for the lock
     }
   }
 
  private:
-  std::atomic<bool> locked_;
-  mutable std::mutex internal_mutex_;  // Internal mutex to protect the waiting queue
+  bool locked_;
   std::queue<std::coroutine_handle<>> waiting_queue_;
 
  public:
@@ -85,12 +69,12 @@ struct mutex {
       }
     }
 
-    // Move semantics - transfer ownership
+    // move semantics - transfer ownership
     lock_guard(lock_guard&& other) noexcept : mutex_(other.mutex_) {
       other.mutex_ = nullptr;
     }
 
-    // Disable copy
+    // disable copy
     lock_guard(const lock_guard&) = delete;
     lock_guard& operator=(const lock_guard&) = delete;
 

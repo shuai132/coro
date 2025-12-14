@@ -9,10 +9,6 @@
 #include "assert_def.h"
 #include "coro.hpp"
 
-/// config executor
-#define CORO_EXECUTOR_SINGLE_THREAD
-#define CORO_EXECUTOR_POLL
-
 using namespace coro;
 
 callback_awaiter<void> delay_ms(uint32_t ms) {
