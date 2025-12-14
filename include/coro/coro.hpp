@@ -7,6 +7,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "executor.hpp"
+
 /// options
 // #define CORO_DISABLE_EXCEPTION
 #ifndef CORO_DISABLE_EXCEPTION
@@ -60,16 +62,6 @@ struct awaitable_promise;
 
 template <typename T>
 struct callback_awaiter;
-}  // namespace coro
-
-/// executor
-namespace coro {
-struct executor {
-  virtual ~executor() = default;
-  virtual void dispatch(std::function<void()> fn) = 0;
-  virtual void post_delayed(std::function<void()> fn, const uint32_t delay) = 0;
-  virtual void stop() = 0;
-};
 }  // namespace coro
 
 namespace coro {
