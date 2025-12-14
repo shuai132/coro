@@ -10,8 +10,8 @@ class executor_poll : public executor_basic_task {
   ~executor_poll() override = default;
 
   void poll() {
-    if (!running_thread_id_.load(std::memory_order_acquire).has_value()) {
-      running_thread_id_.store(std::this_thread::get_id(), std::memory_order_release);
+    if (!running_thread_id_.load(std::memory_order_acquire)) {
+      running_thread_id_.store(std::hash<std::thread::id>{}(std::this_thread::get_id()), std::memory_order_release);
     }
 
     auto task_opt = get_next_task();

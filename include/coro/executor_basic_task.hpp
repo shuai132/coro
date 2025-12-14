@@ -29,7 +29,7 @@ class executor_basic_task : public coro::executor {
   std::mutex queue_mutex_;
   std::queue<std::function<void()>> task_queue_;
   std::priority_queue<DelayedTask, std::vector<DelayedTask>, DelayedTaskCompare> delayed_task_queue_;
-  std::atomic<std::optional<std::thread::id>> running_thread_id_;
+  std::atomic<size_t> running_thread_id_;
   std::atomic<bool> stop_{false};
 
  protected:
@@ -67,7 +67,7 @@ class executor_basic_task : public coro::executor {
   }
 
   void dispatch(std::function<void()> fn) override {
-    if (running_thread_id_.load(std::memory_order_acquire) == std::this_thread::get_id()) {
+    if (running_thread_id_.load(std::memory_order_acquire) == std::hash<std::thread::id>{}(std::this_thread::get_id())) {
       fn();
     } else {
       post(std::move(fn));

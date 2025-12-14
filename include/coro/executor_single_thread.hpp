@@ -24,7 +24,7 @@ class executor_single_thread : public executor_basic_task {
   };
 
   void run_loop() {
-    running_thread_id_.store(std::this_thread::get_id(), std::memory_order_release);
+    running_thread_id_.store(std::hash<std::thread::id>{}(std::this_thread::get_id()), std::memory_order_release);
     for (;;) {
       std::function<void()> task;
 
