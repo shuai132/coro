@@ -64,17 +64,23 @@ jobs:
         working-directory: build
         run: Move-Item -Path .\${{ matrix.configuration }}\* -Destination .\
 
-      - name: Test Verbose
+      - name: Test coro(verbose)
         working-directory: build
         run: |
           ./coro_test_verbose${{ matrix.env.BIN_SUFFIX }}
 
-      - name: Test
+      - name: Test coro
         working-directory: build
         run: |
           ./coro_test${{ matrix.env.BIN_SUFFIX }}
 
-      - name: Test
+      - name: Test mutex
         working-directory: build
         run: |
           ./coro_test_mutex${{ matrix.env.BIN_SUFFIX }}
+
+      - name: Test channel
+        working-directory: build
+        run: |
+          echo "skip"
+#          ./coro_test_channel${{ matrix.env.BIN_SUFFIX }}

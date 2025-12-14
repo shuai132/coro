@@ -48,4 +48,8 @@ if (CORO_BUILD_TEST)
     # test mutex
     set(TARGET_NAME ${PROJECT_NAME}_test_mutex)
     add_executable(${TARGET_NAME} test/main_mutex.cpp)
+
+    # test channel
+    set(TARGET_NAME ${PROJECT_NAME}_test_channel)
+    add_executable(${TARGET_NAME} test/main_channel.cpp)
 endif ()
