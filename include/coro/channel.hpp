@@ -1,7 +1,11 @@
 #pragma once
 
-#include <queue>
 #include <optional>
+#include <queue>
+
+#ifndef CORO_DISABLE_EXCEPTION
+#include <stdexcept>
+#endif
 
 #include "coro/coro.hpp"
 
@@ -21,34 +25,52 @@ struct channel {
       T value_;
 
       bool await_ready() const noexcept {
-        // Can send immediately only if there's buffer space
-        return ch_->capacity_ > 0 && ch_->buffer_.size() < ch_->capacity_;
+        if (ch_->closed_) {
+          return true;  // Will throw in await_resume
+        }
+
+        // Always suspend to ensure proper synchronization
+        // This allows await_suspend to handle all cases uniformly
+        return false;
       }
 
       void await_suspend(std::coroutine_handle<> h) {
         // Check if there's a waiting receiver for direct transfer
         if (!ch_->recv_queue_.empty()) {
-          // Get the waiting receiver
           auto recv_h = ch_->recv_queue_.front();
           ch_->recv_queue_.pop();
 
           // Store the value for the receiver
           ch_->pending_value_ = std::move(value_);
 
-          // Resume the receiver which will get the value
+          // Resume the receiver - it will get the value and complete
           recv_h.resume();
-          // The sender doesn't need to wait since operation is complete
-          // We can resume the sender immediately to continue execution
+          // Also resume the sender since the operation is complete
           h.resume();
           return;
         }
 
-        // No receiver available, wait in send queue
+        // Check if buffer has space
+        if (ch_->capacity_ > 0 && ch_->buffer_.size() < ch_->capacity_) {
+          // Put data in buffer and resume sender immediately
+          ch_->buffer_.push(std::move(value_));
+          h.resume();
+          return;
+        }
+
+        // No receiver available and buffer is full, wait in send queue
         ch_->send_queue_.push(std::make_pair(h, std::move(value_)));
       }
 
-      void await_resume() const noexcept {
-        // Send operation completed
+      void await_resume() {
+        if (ch_->closed_) {
+#ifndef CORO_DISABLE_EXCEPTION
+          throw std::runtime_error("Channel is closed");
+#else
+          std::terminate();
+#endif
+        }
+        // No additional work needed - all handling is done in await_suspend
       }
     };
 
@@ -60,21 +82,21 @@ struct channel {
       channel* ch_;
 
       bool await_ready() const noexcept {
-        // For simplicity in this implementation, always return false
-        // to avoid complex await_ready/await_suspend interaction
+        if (ch_->closed_ && ch_->buffer_.empty()) {
+          return true;  // Will handle in await_resume
+        }
+
+        // Check if buffer has data
+        if (!ch_->buffer_.empty()) {
+          return true;  // Can receive immediately from buffer
+        }
+
+        // Need to suspend to wait for sender or check waiting senders
         return false;
       }
 
       void await_suspend(std::coroutine_handle<> h) {
-        // Handle buffered value
-        if (!ch_->buffer_.empty()) {
-          ch_->pending_value_ = std::move(ch_->buffer_.front());
-          ch_->buffer_.pop();
-          h.resume();  // Resume immediately since value is available
-          return;
-        }
-
-        // Check if there's a waiting sender to pair with
+        // Check if there's a waiting sender for direct transfer
         if (!ch_->send_queue_.empty()) {
           auto [sender_h, value] = std::move(ch_->send_queue_.front());
           ch_->send_queue_.pop();
@@ -84,7 +106,7 @@ struct channel {
 
           // Resume the sender to complete its operation
           sender_h.resume();
-          // Also resume this receiver to continue execution after co_await
+          // Resume this receiver to get the value
           h.resume();
           return;
         }
@@ -94,10 +116,35 @@ struct channel {
       }
 
       T await_resume() {
-        // Retrieve and return the received value
-        T value = std::move(ch_->pending_value_.value());
-        ch_->pending_value_.reset();
-        return value;
+        if (ch_->closed_ && ch_->buffer_.empty() && !ch_->pending_value_.has_value()) {
+          throw std::runtime_error("Channel is closed and no data available");
+        }
+
+        // Check if we have a pending value from direct transfer
+        if (ch_->pending_value_.has_value()) {
+          T value = std::move(ch_->pending_value_.value());
+          ch_->pending_value_.reset();
+          return value;
+        }
+
+        // Check buffer
+        if (!ch_->buffer_.empty()) {
+          T value = std::move(ch_->buffer_.front());
+          ch_->buffer_.pop();
+
+          // After reading from buffer, check if there are waiting senders
+          if (!ch_->send_queue_.empty()) {
+            auto [sender_h, sender_value] = std::move(ch_->send_queue_.front());
+            ch_->send_queue_.pop();
+            ch_->buffer_.push(std::move(sender_value));
+            sender_h.resume();
+          }
+
+          return value;
+        }
+
+        // This should not happen in normal flow
+        throw std::runtime_error("No data available");
       }
     };
 
@@ -139,12 +186,12 @@ struct channel {
     return capacity_;
   }
 
-private:
+ private:
   size_t capacity_;
-  std::queue<T> buffer_;  // For buffered channels
+  std::queue<T> buffer_;                                          // For buffered channels
   std::queue<std::pair<std::coroutine_handle<>, T>> send_queue_;  // Waiting senders with values
-  std::queue<std::coroutine_handle<>> recv_queue_;  // Waiting receivers
-  std::optional<T> pending_value_;  // Temporary storage for value passing
+  std::queue<std::coroutine_handle<>> recv_queue_;                // Waiting receivers
+  std::optional<T> pending_value_;                                // Temporary storage for direct value passing
   bool closed_ = false;
 };
 

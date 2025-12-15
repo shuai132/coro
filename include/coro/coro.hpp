@@ -37,15 +37,15 @@ struct debug_coro_promise {
 
   void* operator new(std::size_t size) {
     void* ptr = std::malloc(size);
-    CORO_DEBUG_LEAK_LOG("new: %p, size: %zu", ptr, size);
     debug_coro_leak.insert(ptr);
+    CORO_DEBUG_LEAK_LOG("new: %p, size: %zu, num: %zu", ptr, size, debug_coro_leak.size());
     return ptr;
   }
 
   void operator delete(void* ptr, [[maybe_unused]] std::size_t size) {
-    CORO_DEBUG_LEAK_LOG("free: %p, size: %zu", ptr, size);
     debug_coro_leak.erase(ptr);
     std::free(ptr);
+    CORO_DEBUG_LEAK_LOG("free: %p, size: %zu, num: %zu", ptr, size, debug_coro_leak.size());
   }
 };
 #else
