@@ -74,8 +74,8 @@ class executor_basic_task : public coro::executor {
     }
   }
 
-  void post_delayed(std::function<void()> fn, const uint32_t delay) override {
-    auto execute_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay);
+  void post_delayed(std::function<void()> fn, const uint64_t delay_ns) override {
+    auto execute_at = std::chrono::steady_clock::now() + std::chrono::nanoseconds(delay_ns);
     {
       std::lock_guard<std::mutex> lock(queue_mutex_);
       delayed_task_queue_.push({execute_at, std::move(fn)});

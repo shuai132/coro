@@ -11,13 +11,7 @@
 
 using namespace coro;
 
-callback_awaiter<void> delay_ms(uint32_t ms) {
-  return callback_awaiter<void>([ms](auto executor, auto callback) {
-    executor->post_delayed(std::move(callback), ms);
-  });
-}
-
-async<void> mutex_test_task(coro::mutex& mtx, const char* name, int delay_duration) {
+async<void> mutex_test_task(coro::mutex& mtx, const char* name, int sleep_ms) {
   LOG("Task %s: attempting to acquire lock", name);
   {
     auto guard = co_await mtx.lock();
@@ -25,7 +19,7 @@ async<void> mutex_test_task(coro::mutex& mtx, const char* name, int delay_durati
 
     // Simulate some work holding the lock
     TimeCount t;
-    co_await delay_ms(delay_duration);
+    co_await sleep(std::chrono::milliseconds(sleep_ms));
     LOG("Task %s: finished work after %d ms", name, (int)t.elapsed());
 
     // Lock is released automatically when guard goes out of scope
@@ -43,7 +37,7 @@ async<void> mutex_test_sequential_tasks() {
   {
     auto guard = co_await mtx.lock();
     LOG("Task A: acquired lock");
-    co_await delay_ms(500);
+    co_await sleep(500ms);
     LOG("Task A: finished work");
   }
   LOG("Task A: released lock");
@@ -52,7 +46,7 @@ async<void> mutex_test_sequential_tasks() {
   {
     auto guard = co_await mtx.lock();
     LOG("Task B: acquired lock");
-    co_await delay_ms(300);
+    co_await sleep(300ms);
     LOG("Task B: finished work");
   }
   LOG("Task B: released lock");
@@ -61,7 +55,7 @@ async<void> mutex_test_sequential_tasks() {
   {
     auto guard = co_await mtx.lock();
     LOG("Task C: acquired lock");
-    co_await delay_ms(700);
+    co_await sleep(700ms);
     LOG("Task C: finished work");
   }
   LOG("Task C: released lock");
@@ -78,7 +72,7 @@ async<void> mutex_test_concurrent_tasks(executor& exec) {
   co_spawn(exec, mutex_test_task(mtx, "C", 700));
 
   // Wait a bit more to ensure all tasks complete
-  co_await delay_ms(2000);
+  co_await sleep(2000ms);
   LOG("All concurrent mutex test tasks should be complete");
 }
 
@@ -95,7 +89,7 @@ async<void> mutex_basic_test() {
     LOG("Mutex acquired: OK");
 
     // Do a small amount of work while holding the lock
-    co_await delay_ms(10);
+    co_await sleep(10ms);
     LOG("Work completed with lock held: OK");
 
     // The lock is automatically released when guard goes out of scope
@@ -116,7 +110,7 @@ async<void> mutex_race_condition_test(executor& exec, int& shared_counter) {
         auto guard = co_await mtx.lock();
         // Critical section
         int temp = shared_counter;
-        co_await delay_ms(1);  // Small delay to increase chance of race condition if not properly locked
+        co_await sleep(1ms);  // Small delay to increase chance of race condition if not properly locked
         shared_counter = temp + 1;
         // Lock is released automatically when guard goes out of scope
       }
@@ -129,7 +123,7 @@ async<void> mutex_race_condition_test(executor& exec, int& shared_counter) {
   co_spawn(exec, increment_task(5));
 
   // Wait for all tasks to complete
-  co_await delay_ms(1000);
+  co_await sleep(1000ms);
 
   LOG("Race condition test - final counter value: %d", shared_counter);
   ASSERT(shared_counter == 15);  // Should be exactly 15 (5+5+5) if mutex works correctly
@@ -165,7 +159,7 @@ async<void> run_all_tests(executor& exec) {
   co_spawn(exec, mutex_test_task(test_mtx, "3", 100));
 
   // Wait for concurrent tests to complete
-  co_await delay_ms(1000);
+  co_await sleep(1000ms);
 
   // Run race condition test
   int shared_counter = 0;  // Define here to ensure lifetime

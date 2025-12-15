@@ -17,12 +17,6 @@ uint64_t get_now_ms() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(epoch).count();
 }
 
-callback_awaiter<void> delay_ms(uint32_t ms) {
-  return callback_awaiter<void>([ms](auto executor, auto callback) {
-    executor->post_delayed(std::move(callback), ms);
-  });
-}
-
 // Test basic unbuffered channel
 async<void> test_unbuffered_channel(executor& exec) {
   LOG("Starting unbuffered channel test");
@@ -56,7 +50,7 @@ async<void> test_unbuffered_channel(executor& exec) {
   // Consumer coroutine that tracks completion
   auto tracked_consumer = [&]() -> async<void> {
     // Delay to ensure producer starts first and gets blocked
-    co_await delay_ms(50);
+    co_await sleep(50ms);
 
     // Verify producer is blocked before we start receiving
     ASSERT(producer_blocked);
@@ -84,7 +78,7 @@ async<void> test_unbuffered_channel(executor& exec) {
   co_spawn(exec, tracked_consumer());
 
   // Allow time for operations to complete
-  co_await delay_ms(100);
+  co_await sleep(100ms);
 
   // Verify timing: producer should have been unblocked by consumer
   ASSERT(producer_unblock_time - producer_block_start);
@@ -134,9 +128,9 @@ async<void> test_buffered_channel(executor& exec) {
 
   // Consumer coroutine that tracks completion
   auto tracked_consumer = [&]() -> async<void> {
-    LOG("Consumer: delay starting");
-    co_await delay_ms(100);  // Let producer fill the buffer and start blocking
-    LOG("Consumer: delay completed, starting receive operations");
+    LOG("Consumer: sleep starting");
+    co_await sleep(100ms);  // Let producer fill the buffer and start blocking
+    LOG("Consumer: sleep completed, starting receive operations");
 
     // Verify producer is indeed blocked before we start consuming
     ASSERT(producer_blocked);
@@ -170,7 +164,7 @@ async<void> test_buffered_channel(executor& exec) {
   co_spawn(exec, tracked_consumer());
 
   // Wait for operations to complete
-  co_await delay_ms(200);
+  co_await sleep(200ms);
 
   LOG("About to check completion flags - consumer: %s, producer: %s", consumer_completed ? "yes" : "no", producer_completed ? "yes" : "no");
 
@@ -205,11 +199,11 @@ async<void> test_channel_close(executor& exec) {
   co_spawn(exec, receiver());
 
   // Allow receiver to start waiting
-  co_await delay_ms(10);
+  co_await sleep(10ms);
   ch.close();
 
   // Allow some time for close to propagate
-  co_await delay_ms(50);
+  co_await sleep(50ms);
 
   // Verify that receiver has indeed completed
   ASSERT(receiver_completed);
@@ -281,7 +275,7 @@ async<void> test_ping_pong(executor& exec) {
   co_spawn(exec, server());
   co_spawn(exec, client());
 
-  co_await delay_ms(100);
+  co_await sleep(100ms);
 
   // Verify that both have completed
   ASSERT(server_completed);
@@ -307,7 +301,7 @@ async<void> test_multiple_producers_consumers(executor& exec) {
       bool ok = co_await ch.send(offset * 10 + i);
       ASSERT(ok);
       LOG("Producer %d sent: %d", offset, offset * 10 + i);
-      co_await delay_ms(5);  // Small delay between sends
+      co_await sleep(5ms);  // Small delay between sends
     }
     *completed = true;
     co_return;
@@ -334,7 +328,7 @@ async<void> test_multiple_producers_consumers(executor& exec) {
   co_spawn(exec, consumer(1, &consumer1_completed));
   co_spawn(exec, consumer(2, &consumer2_completed));
 
-  co_await delay_ms(150);
+  co_await sleep(150ms);
 
   // Verify that all coroutines have completed
   ASSERT(producer1_completed);

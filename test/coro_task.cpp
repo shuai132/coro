@@ -8,6 +8,7 @@
 #include "TimeCount.hpp"
 #include "assert_def.h"
 #include "coro/coro.hpp"
+#include "coro/time.hpp"
 
 /// config executor
 #define CORO_EXECUTOR_SINGLE_THREAD
@@ -21,7 +22,7 @@
 
 using namespace coro;
 
-callback_awaiter<void> delay_ms_use_thread(int ms) {
+callback_awaiter<void> sleep_ms_use_thread(int ms) {
   return callback_awaiter<void>([ms](auto callback) {
     std::thread([ms, callback = std::move(callback)] {
       std::this_thread::sleep_for(std::chrono::milliseconds(ms));
@@ -30,19 +31,13 @@ callback_awaiter<void> delay_ms_use_thread(int ms) {
   });
 }
 
-callback_awaiter<void> delay_ms(uint32_t ms) {
-  return callback_awaiter<void>([ms](auto executor, auto callback) {
-    executor->post_delayed(std::move(callback), ms);
-  });
-}
-
 async<int> coro_fun() {
   {
-    LOG("delay_ms begin");
+    LOG("sleep 500ms begin");
     TimeCount t;
-    co_await delay_ms(500);
+    co_await sleep(500ms);
     ASSERT(int(t.elapsed()) >= 500);
-    LOG("delay_ms end: %d", (int)t.elapsed());
+    LOG("sleep 500ms end: %d", (int)t.elapsed());
   }
 
   LOG("callback_awaiter begin");
@@ -96,7 +91,7 @@ async<void> loop_task(const char* tag, int ms) {
   int count = 3;
   while (count--) {
     TimeCount t;
-    co_await delay_ms(ms);
+    co_await sleep(std::chrono::milliseconds(ms));
     LOG("%s: %d, elapsed: %d", tag, ms, (int)t.elapsed());
     ASSERT(int(t.elapsed()) >= ms);
   }
@@ -155,7 +150,7 @@ void test_simple(executor& executor) {
   co_spawn(executor, []() -> async<void> {
     TimeCount t;
     const auto ms = 100;
-    co_await delay_ms(ms);
+    co_await sleep(std::chrono::milliseconds(ms));
     LOG("%s: %d, elapsed: %d", "test_simple", ms, (int)t.elapsed());
     ASSERT(int(t.elapsed()) >= ms);
   }());
