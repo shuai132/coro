@@ -11,7 +11,7 @@ on:
 jobs:
   build-and-test:
 
-    name: ${{ matrix.toolchain }}-${{ matrix.build_type }}${{ matrix.disable_exception && '-noexcept' || '' }}
+    name: ${{ matrix.toolchain }} ${{ matrix.build_type }} disable_exception:${{ matrix.disable_exception }} sanitize_address:${{ matrix.sanitize_address }} sanitize_thread:${{ matrix.sanitize_thread }}
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -29,8 +29,16 @@ jobs:
           - Release
 
         disable_exception:
-          - false
-          - true
+          - OFF
+          - ON
+
+        sanitize_address:
+          - OFF
+          - ON
+
+        sanitize_thread:
+          - OFF
+          - ON
 
         include:
           - toolchain: linux-gcc
@@ -54,16 +62,31 @@ jobs:
               BIN_SUFFIX: ".exe"
               CMAKE_OPTIONS: "-G \"MinGW Makefiles\""
 
+        exclude:
+          - sanitize_address: ON
+            sanitize_thread: ON
+
+          - toolchain: windows-msvc
+            sanitize_address: ON
+          - toolchain: windows-msvc
+            sanitize_thread: ON
+
+          - toolchain: windows-mingw
+            sanitize_address: ON
+          - toolchain: windows-mingw
+            sanitize_thread: ON
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure (${{ matrix.build_type }}${{ matrix.disable_exception && ' with CORO_DISABLE_EXCEPTION' || '' }})
+      - name: Configure ${{ matrix.build_type }} disable_exception:${{ matrix.disable_exception }} sanitize_address:${{ matrix.sanitize_address }} sanitize_thread:${{ matrix.sanitize_thread }}
         run: |
-          if [ "${{ matrix.disable_exception }}" = "true" ]; then
-            cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_CXX_FLAGS="-DCORO_DISABLE_EXCEPTION" ${{ matrix.env.CMAKE_OPTIONS }}
-          else
-            cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} ${{ matrix.env.CMAKE_OPTIONS }}
-          fi
+          cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -DCORO_DISABLE_EXCEPTION=${{ matrix.disable_exception }} \
+          -DCORO_ENABLE_SANITIZE_ADDRESS=${{ matrix.sanitize_address }} \
+          -DCORO_ENABLE_SANITIZE_THREAD=${{ matrix.sanitize_thread }} \
+          ${{ matrix.env.CMAKE_OPTIONS }}
         shell: bash
 
       - name: Build with ${{ matrix.compiler }}
@@ -75,22 +98,25 @@ jobs:
         run: Move-Item -Path .\${{ matrix.build_type }}\* -Destination .\
 
       - name: Test coro(verbose)
+        if: always()
         working-directory: build
         run: |
           ./coro_task_verbose${{ matrix.env.BIN_SUFFIX }}
 
       - name: Test coro
+        if: always()
         working-directory: build
         run: |
           ./coro_task${{ matrix.env.BIN_SUFFIX }}
 
       - name: Test mutex
+        if: always()
         working-directory: build
         run: |
           ./coro_mutex${{ matrix.env.BIN_SUFFIX }}
 
       - name: Test channel
+        if: always()
         working-directory: build
         run: |
-          echo "skip"
           ./coro_channel${{ matrix.env.BIN_SUFFIX }}
