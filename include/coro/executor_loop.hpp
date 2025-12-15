@@ -75,22 +75,18 @@ class executor_loop : public executor_basic_task {
     }
   }
 
-  void post(std::function<void()> f) override {
-    executor_basic_task::post(std::move(f));
+  void post_delayed_ns(std::function<void()> fn, const uint64_t delay_ns) override {
+    executor_basic_task::post_delayed_ns(std::move(fn), delay_ns);
     condition_.notify_one();
   }
 
-  void post_delayed(std::function<void()> fn, const uint64_t delay_ns) override {
-    auto execute_at = std::chrono::steady_clock::now() + std::chrono::nanoseconds(delay_ns);
-    {
-      std::lock_guard<std::mutex> lock(queue_mutex_);
-      delayed_task_queue_.push({execute_at, std::move(fn)});
-    }
+  void post(std::function<void()> fn) override {
+    executor_basic_task::post(std::move(fn));
     condition_.notify_one();
   }
 
   void stop() override {
-    stop_.store(true, std::memory_order_release);
+    executor_basic_task::stop();
     condition_.notify_one();
   }
 };

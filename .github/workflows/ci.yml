@@ -97,13 +97,13 @@ jobs:
         working-directory: build
         run: Move-Item -Path .\${{ matrix.build_type }}\* -Destination .\
 
-      - name: Test coro(verbose)
+      - name: Test task(verbose)
         if: always()
         working-directory: build
         run: |
           ./coro_task_verbose${{ matrix.env.BIN_SUFFIX }}
 
-      - name: Test coro
+      - name: Test task
         if: always()
         working-directory: build
         run: |

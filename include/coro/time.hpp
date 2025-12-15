@@ -13,7 +13,7 @@ template <typename Rep, typename Period>
 inline callback_awaiter<void> sleep(std::chrono::duration<Rep, Period> duration) {
   auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
   return callback_awaiter<void>([ns](auto executor, auto callback) {
-    executor->post_delayed(std::move(callback), static_cast<uint64_t>(ns));
+    executor->post_delayed_ns(std::move(callback), static_cast<uint64_t>(ns));
   });
 }
 

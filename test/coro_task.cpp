@@ -9,6 +9,7 @@
 #include "assert_def.h"
 #include "coro/coro.hpp"
 #include "coro/time.hpp"
+#include "utils.hpp"
 
 /// config executor
 #define CORO_EXECUTOR_LOOP
@@ -21,15 +22,6 @@
 #endif
 
 using namespace coro;
-
-callback_awaiter<void> sleep_ms_use_thread(int ms) {
-  return callback_awaiter<void>([ms](auto callback) {
-    std::thread([ms, callback = std::move(callback)] {
-      std::this_thread::sleep_for(std::chrono::milliseconds(ms));
-      callback();
-    }).detach();
-  });
-}
 
 async<int> coro_fun() {
   {
@@ -97,19 +89,6 @@ async<void> loop_task(const char* tag, int ms) {
   }
 }
 
-void debug_and_stop(auto& executor, int wait_ms = 1000) {
-  std::thread([&executor, wait_ms] {
-    std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
-    executor.dispatch([&executor] {
-#ifdef CORO_DEBUG_PROMISE_LEAK
-      LOG("debug: debug_coro_leak.size: %zu", debug_coro_promise::debug_coro_leak.size());
-      ASSERT(debug_coro_promise::debug_coro_leak.empty());
-#endif
-      executor.stop();
-    });
-  }).detach();
-}
-
 void test_coro(executor& executor) {
   co_spawn(executor, loop_task("A", 100));
   co_spawn(executor, loop_task("B", 200));
@@ -166,8 +145,7 @@ int main() {
 
   test_coro(executor);
   test_simple(executor);
-  debug_and_stop(executor, 1500);
-
+  auto debug = debug_and_stop(executor, 1500);
   LOG("loop...");
 #ifdef CORO_EXECUTOR_LOOP
   executor.run_loop();
@@ -177,5 +155,6 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 #endif
+  debug.join();
   return 0;
 }

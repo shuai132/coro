@@ -5,9 +5,9 @@
 // #define CORO_DEBUG_LEAK_LOG LOG
 // #define CORO_DEBUG_LIFECYCLE LOG
 
-#include "TimeCount.hpp"
 #include "assert_def.h"
 #include "coro.hpp"
+#include "utils.hpp"
 
 using namespace coro;
 
@@ -328,27 +328,14 @@ async<void> test_multiple_producers_consumers(executor& exec) {
   co_spawn(exec, consumer(1, &consumer1_completed));
   co_spawn(exec, consumer(2, &consumer2_completed));
 
-  co_await sleep(150ms);
+  co_await sleep(200ms);
 
-  // Verify that all coroutines have completed
+  LOG("Verify that all coroutines have completed");
   ASSERT(producer1_completed);
   ASSERT(producer2_completed);
   ASSERT(consumer1_completed);
   ASSERT(consumer2_completed);
   LOG("Multiple producers/consumers test completed");
-}
-
-void debug_and_stop(auto& executor, int wait_ms = 1000) {
-  std::thread([&executor, wait_ms] {
-    std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
-    executor.dispatch([&executor] {
-#ifdef CORO_DEBUG_PROMISE_LEAK
-      LOG("debug: debug_coro_leak.size: %zu", debug_coro_promise::debug_coro_leak.size());
-      ASSERT(debug_coro_promise::debug_coro_leak.empty());
-#endif
-      executor.stop();
-    });
-  }).detach();
 }
 
 async<void> run_all_tests(executor& exec) {
@@ -372,8 +359,9 @@ int main() {
   LOG("Channel test init");
   executor_loop executor;
   co_spawn(executor, run_all_tests(executor));
-  debug_and_stop(executor, 1500);
+  auto debug = debug_and_stop(executor, 1500);
   LOG("loop...");
   executor.run_loop();
+  debug.join();
   return 0;
 }

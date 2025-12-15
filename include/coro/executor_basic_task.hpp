@@ -29,7 +29,7 @@ class executor_basic_task : public coro::executor {
   std::mutex queue_mutex_;
   std::queue<std::function<void()>> task_queue_;
   std::priority_queue<DelayedTask, std::vector<DelayedTask>, DelayedTaskCompare> delayed_task_queue_;
-  std::atomic<size_t> running_thread_id_;
+  std::atomic<size_t> running_thread_id_{0};
   std::atomic<bool> stop_{false};
 
  protected:
@@ -40,9 +40,10 @@ class executor_basic_task : public coro::executor {
 
     std::lock_guard<std::mutex> lock(queue_mutex_);
     if (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at <= std::chrono::steady_clock::now()) {
-      auto task = std::move(const_cast<DelayedTask&>(delayed_task_queue_.top()).task);
+      // Create a mutable copy to safely extract the task
+      DelayedTask delayed_task = delayed_task_queue_.top();
       delayed_task_queue_.pop();
-      return task;
+      return std::move(delayed_task.task);
     } else if (!task_queue_.empty()) {
       auto task = std::move(task_queue_.front());
       task_queue_.pop();
@@ -74,17 +75,22 @@ class executor_basic_task : public coro::executor {
     }
   }
 
-  void post_delayed(std::function<void()> fn, const uint64_t delay_ns) override {
-    auto execute_at = std::chrono::steady_clock::now() + std::chrono::nanoseconds(delay_ns);
-    {
-      std::lock_guard<std::mutex> lock(queue_mutex_);
-      delayed_task_queue_.push({execute_at, std::move(fn)});
+  void post_delayed_ns(std::function<void()> fn, const uint64_t delay_ns) override {
+    if (stop_.load(std::memory_order_acquire)) {
+      return;
     }
+    std::unique_lock<std::mutex> lock(queue_mutex_);
+    auto execute_at = std::chrono::steady_clock::now() + std::chrono::nanoseconds(delay_ns);
+    delayed_task_queue_.push({execute_at, std::move(fn)});
+    lock.unlock();
   }
 
-  virtual void post(std::function<void()> f) {
+  virtual void post(std::function<void()> fn) {
+    if (stop_.load(std::memory_order_acquire)) {
+      return;
+    }
     std::lock_guard<std::mutex> lock(queue_mutex_);
-    task_queue_.emplace(std::move(f));
+    task_queue_.emplace(std::move(fn));
   }
 
   void stop() override {
