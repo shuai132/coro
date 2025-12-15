@@ -13,14 +13,14 @@
 #include "executor_poll.hpp"
 
 namespace coro {
-class executor_single_thread : public executor_basic_task {
+class executor_loop : public executor_basic_task {
  private:
   std::condition_variable condition_;
 
  public:
-  executor_single_thread() = default;
-  ~executor_single_thread() override {
-    executor_single_thread::stop();
+  executor_loop() = default;
+  ~executor_loop() override {
+    executor_loop::stop();
   };
 
   void run_loop() {

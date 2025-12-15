@@ -11,11 +11,11 @@
 #include "coro/time.hpp"
 
 /// config executor
-#define CORO_EXECUTOR_SINGLE_THREAD
+#define CORO_EXECUTOR_LOOP
 #define CORO_EXECUTOR_POLL
 
-#ifdef CORO_EXECUTOR_SINGLE_THREAD
-#include "coro/executor_single_thread.hpp"
+#ifdef CORO_EXECUTOR_LOOP
+#include "coro/executor_loop.hpp"
 #elif defined(CORO_EXECUTOR_POLL)
 #include "coro/executor_poll.hpp"
 #endif
@@ -158,8 +158,8 @@ void test_simple(executor& executor) {
 
 int main() {
   LOG("init");
-#ifdef CORO_EXECUTOR_SINGLE_THREAD
-  executor_single_thread executor;
+#ifdef CORO_EXECUTOR_LOOP
+  executor_loop executor;
 #elif defined(CORO_EXECUTOR_POLL)
   executor_poll executor;
 #endif
@@ -169,7 +169,7 @@ int main() {
   debug_and_stop(executor, 1500);
 
   LOG("loop...");
-#ifdef CORO_EXECUTOR_SINGLE_THREAD
+#ifdef CORO_EXECUTOR_LOOP
   executor.run_loop();
 #elif defined(CORO_EXECUTOR_POLL)
   while (!executor.stopped()) {

@@ -169,7 +169,7 @@ async<void> run_all_tests(executor& exec) {
 
 int main() {
   LOG("Mutex test init");
-  executor_single_thread executor;
+  executor_loop executor;
   co_spawn(executor, run_all_tests(executor));
   debug_and_stop(executor, 6000);
   LOG("loop...");
