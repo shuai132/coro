@@ -62,11 +62,15 @@ async<void> test_unbuffered_channel(executor& exec) {
     ASSERT(producer_blocked);
     ASSERT(!producer_completed);
 
-    int val = co_await ch.recv();
+    auto val_opt = co_await ch.recv();
+    ASSERT(val_opt.has_value());
+    int val = *val_opt;
     LOG("Consumer: received %d", val);
     ASSERT(val == 42);
 
-    val = co_await ch.recv();
+    val_opt = co_await ch.recv();
+    ASSERT(val_opt.has_value());
+    val = *val_opt;
     LOG("Consumer: received %d", val);
     ASSERT(val == 100);
 
@@ -138,15 +142,21 @@ async<void> test_buffered_channel(executor& exec) {
     ASSERT(producer_blocked);
     ASSERT(!producer_completed);  // Producer should still be blocked
 
-    int val = co_await ch.recv();
+    auto val_opt = co_await ch.recv();
+    ASSERT(val_opt.has_value());
+    int val = *val_opt;
     LOG("Consumer: received %d", val);
     ASSERT(val == 1);
 
-    val = co_await ch.recv();
+    val_opt = co_await ch.recv();
+    ASSERT(val_opt.has_value());
+    val = *val_opt;
     LOG("Consumer: received %d", val);
     ASSERT(val == 2);
 
-    val = co_await ch.recv();
+    val_opt = co_await ch.recv();
+    ASSERT(val_opt.has_value());
+    val = *val_opt;
     LOG("Consumer: received %d", val);
     ASSERT(val == 3);
 
@@ -182,12 +192,13 @@ async<void> test_channel_close(executor& exec) {
 
   bool receiver_completed = false;
   auto receiver = [&ch, &receiver_completed]() -> async<void> {
-    try {
-      int val = co_await ch.recv();
-      LOG("Received value: %d", val);
-    } catch (...) {
-      LOG("Receiver caught exception (channel closed)");
+    auto val_opt = co_await ch.recv();
+    if (val_opt.has_value()) {
+      LOG("Received value: %d", *val_opt);
+    } else {
+      LOG("Receiver got nullopt (channel closed)");
     }
+    ASSERT(!val_opt.has_value());
     receiver_completed = true;
   };
 
@@ -217,7 +228,14 @@ async<void> test_ping_pong(executor& exec) {
 
   auto server = [&ping_ch, &pong_ch, &server_completed]() -> async<void> {
     while (true) {
-      int val = co_await ping_ch.recv();
+      auto val_opt = co_await ping_ch.recv();
+      if (!val_opt.has_value()) {
+        LOG("Server: channel closed");
+        server_completed = true;
+        co_return;
+      }
+
+      int val = *val_opt;
       LOG("Server received ping: %d", val);
 
       if (val < 0) {
@@ -226,26 +244,34 @@ async<void> test_ping_pong(executor& exec) {
         co_return;
       }
 
-      co_await pong_ch.send(val + 1);
+      bool ok = co_await pong_ch.send(val + 1);
+      ASSERT(ok);
       LOG("Server sent pong: %d", val + 1);
     }
   };
 
   auto client = [&ping_ch, &pong_ch, &client_completed]() -> async<void> {
-    co_await ping_ch.send(1);
+    bool ok = co_await ping_ch.send(1);
+    ASSERT(ok);
 
-    int response = co_await pong_ch.recv();
+    auto response_opt = co_await pong_ch.recv();
+    ASSERT(response_opt.has_value());
+    int response = *response_opt;
     LOG("Client received pong: %d", response);
     ASSERT(response == 2);
 
-    co_await ping_ch.send(response);
+    ok = co_await ping_ch.send(response);
+    ASSERT(ok);
 
-    response = co_await pong_ch.recv();
+    response_opt = co_await pong_ch.recv();
+    ASSERT(response_opt.has_value());
+    response = *response_opt;
     LOG("Client received pong: %d", response);
     ASSERT(response == 3);
 
     // Send negative number to terminate server
-    co_await ping_ch.send(-1);
+    ok = co_await ping_ch.send(-1);
+    ASSERT(ok);
     LOG("Client sent termination signal");
 
     client_completed = true;
@@ -278,7 +304,8 @@ async<void> test_multiple_producers_consumers(executor& exec) {
   // Producer that sends values 0-4
   auto producer = [&ch](int offset, bool* completed) -> async<void> {
     for (int i = 0; i < 5; ++i) {
-      co_await ch.send(offset * 10 + i);
+      bool ok = co_await ch.send(offset * 10 + i);
+      ASSERT(ok);
       LOG("Producer %d sent: %d", offset, offset * 10 + i);
       co_await delay_ms(5);  // Small delay between sends
     }
@@ -289,7 +316,9 @@ async<void> test_multiple_producers_consumers(executor& exec) {
   // Consumer that receives 5 values
   auto consumer = [&ch](int id, bool* completed) -> async<void> {
     for (int i = 0; i < 5; ++i) {
-      int val = co_await ch.recv();
+      auto val_opt = co_await ch.recv();
+      ASSERT(val_opt.has_value());
+      int val = *val_opt;
       LOG("Consumer %d received: %d", id, val);
 
       // Add some basic validation - values should be in expected range
@@ -349,7 +378,7 @@ int main() {
   LOG("Channel test init");
   executor_single_thread executor;
   co_spawn(executor, run_all_tests(executor));
-  debug_and_stop(executor, 1000);
+  debug_and_stop(executor, 1500);
   LOG("loop...");
   executor.run_loop();
   return 0;

@@ -17,7 +17,7 @@ callback_awaiter<void> delay_ms(uint32_t ms) {
   });
 }
 
-async<void> mutex_test_task(executor& exec, coro::mutex& mtx, const char* name, int delay_duration) {
+async<void> mutex_test_task(coro::mutex& mtx, const char* name, int delay_duration) {
   LOG("Task %s: attempting to acquire lock", name);
   {
     auto guard = co_await mtx.lock();
@@ -33,7 +33,7 @@ async<void> mutex_test_task(executor& exec, coro::mutex& mtx, const char* name, 
   LOG("Task %s: released lock", name);
 }
 
-async<void> mutex_test_sequential_tasks(executor& exec) {
+async<void> mutex_test_sequential_tasks() {
   coro::mutex mtx;
 
   // Test with sequential acquisition of the lock
@@ -73,9 +73,9 @@ async<void> mutex_test_concurrent_tasks(executor& exec) {
   coro::mutex mtx;
 
   // Launch multiple tasks that compete for the same mutex
-  co_spawn(exec, mutex_test_task(exec, mtx, "A", 500));
-  co_spawn(exec, mutex_test_task(exec, mtx, "B", 300));
-  co_spawn(exec, mutex_test_task(exec, mtx, "C", 700));
+  co_spawn(exec, mutex_test_task(mtx, "A", 500));
+  co_spawn(exec, mutex_test_task(mtx, "B", 300));
+  co_spawn(exec, mutex_test_task(mtx, "C", 700));
 
   // Wait a bit more to ensure all tasks complete
   co_await delay_ms(2000);
@@ -155,14 +155,14 @@ async<void> run_all_tests(executor& exec) {
   LOG("Basic test completed");
 
   // Run sequential test
-  co_await mutex_test_sequential_tasks(exec);
+  co_await mutex_test_sequential_tasks();
   LOG("Sequential test completed");
 
   // Better concurrent test
   coro::mutex test_mtx;
-  co_spawn(exec, mutex_test_task(exec, test_mtx, "1", 300));
-  co_spawn(exec, mutex_test_task(exec, test_mtx, "2", 200));
-  co_spawn(exec, mutex_test_task(exec, test_mtx, "3", 100));
+  co_spawn(exec, mutex_test_task(test_mtx, "1", 300));
+  co_spawn(exec, mutex_test_task(test_mtx, "2", 200));
+  co_spawn(exec, mutex_test_task(test_mtx, "3", 100));
 
   // Wait for concurrent tests to complete
   co_await delay_ms(1000);

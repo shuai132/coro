@@ -23,6 +23,7 @@ endif ()
 if (CORO_BUILD_TEST)
     option(CORO_ENABLE_SANITIZE_ADDRESS "" OFF)
     option(CORO_ENABLE_SANITIZE_THREAD "" OFF)
+    option(CORO_DISABLE_EXCEPTION "" OFF)
 
     if (CORO_ENABLE_SANITIZE_ADDRESS)
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
@@ -32,24 +33,37 @@ if (CORO_BUILD_TEST)
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
     endif ()
+    if (CORO_DISABLE_EXCEPTION)
+        if (MSVC)
+            # MSVC
+            add_compile_options(/EHs-c-)
+            add_definitions(-D_HAS_EXCEPTIONS=0)
+        else ()
+            # GCC/Clang
+            add_compile_options(-fno-exceptions)
+        endif ()
+        add_definitions(-DCORO_DISABLE_EXCEPTION)
+    endif ()
 
-    file(GLOB SRCS test/main.cpp)
+    include_directories(test/detail)
+
+    file(GLOB SRCS test/coro_task.cpp)
     link_libraries(${PROJECT_NAME})
 
-    # test
-    set(TARGET_NAME ${PROJECT_NAME}_test)
+    # test task
+    set(TARGET_NAME ${PROJECT_NAME}_task)
     add_executable(${TARGET_NAME} ${SRCS})
 
-    # test verbose
-    set(TARGET_NAME ${PROJECT_NAME}_test_verbose)
+    # test task verbose
+    set(TARGET_NAME ${PROJECT_NAME}_task_verbose)
     add_executable(${TARGET_NAME} ${SRCS})
     target_compile_definitions(${TARGET_NAME} PUBLIC -DCORO_DEBUG_LEAK_LOG=LOG -DCORO_DEBUG_LIFECYCLE=LOG)
 
     # test mutex
-    set(TARGET_NAME ${PROJECT_NAME}_test_mutex)
-    add_executable(${TARGET_NAME} test/main_mutex.cpp)
+    set(TARGET_NAME ${PROJECT_NAME}_mutex)
+    add_executable(${TARGET_NAME} test/coro_mutex.cpp)
 
     # test channel
-    set(TARGET_NAME ${PROJECT_NAME}_test_channel)
-    add_executable(${TARGET_NAME} test/main_channel.cpp)
+    set(TARGET_NAME ${PROJECT_NAME}_channel)
+    add_executable(${TARGET_NAME} test/coro_channel.cpp)
 endif ()

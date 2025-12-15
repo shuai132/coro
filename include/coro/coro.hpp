@@ -6,16 +6,12 @@
 #include <optional>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "executor.hpp"
 
 /// options
 // #define CORO_DISABLE_EXCEPTION
-#ifndef CORO_DISABLE_EXCEPTION
-#include <variant>
-#else
-#include <optional>
-#endif
 
 #ifndef CORO_DEBUG_LEAK_LOG
 #define CORO_DEBUG_LEAK_LOG(...) (void)(0)
@@ -70,7 +66,11 @@ template <typename T>
 struct awaitable_promise_value {
   template <typename R>
   void return_value(R&& val) noexcept {
+#ifndef CORO_DISABLE_EXCEPTION
     value_.template emplace<T>(std::forward<R>(val));
+#else
+    value_.emplace(std::forward<R>(val));
+#endif
   }
 
   void unhandled_exception() noexcept {
@@ -237,7 +237,7 @@ struct awaitable {
 
   template <typename Function>
   auto detach_with_callback(auto& executor, Function completion_handler, std::function<void(std::exception_ptr)> exception_handler = nullptr) {
-    auto launched_coro = [](awaitable<T> lazy, auto completion_handler, auto exception_handler) mutable -> awaitable<void> {
+    auto launched_coro = [](awaitable<T> lazy, auto completion_handler, [[maybe_unused]] auto exception_handler) mutable -> awaitable<void> {
 #ifndef CORO_DISABLE_EXCEPTION
       try {
 #endif

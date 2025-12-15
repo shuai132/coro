@@ -3,10 +3,6 @@
 #include <optional>
 #include <queue>
 
-#ifndef CORO_DISABLE_EXCEPTION
-#include <stdexcept>
-#endif
-
 #include "coro/coro.hpp"
 
 namespace coro {
@@ -26,7 +22,7 @@ struct channel {
 
       bool await_ready() const noexcept {
         if (ch_->closed_) {
-          return true;  // Will throw in await_resume
+          return true;  // Will return false in await_resume
         }
 
         // Always suspend to ensure proper synchronization
@@ -62,15 +58,12 @@ struct channel {
         ch_->send_queue_.push(std::make_pair(h, std::move(value_)));
       }
 
-      void await_resume() {
+      bool await_resume() {
         if (ch_->closed_) {
-#ifndef CORO_DISABLE_EXCEPTION
-          throw std::runtime_error("Channel is closed");
-#else
-          std::terminate();
-#endif
+          return false;  // Send failed, channel is closed
         }
-        // No additional work needed - all handling is done in await_suspend
+        // Send succeeded
+        return true;
       }
     };
 
@@ -83,7 +76,7 @@ struct channel {
 
       bool await_ready() const noexcept {
         if (ch_->closed_ && ch_->buffer_.empty()) {
-          return true;  // Will handle in await_resume
+          return true;  // Will return nullopt in await_resume
         }
 
         // Check if buffer has data
@@ -115,16 +108,16 @@ struct channel {
         ch_->recv_queue_.push(h);
       }
 
-      T await_resume() {
+      std::optional<T> await_resume() {
         if (ch_->closed_ && ch_->buffer_.empty() && !ch_->pending_value_.has_value()) {
-          throw std::runtime_error("Channel is closed and no data available");
+          return std::nullopt;  // Channel is closed and no data available
         }
 
         // Check if we have a pending value from direct transfer
         if (ch_->pending_value_.has_value()) {
           T value = std::move(ch_->pending_value_.value());
           ch_->pending_value_.reset();
-          return value;
+          return std::optional<T>(std::move(value));
         }
 
         // Check buffer
@@ -140,11 +133,11 @@ struct channel {
             sender_h.resume();
           }
 
-          return value;
+          return std::optional<T>(std::move(value));
         }
 
         // This should not happen in normal flow
-        throw std::runtime_error("No data available");
+        return std::nullopt;
       }
     };
 

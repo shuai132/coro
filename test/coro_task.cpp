@@ -68,7 +68,7 @@ async<int> coro_task_int() {
   co_return 1;
 }
 
-async<int> coro_task_exception(bool rethrow = false) {
+async<int> coro_task_exception([[maybe_unused]] bool rethrow = false) {
 #ifndef CORO_DISABLE_EXCEPTION
   bool flag = false;
   try {

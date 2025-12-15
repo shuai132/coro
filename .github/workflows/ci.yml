@@ -11,7 +11,7 @@ on:
 jobs:
   build-and-test:
 
-    name: ${{ matrix.toolchain }}-${{ matrix.configuration }}
+    name: ${{ matrix.toolchain }}-${{ matrix.build_type }}${{ matrix.disable_exception && '-noexcept' || '' }}
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -24,9 +24,13 @@ jobs:
           - windows-msvc
           - windows-mingw
 
-        configuration:
+        build_type:
           - Debug
           - Release
+
+        disable_exception:
+          - false
+          - true
 
         include:
           - toolchain: linux-gcc
@@ -53,34 +57,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure (${{ matrix.configuration }})
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} ${{ matrix.env.CMAKE_OPTIONS }}
+      - name: Configure (${{ matrix.build_type }}${{ matrix.disable_exception && ' with CORO_DISABLE_EXCEPTION' || '' }})
+        run: |
+          if [ "${{ matrix.disable_exception }}" = "true" ]; then
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_CXX_FLAGS="-DCORO_DISABLE_EXCEPTION" ${{ matrix.env.CMAKE_OPTIONS }}
+          else
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} ${{ matrix.env.CMAKE_OPTIONS }}
+          fi
+        shell: bash
 
       - name: Build with ${{ matrix.compiler }}
-        run: cmake --build build --config ${{ matrix.configuration }} -j
+        run: cmake --build build --config ${{ matrix.build_type }} -j
 
       - name: Windows-MSVC Compatible
         if: matrix.os == 'windows-latest' && matrix.compiler == 'msvc'
         working-directory: build
-        run: Move-Item -Path .\${{ matrix.configuration }}\* -Destination .\
+        run: Move-Item -Path .\${{ matrix.build_type }}\* -Destination .\
 
       - name: Test coro(verbose)
         working-directory: build
         run: |
-          ./coro_test_verbose${{ matrix.env.BIN_SUFFIX }}
+          ./coro_task_verbose${{ matrix.env.BIN_SUFFIX }}
 
       - name: Test coro
         working-directory: build
         run: |
-          ./coro_test${{ matrix.env.BIN_SUFFIX }}
+          ./coro_task${{ matrix.env.BIN_SUFFIX }}
 
       - name: Test mutex
         working-directory: build
         run: |
-          ./coro_test_mutex${{ matrix.env.BIN_SUFFIX }}
+          ./coro_mutex${{ matrix.env.BIN_SUFFIX }}
 
       - name: Test channel
         working-directory: build
         run: |
           echo "skip"
-#          ./coro_test_channel${{ matrix.env.BIN_SUFFIX }}
+          ./coro_channel${{ matrix.env.BIN_SUFFIX }}
