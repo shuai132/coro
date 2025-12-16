@@ -167,10 +167,10 @@ async<void> run_all_tests(executor& exec) {
 int main() {
   LOG("Mutex test init");
   executor_loop executor;
-  co_spawn(executor, run_all_tests(executor));
-  auto debug = debug_and_stop(executor, 2000);
+  run_all_tests(executor).detach_with_callback(executor, [&] {
+    executor.stop();
+  });
   LOG("loop...");
   executor.run_loop();
-  debug.join();
   return 0;
 }
