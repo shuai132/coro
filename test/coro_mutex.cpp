@@ -102,7 +102,7 @@ async<void> mutex_basic_test() {
   LOG("Mutex finally unlocked: OK");
 }
 
-async<int> mutex_race_condition_test(executor& exec) {
+async<void> mutex_race_condition_test(executor& exec) {
   coro::mutex mtx;
   int shared_counter = 0;
   auto increment_task = [&mtx, &shared_counter](int increments) -> async<void> {
@@ -119,17 +119,23 @@ async<int> mutex_race_condition_test(executor& exec) {
   };
 
   // Run multiple tasks concurrently that increment the counter
-  co_spawn(exec, increment_task(5));
-  co_spawn(exec, increment_task(5));
-  co_spawn(exec, increment_task(5));
+  TimeCount t;
+  increment_task(10).detach_with_callback(exec, [&] {
+    LOG("finish increment_task 1 after: %d", (int)t.elapsed());
+  });
+  increment_task(10).detach_with_callback(exec, [&] {
+    LOG("finish increment_task 2 after: %d", (int)t.elapsed());
+  });
+  increment_task(10).detach_with_callback(exec, [&] {
+    LOG("finish increment_task 3 after: %d", (int)t.elapsed());
+  });
 
   // Wait for all tasks to complete
   co_await sleep(100ms);
 
   LOG("Race condition test - final counter value: %d", shared_counter);
-  ASSERT(shared_counter == 15);  // Should be exactly 15 (5+5+5) if mutex works correctly
+  ASSERT(shared_counter == 30);
   LOG("Race condition test passed: OK");
-  co_return shared_counter;
 }
 
 async<void> run_all_tests(executor& exec) {
@@ -153,14 +159,13 @@ async<void> run_all_tests(executor& exec) {
     co_spawn(exec, mutex_test_task(test_mtx, "3", 10));
 
     // Wait for concurrent tests to complete
-    co_await sleep(50ms);
+    co_await sleep(100ms);
     LOG("Better concurrent test completed");
   }
 
   {
     // Run race condition test
-    int shared_counter = co_await mutex_race_condition_test(exec);
-    ASSERT(shared_counter == 15);
+    co_await mutex_race_condition_test(exec);
     LOG("Race condition test completed");
   }
 

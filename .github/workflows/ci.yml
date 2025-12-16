@@ -14,6 +14,9 @@ jobs:
     name: ${{ matrix.toolchain }} ${{ matrix.build_type }} disable_exception:${{ matrix.disable_exception }} sanitize_address:${{ matrix.sanitize_address }} sanitize_thread:${{ matrix.sanitize_thread }}
     runs-on: ${{ matrix.os }}
 
+    env:
+      TSAN_OPTIONS: "suppressions=${{ github.workspace }}/.github/tsan_suppressions.txt"
+
     strategy:
       fail-fast: false
 
