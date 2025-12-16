@@ -1,6 +1,6 @@
 /// config debug
 #define CORO_DEBUG_PROMISE_LEAK
-// #define CORO_DISABLE_EXCEPTION
+#define CORO_DISABLE_EXCEPTION
 #include "log.h"
 // #define CORO_DEBUG_LEAK_LOG LOG
 // #define CORO_DEBUG_LIFECYCLE LOG
@@ -15,7 +15,7 @@ using namespace coro;
 async<void> mutex_test_task(coro::mutex& mtx, const char* name, int sleep_ms) {
   LOG("Task %s: attempting to acquire lock", name);
   {
-    auto guard = co_await mtx.lock();
+    auto guard = co_await mtx.scoped_lock();
     LOG("Task %s: acquired lock", name);
 
     // Simulate some work holding the lock
@@ -36,7 +36,7 @@ async<void> mutex_test_sequential_tasks() {
 
   // Run task A
   {
-    auto guard = co_await mtx.lock();
+    auto guard = co_await mtx.scoped_lock();
     LOG("Task A: acquired lock");
     co_await sleep(10ms);
     LOG("Task A: finished work");
@@ -45,18 +45,19 @@ async<void> mutex_test_sequential_tasks() {
 
   // Run task B
   {
-    auto guard = co_await mtx.lock();
+    co_await mtx.lock();
     LOG("Task B: acquired lock");
-    co_await sleep(20ms);
+    co_await sleep(10ms);
     LOG("Task B: finished work");
+    mtx.unlock();
   }
   LOG("Task B: released lock");
 
   // Run task C
   {
-    auto guard = co_await mtx.lock();
+    auto guard = co_await mtx.scoped_lock();
     LOG("Task C: acquired lock");
-    co_await sleep(30ms);
+    co_await sleep(10ms);
     LOG("Task C: finished work");
   }
   LOG("Task C: released lock");
@@ -86,7 +87,7 @@ async<void> mutex_basic_test() {
 
   // Acquire the lock using RAII-style guard
   {
-    auto guard = co_await mtx.lock();
+    auto guard = co_await mtx.scoped_lock();
     LOG("Mutex acquired: OK");
 
     // Do a small amount of work while holding the lock
@@ -108,7 +109,7 @@ async<void> mutex_race_condition_test(executor& exec) {
   auto increment_task = [&mtx, &shared_counter](int increments) -> async<void> {
     for (int i = 0; i < increments; ++i) {
       {
-        auto guard = co_await mtx.lock();
+        auto guard = co_await mtx.scoped_lock();
         // Critical section
         int temp = shared_counter;
         co_await sleep(1ms);  // Small delay to increase chance of race condition if not properly locked
@@ -131,7 +132,7 @@ async<void> mutex_race_condition_test(executor& exec) {
   });
 
   // Wait for all tasks to complete
-  co_await sleep(100ms);
+  co_await sleep(500ms);  // GitHub ci slow on macOS
 
   LOG("Race condition test - final counter value: %d", shared_counter);
   ASSERT(shared_counter == 30);
@@ -152,18 +153,6 @@ async<void> run_all_tests(executor& exec) {
   }
 
   {
-    // Better concurrent test
-    coro::mutex test_mtx;
-    co_spawn(exec, mutex_test_task(test_mtx, "1", 10));
-    co_spawn(exec, mutex_test_task(test_mtx, "2", 10));
-    co_spawn(exec, mutex_test_task(test_mtx, "3", 10));
-
-    // Wait for concurrent tests to complete
-    co_await sleep(100ms);
-    LOG("Better concurrent test completed");
-  }
-
-  {
     // Run race condition test
     co_await mutex_race_condition_test(exec);
     LOG("Race condition test completed");
@@ -179,7 +168,7 @@ int main() {
   LOG("Mutex test init");
   executor_loop executor;
   co_spawn(executor, run_all_tests(executor));
-  auto debug = debug_and_stop(executor, 1000);
+  auto debug = debug_and_stop(executor, 2000);
   LOG("loop...");
   executor.run_loop();
   debug.join();

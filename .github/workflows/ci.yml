@@ -79,6 +79,11 @@ jobs:
           - toolchain: windows-mingw
             sanitize_thread: ON
 
+          - toolchain: macos-clang
+            sanitize_address: ON
+          - toolchain: macos-clang
+            sanitize_thread: ON
+
     steps:
       - uses: actions/checkout@v4
 
