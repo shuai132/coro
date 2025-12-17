@@ -128,3 +128,9 @@ jobs:
         working-directory: build
         run: |
           ./coro_channel${{ matrix.env.BIN_SUFFIX }}
+
+      - name: Test when
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_when${{ matrix.env.BIN_SUFFIX }}

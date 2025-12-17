@@ -1,5 +1,7 @@
 /// config debug
 #define CORO_DEBUG_PROMISE_LEAK
+// #define CORO_DISABLE_EXCEPTION
+
 #include "TimeCount.hpp"
 #include "assert_def.h"
 #include "coro.hpp"
@@ -166,6 +168,234 @@ async<void> test_when_any_mixed_types() {
   LOG("when_any mixed types test: PASSED");
 }
 
+#ifndef CORO_DISABLE_EXCEPTION
+
+// Exception test tasks
+async<int> delayed_value_task_with_exception(int value, int delay_ms, bool should_throw) {
+  LOG("Task %d: starting, will complete after %d ms, throw=%d", value, delay_ms, should_throw);
+  co_await sleep(std::chrono::milliseconds(delay_ms));
+  if (should_throw) {
+    LOG("Task %d: throwing exception", value);
+    throw std::runtime_error("Task " + std::to_string(value) + " failed");
+  }
+  LOG("Task %d: completed", value);
+  co_return value;
+}
+
+async<void> delayed_void_task_with_exception(const char* name, int delay_ms, bool should_throw) {
+  LOG("Task %s: starting, will complete after %d ms, throw=%d", name, delay_ms, should_throw);
+  co_await sleep(std::chrono::milliseconds(delay_ms));
+  if (should_throw) {
+    LOG("Task %s: throwing exception", name);
+    throw std::runtime_error(std::string("Task ") + name + " failed");
+  }
+  LOG("Task %s: completed", name);
+}
+
+// Test when_all with exception (one task throws)
+async<void> test_when_all_exception() {
+  LOG("=== Testing when_all with exception ===");
+  TimeCount t;
+
+  bool exception_caught = false;
+  std::string exception_msg;
+  try {
+    // Task 2 will throw after 30ms, but when_all waits for all tasks (50ms total)
+    co_await when_all(delayed_value_task_with_exception(1, 50, false), delayed_value_task_with_exception(2, 30, true),
+                      delayed_value_task_with_exception(3, 40, false));
+    // Should never reach here
+    LOG("ERROR: Should have thrown exception");
+    ASSERT(false && "when_all should have thrown exception");
+  } catch (const std::runtime_error& e) {
+    exception_msg = e.what();
+    LOG("Caught expected exception: %s", exception_msg.c_str());
+    exception_caught = true;
+  }
+
+  auto elapsed = t.elapsed();
+  LOG("Exception thrown after %d ms", (int)elapsed);
+
+  ASSERT(exception_caught);
+  ASSERT(exception_msg.find("Task 2") != std::string::npos);  // Verify it's from task 2
+  ASSERT(elapsed >= 50);                                      // when_all waits for all tasks to complete
+  LOG("when_all exception test: PASSED");
+}
+
+// Test when_all with void tasks and exception
+async<void> test_when_all_void_exception() {
+  LOG("=== Testing when_all with void tasks and exception ===");
+  TimeCount t;
+
+  bool exception_caught = false;
+  std::string exception_msg;
+  try {
+    // Task B will throw after 20ms, but when_all waits for all tasks (40ms total)
+    co_await when_all(delayed_void_task_with_exception("A", 30, false), delayed_void_task_with_exception("B", 20, true),
+                      delayed_void_task_with_exception("C", 40, false));
+    // Should never reach here
+    LOG("ERROR: Should have thrown exception");
+    ASSERT(false && "when_all should have thrown exception");
+  } catch (const std::runtime_error& e) {
+    exception_msg = e.what();
+    LOG("Caught expected exception: %s", exception_msg.c_str());
+    exception_caught = true;
+  }
+
+  auto elapsed = t.elapsed();
+  LOG("Exception thrown after %d ms", (int)elapsed);
+
+  ASSERT(exception_caught);
+  ASSERT(exception_msg.find("Task B") != std::string::npos);  // Verify it's from task B
+  ASSERT(elapsed >= 40);                                      // when_all waits for all tasks to complete
+  LOG("when_all void exception test: PASSED");
+}
+
+// Test when_all with mixed types and exception
+async<void> test_when_all_mixed_exception() {
+  LOG("=== Testing when_all with mixed types and exception ===");
+  TimeCount t;
+
+  bool exception_caught = false;
+  std::string exception_msg;
+  try {
+    // Value task will throw after 20ms, but when_all waits for all (20ms total)
+    [[maybe_unused]] auto result =
+        co_await when_all(delayed_void_task_with_exception("VoidA", 15, false), delayed_value_task_with_exception(123, 20, true),
+                          delayed_void_task_with_exception("VoidB", 10, false));
+    // Should never reach here
+    LOG("ERROR: Should have thrown exception");
+    ASSERT(false && "when_all should have thrown exception");
+  } catch (const std::runtime_error& e) {
+    exception_msg = e.what();
+    LOG("Caught expected exception: %s", exception_msg.c_str());
+    exception_caught = true;
+  }
+
+  auto elapsed = t.elapsed();
+  LOG("Exception thrown after %d ms", (int)elapsed);
+
+  ASSERT(exception_caught);
+  ASSERT(exception_msg.find("Task 123") != std::string::npos);  // Verify it's from task 123
+  ASSERT(elapsed >= 20);                                        // when_all waits for all tasks to complete
+  LOG("when_all mixed exception test: PASSED");
+}
+
+// Test when_any with exception (first completed task throws)
+async<void> test_when_any_exception_first() {
+  LOG("=== Testing when_any with exception (first task throws) ===");
+  TimeCount t;
+
+  bool exception_caught = false;
+  std::string exception_msg;
+  try {
+    // Task 2 completes first (20ms) but throws
+    [[maybe_unused]] auto result = co_await when_any(delayed_value_task_with_exception(1, 100, false), delayed_value_task_with_exception(2, 20, true),
+                                                     delayed_value_task_with_exception(3, 80, false));
+    // Should never reach here
+    LOG("ERROR: Should have thrown exception");
+    ASSERT(false && "when_any should have thrown exception");
+  } catch (const std::runtime_error& e) {
+    exception_msg = e.what();
+    LOG("Caught expected exception: %s", exception_msg.c_str());
+    exception_caught = true;
+  }
+
+  auto elapsed = t.elapsed();
+  LOG("Exception thrown after %d ms", (int)elapsed);
+
+  ASSERT(exception_caught);
+  ASSERT(exception_msg.find("Task 2") != std::string::npos);  // Verify it's from task 2
+  ASSERT(elapsed >= 20 && elapsed < 80);                      // Should complete when first task completes
+  LOG("when_any exception first test: PASSED");
+}
+
+// Test when_any with exception (first completed task doesn't throw)
+async<void> test_when_any_exception_later() {
+  LOG("=== Testing when_any with exception (later task throws) ===");
+  TimeCount t;
+
+  // Task 2 completes first and succeeds, task 3 throws later (but is ignored)
+  auto result = co_await when_any(delayed_value_task_with_exception(1, 100, true), delayed_value_task_with_exception(2, 20, false),
+                                  delayed_value_task_with_exception(3, 80, true));
+
+  auto elapsed = t.elapsed();
+  LOG("First task completed after %d ms", (int)elapsed);
+  LOG("Completed task index: %zu", result.index);
+
+  // Task 2 should complete first (20ms delay) without exception
+  ASSERT(result.index == 1);
+  ASSERT(elapsed >= 20 && elapsed < 80);
+
+  auto value = result.template get<1>();
+  LOG("Completed task value: %d", value);
+  ASSERT(value == 2);
+
+  LOG("when_any exception later test: PASSED");
+}
+
+// Test when_any with void tasks and exception
+async<void> test_when_any_void_exception() {
+  LOG("=== Testing when_any with void tasks and exception ===");
+  TimeCount t;
+
+  bool exception_caught = false;
+  std::string exception_msg;
+  try {
+    // Task B completes first (20ms) and throws
+    [[maybe_unused]] auto result =
+        co_await when_any(delayed_void_task_with_exception("A", 60, false), delayed_void_task_with_exception("B", 20, true),
+                          delayed_void_task_with_exception("C", 50, false));
+    // Should never reach here
+    LOG("ERROR: Should have thrown exception");
+    ASSERT(false && "when_any should have thrown exception");
+  } catch (const std::runtime_error& e) {
+    exception_msg = e.what();
+    LOG("Caught expected exception: %s", exception_msg.c_str());
+    exception_caught = true;
+  }
+
+  auto elapsed = t.elapsed();
+  LOG("Exception thrown after %d ms", (int)elapsed);
+
+  ASSERT(exception_caught);
+  ASSERT(exception_msg.find("Task B") != std::string::npos);  // Verify it's from task B
+  ASSERT(elapsed >= 20 && elapsed < 50);                      // Should complete when first task completes
+  LOG("when_any void exception test: PASSED");
+}
+
+// Test when_all with multiple exceptions (first exception should be thrown)
+async<void> test_when_all_multiple_exceptions() {
+  LOG("=== Testing when_all with multiple exceptions ===");
+  TimeCount t;
+
+  bool exception_caught = false;
+  std::string exception_msg;
+  try {
+    // Multiple tasks throw, first one (by time) should be caught
+    [[maybe_unused]] auto results =
+        co_await when_all(delayed_value_task_with_exception(1, 50, true), delayed_value_task_with_exception(2, 20, true),  // This one throws first
+                          delayed_value_task_with_exception(3, 40, true));
+    // Should never reach here
+    LOG("ERROR: Should have thrown exception");
+    ASSERT(false && "when_all should have thrown exception");
+  } catch (const std::runtime_error& e) {
+    exception_msg = e.what();
+    LOG("Caught expected exception: %s", exception_msg.c_str());
+    exception_caught = true;
+  }
+
+  auto elapsed = t.elapsed();
+  LOG("Exception thrown after %d ms", (int)elapsed);
+
+  ASSERT(exception_caught);
+  // Should be from task 2 (completes/throws first at 20ms)
+  ASSERT(exception_msg.find("Task 2") != std::string::npos);
+  ASSERT(elapsed >= 50);  // when_all waits for all tasks to complete
+  LOG("when_all multiple exceptions test: PASSED");
+}
+
+#endif
+
 async<void> run_all_tests() {
   co_await test_when_all_values();
   co_await test_when_all_void();
@@ -174,8 +404,22 @@ async<void> run_all_tests() {
   co_await test_when_all_mixed_types();
   co_await test_when_all_mixed_types2();
   co_await test_when_any_mixed_types();
-
   LOG("=== ALL TESTS PASSED ===");
+
+#ifndef CORO_DISABLE_EXCEPTION
+  // Run exception tests (only when exception support is enabled)
+  co_await test_when_all_exception();
+  co_await test_when_all_void_exception();
+  co_await test_when_all_mixed_exception();
+  co_await test_when_any_exception_first();
+  co_await test_when_any_exception_later();
+  co_await test_when_any_void_exception();
+  co_await test_when_all_multiple_exceptions();
+
+  LOG("=== ALL EXCEPTION TESTS PASSED ===");
+#else
+  LOG("=== ALL EXCEPTION TESTS SKIPPED) ===");
+#endif
 }
 
 int main() {

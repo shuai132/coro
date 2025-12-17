@@ -52,6 +52,23 @@ struct when_all_state {
   size_t total_count = sizeof...(Ts);
   std::coroutine_handle<> parent_handle;
   executor* exec = nullptr;
+#ifndef CORO_DISABLE_EXCEPTION
+  std::exception_ptr exception;  // Add exception support
+#endif
+
+#ifndef CORO_DISABLE_EXCEPTION
+  void set_exception(std::exception_ptr ex) {
+    if (!exception) {
+      exception = ex;
+    }
+    completed_count++;
+    if (completed_count == total_count && parent_handle && exec) {
+      exec->dispatch([h = parent_handle]() {
+        h.resume();
+      });
+    }
+  }
+#endif
 
   template <size_t Index, typename T>
   void set_result(T&& value) {
@@ -77,13 +94,21 @@ struct when_all_state {
 // Individual task wrapper for when_all
 template <size_t Index, typename T, typename State>
 awaitable<void> when_all_task(awaitable<T> task, std::shared_ptr<State> state) {
-  if constexpr (std::is_void_v<T>) {
-    co_await std::move(task);
-    state->increment_completed();
-  } else {
-    auto result = co_await std::move(task);
-    state->template set_result<Index>(std::move(result));
+#ifndef CORO_DISABLE_EXCEPTION
+  try {
+#endif
+    if constexpr (std::is_void_v<T>) {
+      co_await std::move(task);
+      state->increment_completed();
+    } else {
+      auto result = co_await std::move(task);
+      state->template set_result<Index>(std::move(result));
+    }
+#ifndef CORO_DISABLE_EXCEPTION
+  } catch (...) {
+    state->set_exception(std::current_exception());
   }
+#endif
 }
 
 // Awaiter for getting executor
@@ -123,7 +148,12 @@ struct when_all_awaiter<State, std::tuple<>> {
     return state_->completed_count < state_->total_count;
   }
 
-  std::tuple<> await_resume() noexcept {
+  std::tuple<> await_resume() {
+#ifndef CORO_DISABLE_EXCEPTION
+    if (state_->exception) {
+      std::rethrow_exception(state_->exception);
+    }
+#endif
     return std::tuple<>{};
   }
 };
@@ -187,7 +217,12 @@ struct when_all_awaiter<State, std::tuple<ResultTypes...>> {
     return state_->completed_count < state_->total_count;
   }
 
-  std::tuple<ResultTypes...> await_resume() noexcept {
+  std::tuple<ResultTypes...> await_resume() {
+#ifndef CORO_DISABLE_EXCEPTION
+    if (state_->exception) {
+      std::rethrow_exception(state_->exception);
+    }
+#endif
     using storage_tuple = decltype(state_->results);
     return result_extractor<std::tuple<ResultTypes...>, storage_tuple>::extract(state_->results);
   }
@@ -214,7 +249,12 @@ struct when_all_awaiter<State, ResultType, std::enable_if_t<!is_tuple<ResultType
     return state_->completed_count < state_->total_count;
   }
 
-  ResultType await_resume() noexcept {
+  ResultType await_resume() {
+#ifndef CORO_DISABLE_EXCEPTION
+    if (state_->exception) {
+      std::rethrow_exception(state_->exception);
+    }
+#endif
     // For single value, we need to extract the first (and only) non-void value
     return get_first_non_void<0>(state_->results);
   }
@@ -324,7 +364,13 @@ struct when_all_void_awaiter {
     return state_->completed_count < state_->total_count;
   }
 
-  void await_resume() noexcept {}
+  void await_resume() {
+#ifndef CORO_DISABLE_EXCEPTION
+    if (state_->exception) {
+      std::rethrow_exception(state_->exception);
+    }
+#endif
+  }
 };
 
 // Helper for expanding parameter pack
@@ -370,6 +416,23 @@ struct when_any_state_impl {
   bool completed = false;
   std::coroutine_handle<> parent_handle;
   executor* exec = nullptr;
+#ifndef CORO_DISABLE_EXCEPTION
+  std::exception_ptr exception;  // Add exception support
+#endif
+
+#ifndef CORO_DISABLE_EXCEPTION
+  void set_exception(std::exception_ptr ex) {
+    if (!completed) {
+      completed = true;
+      exception = ex;
+      if (parent_handle && exec) {
+        exec->dispatch([h = parent_handle]() {
+          h.resume();
+        });
+      }
+    }
+  }
+#endif
 
   template <size_t Index, typename T>
   void set_result(T&& value) {
@@ -408,6 +471,23 @@ struct when_any_state_impl<true, Ts...> {
   bool completed = false;
   std::coroutine_handle<> parent_handle;
   executor* exec = nullptr;
+#ifndef CORO_DISABLE_EXCEPTION
+  std::exception_ptr exception;  // Add exception support
+#endif
+
+#ifndef CORO_DISABLE_EXCEPTION
+  void set_exception(std::exception_ptr ex) {
+    if (!completed) {
+      completed = true;
+      exception = ex;
+      if (parent_handle && exec) {
+        exec->dispatch([h = parent_handle]() {
+          h.resume();
+        });
+      }
+    }
+  }
+#endif
 
   template <size_t Index>
   void set_completed_at() {
@@ -429,13 +509,21 @@ struct when_any_state : when_any_state_impl<all_void<Ts...>::value, Ts...> {};
 // Individual task wrapper for when_any
 template <size_t Index, typename T, typename State>
 awaitable<void> when_any_task(awaitable<T> task, std::shared_ptr<State> state) {
-  if constexpr (std::is_void_v<T>) {
-    co_await std::move(task);
-    state->template set_completed_at<Index>();
-  } else {
-    auto result = co_await std::move(task);
-    state->template set_result<Index>(std::move(result));
+#ifndef CORO_DISABLE_EXCEPTION
+  try {
+#endif
+    if constexpr (std::is_void_v<T>) {
+      co_await std::move(task);
+      state->template set_completed_at<Index>();
+    } else {
+      auto result = co_await std::move(task);
+      state->template set_result<Index>(std::move(result));
+    }
+#ifndef CORO_DISABLE_EXCEPTION
+  } catch (...) {
+    state->set_exception(std::current_exception());
   }
+#endif
 }
 
 // Helper to select correct when_any_result implementation
@@ -506,7 +594,12 @@ struct when_any_awaiter_impl {
     return !state_->completed;
   }
 
-  ResultType await_resume() noexcept {
+  ResultType await_resume() {
+#ifndef CORO_DISABLE_EXCEPTION
+    if (state_->exception) {
+      std::rethrow_exception(state_->exception);
+    }
+#endif
     return ResultType{state_->completed_index, std::move(state_->result)};
   }
 };
@@ -525,7 +618,12 @@ struct when_any_awaiter_impl<State, ResultType, true> {
     return !state_->completed;
   }
 
-  ResultType await_resume() noexcept {
+  ResultType await_resume() {
+#ifndef CORO_DISABLE_EXCEPTION
+    if (state_->exception) {
+      std::rethrow_exception(state_->exception);
+    }
+#endif
     return ResultType{state_->completed_index};
   }
 };
