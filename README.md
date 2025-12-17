@@ -8,6 +8,7 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 
 ## Table of Contents
 
+- [API Overview](#api-overview)
 - [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -21,6 +22,24 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 - [Configuration Options](#configuration-options)
 - [Building Tests](#building-tests)
 - [Project Structure](#project-structure)
+
+## API Overview
+
+| Name                                         | Description                                          |
+|----------------------------------------------|------------------------------------------------------|
+| `coro::async<T>`                             | Async task type, supports `co_await` and `co_return` |
+| `coro::co_spawn(executor, awaitable)`        | Spawn a coroutine on an executor                     |
+| `coro::when_all(awaitables...) -> awaitable` | Wait for all tasks to complete                       |
+| `coro::when_any(awaitables...) -> awaitable` | Wait for any task to complete                        |
+| `coro::sleep(duration)`                      | Async wait for specified duration (chrono duration)  |
+| `coro::delay(ms)`                            | Async wait for specified milliseconds                |
+| `coro::mutex`                                | Coroutine-safe mutex                                 |
+| `coro::channel<T>`                           | Go-style channel for inter-coroutine communication   |
+| `coro::executor`                             | Executor base class interface                        |
+| `coro::executor_loop`                        | Event loop based executor                            |
+| `coro::executor_poll`                        | Polling based executor                               |
+| `coro::current_executor()`                   | Get current executor                                 |
+| `coro::callback_awaiter<T>`                  | Convert callback-style APIs to coroutines            |
 
 ## Features
 

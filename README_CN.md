@@ -8,6 +8,7 @@
 
 ## 目录
 
+- [API 概览](#api-概览)
 - [特性](#特性)
 - [要求](#要求)
 - [安装](#安装)
@@ -21,6 +22,24 @@
 - [配置选项](#配置选项)
 - [构建测试](#构建测试)
 - [项目结构](#项目结构)
+
+## API 概览
+
+| 名称                                           | 说明                                 |
+|----------------------------------------------|------------------------------------|
+| `coro::async<T>`                             | 异步任务类型，支持 `co_await` 和 `co_return` |
+| `coro::co_spawn(executor, awaitable)`        | 在执行器上启动协程                          |
+| `coro::when_all(awaitables...) -> awaitable` | 等待所有任务完成                           |
+| `coro::when_any(awaitables...) -> awaitable` | 等待任意一个任务完成                         |
+| `coro::sleep(duration)`                      | 异步等待指定时间（chrono duration）          |
+| `coro::delay(ms)`                            | 异步等待指定毫秒数                          |
+| `coro::mutex`                                | 协程安全的互斥锁                           |
+| `coro::channel<T>`                           | Go 风格的 channel，用于协程间通信             |
+| `coro::executor`                             | 执行器基类接口                            |
+| `coro::executor_loop`                        | 基于事件循环的执行器                         |
+| `coro::executor_poll`                        | 基于轮询的执行器                           |
+| `coro::current_executor()`                   | 获取当前执行器                            |
+| `coro::callback_awaiter<T>`                  | 将回调式 API 转换为协程                     |
 
 ## 特性
 
