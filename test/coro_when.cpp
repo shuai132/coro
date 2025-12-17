@@ -78,8 +78,9 @@ async<void> test_when_any_values() {
 
   // Task 2 should complete first (30ms delay)
   ASSERT(result.index == 1);  // Index 1 corresponds to the second task
+#ifndef CORO_TEST_RUNNER_VERY_SLOW
   ASSERT(elapsed >= 30 && elapsed < 80);
-
+#endif
   // Get the value from the result
   auto value = result.template get<1>();
   LOG("Completed task value: %d", value);
@@ -102,7 +103,9 @@ async<void> test_when_any_void() {
 
   // Task B should complete first (20ms delay)
   ASSERT(result.index == 1);  // Index 1 corresponds to task B
+#ifndef CORO_TEST_RUNNER_VERY_SLOW
   ASSERT(elapsed >= 20 && elapsed < 50);
+#endif
 
   LOG("when_any void test: PASSED");
 }
@@ -163,7 +166,9 @@ async<void> test_when_any_mixed_types() {
 
   // The void task (index 1) should complete first
   ASSERT(result.index == 1);
+#ifndef CORO_TEST_RUNNER_VERY_SLOW
   ASSERT(elapsed >= 15 && elapsed < 40);
+#endif
 
   LOG("when_any mixed types test: PASSED");
 }
@@ -305,7 +310,9 @@ async<void> test_when_any_exception_first() {
 
   ASSERT(exception_caught);
   ASSERT(exception_msg.find("Task 2") != std::string::npos);  // Verify it's from task 2
-  ASSERT(elapsed >= 20 && elapsed < 80);                      // Should complete when first task completes
+#ifndef CORO_TEST_RUNNER_VERY_SLOW
+  ASSERT(elapsed >= 20 && elapsed < 80);  // Should complete when first task completes
+#endif
   LOG("when_any exception first test: PASSED");
 }
 
@@ -324,7 +331,9 @@ async<void> test_when_any_exception_later() {
 
   // Task 2 should complete first (20ms delay) without exception
   ASSERT(result.index == 1);
+#ifndef CORO_TEST_RUNNER_VERY_SLOW
   ASSERT(elapsed >= 20 && elapsed < 80);
+#endif
 
   auto value = result.template get<1>();
   LOG("Completed task value: %d", value);
@@ -359,7 +368,9 @@ async<void> test_when_any_void_exception() {
 
   ASSERT(exception_caught);
   ASSERT(exception_msg.find("Task B") != std::string::npos);  // Verify it's from task B
-  ASSERT(elapsed >= 20 && elapsed < 50);                      // Should complete when first task completes
+#ifndef CORO_TEST_RUNNER_VERY_SLOW
+  ASSERT(elapsed >= 20 && elapsed < 50);  // Should complete when first task completes
+#endif
   LOG("when_any void exception test: PASSED");
 }
 

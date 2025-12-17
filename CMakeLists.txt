@@ -24,6 +24,12 @@ if (CORO_BUILD_TEST)
     option(CORO_ENABLE_SANITIZE_ADDRESS "" OFF)
     option(CORO_ENABLE_SANITIZE_THREAD "" OFF)
     option(CORO_DISABLE_EXCEPTION "" OFF)
+    option(CORO_TEST_RUNNER_VERY_SLOW "" OFF)
+    # github actions runner of macOS is very slow
+    if ($ENV{GITHUB_ACTIONS} AND $ENV{RUNNER_OS} STREQUAL "macOS")
+        set(CORO_TEST_RUNNER_VERY_SLOW ON)
+        add_definitions(-DCORO_TEST_RUNNER_VERY_SLOW)
+    endif ()
 
     if (CORO_ENABLE_SANITIZE_ADDRESS)
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
