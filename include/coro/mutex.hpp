@@ -140,8 +140,14 @@ struct mutex {
     explicit lock_guard(mutex* m) : mutex_(m) {}
 
     ~lock_guard() {
+      unlock();
+    }
+
+    // Manually unlock the mutex
+    void unlock() {
       if (mutex_) {
         mutex_->unlock();
+        mutex_ = nullptr;
       }
     }
 

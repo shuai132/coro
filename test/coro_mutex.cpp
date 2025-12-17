@@ -40,8 +40,10 @@ async<void> mutex_test_sequential_tasks() {
     LOG("Task A: acquired lock");
     co_await sleep(10ms);
     LOG("Task A: finished work");
+    ASSERT(mtx.is_locked());
   }
   LOG("Task A: released lock");
+  ASSERT(!mtx.is_locked());
 
   // Run task B
   {
@@ -49,7 +51,9 @@ async<void> mutex_test_sequential_tasks() {
     LOG("Task B: acquired lock");
     co_await sleep(10ms);
     LOG("Task B: finished work");
+    ASSERT(mtx.is_locked());
     mtx.unlock();
+    ASSERT(!mtx.is_locked());
   }
   LOG("Task B: released lock");
 
@@ -59,6 +63,8 @@ async<void> mutex_test_sequential_tasks() {
     LOG("Task C: acquired lock");
     co_await sleep(10ms);
     LOG("Task C: finished work");
+    guard.unlock();
+    ASSERT(!mtx.is_locked());
   }
   LOG("Task C: released lock");
 
