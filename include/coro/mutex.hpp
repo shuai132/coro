@@ -26,7 +26,7 @@ struct mutex {
   auto lock() {
     struct lock_awaitable {
       mutex* m_;
-      waiter_node node_;  // Node lives as long as the awaitable (part of coroutine frame)
+      waiter_node node_{};  // Node lives as long as the awaitable (part of coroutine frame)
 
       bool await_ready() noexcept {
         // In a single-threaded environment, if the lock is free, acquire it
@@ -67,7 +67,7 @@ struct mutex {
   auto scoped_lock() {
     struct scoped_lock_awaitable {
       mutex* m_;
-      waiter_node node_;  // Node lives as long as the awaitable (part of coroutine frame)
+      waiter_node node_{};  // Node lives as long as the awaitable (part of coroutine frame)
 
       bool await_ready() noexcept {
         // In single-threaded coroutine environment, check and acquire the lock

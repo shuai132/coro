@@ -5,7 +5,6 @@
 #include "TimeCount.hpp"
 #include "assert_def.h"
 #include "coro.hpp"
-#include "coro/when.hpp"
 #include "log.h"
 #include "utils.hpp"
 
@@ -158,7 +157,7 @@ async<void> test_when_any_mixed_types() {
   TimeCount t;
 
   // Launch tasks with different return types
-  auto result = co_await when_any(delayed_value_task(100, 50), delayed_void_task("FastVoid", 15), delayed_value_task(200, 40));
+  auto result = co_await when_any(delayed_value_task(100, 50), delayed_void_task("FastVoid", 15), delayed_value_task(200, 60));
 
   auto elapsed = t.elapsed();
   LOG("First task completed after %d ms", (int)elapsed);
@@ -167,7 +166,7 @@ async<void> test_when_any_mixed_types() {
   // The void task (index 1) should complete first
   ASSERT(result.index == 1);
 #ifndef CORO_TEST_RUNNER_VERY_SLOW
-  ASSERT(elapsed >= 15 && elapsed < 40);
+  ASSERT(elapsed >= 15 && elapsed < 50);
 #endif
 
   LOG("when_any mixed types test: PASSED");

@@ -12,5 +12,8 @@
 // channel
 #include "coro/channel.hpp"
 
-// time utilities
+// time
 #include "coro/time.hpp"
+
+// when
+#include "coro/when.hpp"

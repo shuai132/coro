@@ -113,34 +113,39 @@ async<void> mutex_basic_test() {
 async<void> mutex_race_condition_test() {
   coro::mutex mtx;
   int shared_counter = 0;
-  auto increment_task = [&mtx, &shared_counter](int increments) -> async<void> {
+  auto increment_task = [&mtx, &shared_counter](const char* name, int increments) -> async<void> {
+    TimeCount t;
+    LOG("increment_task %s: begin", name);
     for (int i = 0; i < increments; ++i) {
       {
         auto guard = co_await mtx.scoped_lock();
         // Critical section
         int temp = shared_counter;
+        TimeCount tt;
         co_await sleep(1ms);  // Small delay to increase chance of race condition if not properly locked
         shared_counter = temp + 1;
+        LOG("increment_task %s: i:%d, sleep elapsed: %d ms", name, i, (int)tt.elapsed());  // Some platform will slow
         // Lock is released automatically when guard goes out of scope
       }
     }
+    LOG("increment_task %s: end: %d ms", name, (int)t.elapsed());
   };
 
   // Run multiple tasks concurrently that increment the counter
   TimeCount t;
   auto& exec = *co_await current_executor();
-  increment_task(10).detach_with_callback(exec, [&] {
+  increment_task("A", 10).detach_with_callback(exec, [&] {
     LOG("finish increment_task 1 after: %d", (int)t.elapsed());
   });
-  increment_task(10).detach_with_callback(exec, [&] {
+  increment_task("B", 10).detach_with_callback(exec, [&] {
     LOG("finish increment_task 2 after: %d", (int)t.elapsed());
   });
-  increment_task(10).detach_with_callback(exec, [&] {
+  increment_task("C", 10).detach_with_callback(exec, [&] {
     LOG("finish increment_task 3 after: %d", (int)t.elapsed());
   });
 
   // Wait for all tasks to complete
-  co_await sleep(500ms);  // GitHub ci slow on macOS
+  co_await sleep(1000ms);  // GitHub ci slow on macOS
 
   LOG("Race condition test - final counter value: %d", shared_counter);
   ASSERT(shared_counter == 30);
