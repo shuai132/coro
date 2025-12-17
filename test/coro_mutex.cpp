@@ -1,6 +1,6 @@
 /// config debug
 #define CORO_DEBUG_PROMISE_LEAK
-#define CORO_DISABLE_EXCEPTION
+// #define CORO_DISABLE_EXCEPTION
 #include "log.h"
 // #define CORO_DEBUG_LEAK_LOG LOG
 // #define CORO_DEBUG_LIFECYCLE LOG
@@ -71,16 +71,17 @@ async<void> mutex_test_sequential_tasks() {
   LOG("Sequential mutex test: completed");
 }
 
-async<void> mutex_test_concurrent_tasks(executor& exec) {
+async<void> mutex_test_concurrent_tasks() {
   coro::mutex mtx;
 
   // Launch multiple tasks that compete for the same mutex
-  co_spawn(exec, mutex_test_task(mtx, "A", 10));
-  co_spawn(exec, mutex_test_task(mtx, "B", 10));
-  co_spawn(exec, mutex_test_task(mtx, "C", 10));
+  auto exec = co_await current_executor();
+  co_spawn(*exec, mutex_test_task(mtx, "A", 10));
+  co_spawn(*exec, mutex_test_task(mtx, "B", 10));
+  co_spawn(*exec, mutex_test_task(mtx, "C", 10));
 
   // Wait a bit more to ensure all tasks complete
-  co_await sleep(50ms);
+  co_await sleep(200ms);
   LOG("All concurrent mutex test tasks should be complete");
 }
 
@@ -109,7 +110,7 @@ async<void> mutex_basic_test() {
   LOG("Mutex finally unlocked: OK");
 }
 
-async<void> mutex_race_condition_test(executor& exec) {
+async<void> mutex_race_condition_test() {
   coro::mutex mtx;
   int shared_counter = 0;
   auto increment_task = [&mtx, &shared_counter](int increments) -> async<void> {
@@ -127,6 +128,7 @@ async<void> mutex_race_condition_test(executor& exec) {
 
   // Run multiple tasks concurrently that increment the counter
   TimeCount t;
+  auto& exec = *co_await current_executor();
   increment_task(10).detach_with_callback(exec, [&] {
     LOG("finish increment_task 1 after: %d", (int)t.elapsed());
   });
@@ -145,7 +147,7 @@ async<void> mutex_race_condition_test(executor& exec) {
   LOG("Race condition test passed: OK");
 }
 
-async<void> run_all_tests(executor& exec) {
+async<void> run_all_tests() {
   {
     // Run basic functionality test first
     co_await mutex_basic_test();
@@ -160,12 +162,12 @@ async<void> run_all_tests(executor& exec) {
 
   {
     // Run race condition test
-    co_await mutex_race_condition_test(exec);
+    co_await mutex_race_condition_test();
     LOG("Race condition test completed");
   }
 
   {
-    co_await mutex_test_concurrent_tasks(exec);
+    co_await mutex_test_concurrent_tasks();
     LOG("Concurrent test completed");
   }
 }
@@ -173,10 +175,11 @@ async<void> run_all_tests(executor& exec) {
 int main() {
   LOG("Mutex test init");
   executor_loop executor;
-  run_all_tests(executor).detach_with_callback(executor, [&] {
+  run_all_tests().detach_with_callback(executor, [&] {
     executor.stop();
   });
   LOG("loop...");
   executor.run_loop();
+  check_coro_leak();
   return 0;
 }

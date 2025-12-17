@@ -126,13 +126,14 @@ void test_coro(executor& executor) {
 }
 
 void test_simple(executor& executor) {
-  co_spawn(executor, []() -> async<void> {
+  co_spawn(executor, [](auto e) -> async<void> {
+    ASSERT(e == co_await current_executor());
     TimeCount t;
     const auto ms = 100;
     co_await sleep(std::chrono::milliseconds(ms));
     LOG("%s: %d, elapsed: %d", "test_simple", ms, (int)t.elapsed());
     ASSERT(int(t.elapsed()) >= ms);
-  }());
+  }(&executor));
 }
 
 int main() {
@@ -145,7 +146,7 @@ int main() {
 
   test_coro(executor);
   test_simple(executor);
-  auto debug = debug_and_stop(executor, 1500);
+  delay_stop(executor, 1500);
   LOG("loop...");
 #ifdef CORO_EXECUTOR_LOOP
   executor.run_loop();
@@ -155,6 +156,6 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 #endif
-  debug.join();
+  check_coro_leak();
   return 0;
 }

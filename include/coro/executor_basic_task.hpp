@@ -75,22 +75,21 @@ class executor_basic_task : public coro::executor {
     }
   }
 
-  void post_delayed_ns(std::function<void()> fn, const uint64_t delay_ns) override {
-    if (stop_.load(std::memory_order_acquire)) {
-      return;
-    }
-    std::unique_lock<std::mutex> lock(queue_mutex_);
-    auto execute_at = std::chrono::steady_clock::now() + std::chrono::nanoseconds(delay_ns);
-    delayed_task_queue_.push({execute_at, std::move(fn)});
-    lock.unlock();
-  }
-
-  virtual void post(std::function<void()> fn) {
+  void post(std::function<void()> fn) override {
     if (stop_.load(std::memory_order_acquire)) {
       return;
     }
     std::lock_guard<std::mutex> lock(queue_mutex_);
     task_queue_.emplace(std::move(fn));
+  }
+
+  void post_delayed_ns(std::function<void()> fn, const uint64_t delay_ns) override {
+    if (stop_.load(std::memory_order_acquire)) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    auto execute_at = std::chrono::steady_clock::now() + std::chrono::nanoseconds(delay_ns);
+    delayed_task_queue_.push({execute_at, std::move(fn)});
   }
 
   void stop() override {

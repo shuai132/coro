@@ -18,7 +18,7 @@ uint64_t get_now_ms() {
 }
 
 // Test basic unbuffered channel
-async<void> test_unbuffered_channel(executor& exec) {
+async<void> test_unbuffered_channel() {
   LOG("Starting unbuffered channel test");
 
   channel<int> ch;  // unbuffered channel
@@ -74,6 +74,7 @@ async<void> test_unbuffered_channel(executor& exec) {
   };
 
   // Start producer first (it should block immediately)
+  auto& exec = *co_await current_executor();
   co_spawn(exec, tracked_producer());
   co_spawn(exec, tracked_consumer());
 
@@ -91,7 +92,7 @@ async<void> test_unbuffered_channel(executor& exec) {
 }
 
 // Test basic buffered channel
-async<void> test_buffered_channel(executor& exec) {
+async<void> test_buffered_channel() {
   LOG("Starting buffered channel test");
 
   channel<int> ch(2);  // buffered channel with capacity 2
@@ -160,6 +161,7 @@ async<void> test_buffered_channel(executor& exec) {
     co_return;
   };
 
+  auto& exec = *co_await current_executor();
   co_spawn(exec, tracked_producer());
   co_spawn(exec, tracked_consumer());
 
@@ -179,7 +181,7 @@ async<void> test_buffered_channel(executor& exec) {
 }
 
 // Test channel close functionality
-async<void> test_channel_close(executor& exec) {
+async<void> test_channel_close() {
   LOG("Starting channel close test");
 
   channel<int> ch;
@@ -196,6 +198,7 @@ async<void> test_channel_close(executor& exec) {
     receiver_completed = true;
   };
 
+  auto& exec = *co_await current_executor();
   co_spawn(exec, receiver());
 
   // Allow receiver to start waiting
@@ -211,7 +214,7 @@ async<void> test_channel_close(executor& exec) {
 }
 
 // Test ping-pong pattern with channels
-async<void> test_ping_pong(executor& exec) {
+async<void> test_ping_pong() {
   LOG("Starting ping-pong test");
 
   channel<int> ping_ch(1);
@@ -272,6 +275,7 @@ async<void> test_ping_pong(executor& exec) {
     co_return;
   };
 
+  auto& exec = *co_await current_executor();
   co_spawn(exec, server());
   co_spawn(exec, client());
 
@@ -284,7 +288,7 @@ async<void> test_ping_pong(executor& exec) {
 }
 
 // Test multiple producers and consumers
-async<void> test_multiple_producers_consumers(executor& exec) {
+async<void> test_multiple_producers_consumers() {
   LOG("Starting multiple producers/consumers test");
 
   channel<int> ch(5);  // Buffered channel
@@ -323,6 +327,7 @@ async<void> test_multiple_producers_consumers(executor& exec) {
   };
 
   // Start 2 producers and 2 consumers
+  auto& exec = *co_await current_executor();
   co_spawn(exec, producer(1, &producer1_completed));
   co_spawn(exec, producer(2, &producer2_completed));
   co_spawn(exec, consumer(1, &consumer1_completed));
@@ -338,30 +343,31 @@ async<void> test_multiple_producers_consumers(executor& exec) {
   LOG("Multiple producers/consumers test completed");
 }
 
-async<void> run_all_tests(executor& exec) {
-  co_await test_unbuffered_channel(exec);
+async<void> run_all_tests() {
+  co_await test_unbuffered_channel();
   LOG("Unbuffered channel test passed");
 
-  co_await test_buffered_channel(exec);
+  co_await test_buffered_channel();
   LOG("Buffered channel test passed");
 
-  co_await test_channel_close(exec);
+  co_await test_channel_close();
   LOG("Channel close test passed");
 
-  co_await test_ping_pong(exec);
+  co_await test_ping_pong();
   LOG("Ping-pong test passed");
 
-  co_await test_multiple_producers_consumers(exec);
+  co_await test_multiple_producers_consumers();
   LOG("Multiple producers/consumers test passed");
 }
 
 int main() {
   LOG("Channel test init");
   executor_loop executor;
-  run_all_tests(executor).detach_with_callback(executor, [&] {
+  run_all_tests().detach_with_callback(executor, [&] {
     executor.stop();
   });
   LOG("loop...");
   executor.run_loop();
+  check_coro_leak();
   return 0;
 }

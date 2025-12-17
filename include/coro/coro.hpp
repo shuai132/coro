@@ -266,6 +266,9 @@ awaitable<T> awaitable_promise<T>::get_return_object() {
   return awaitable<T>{handle};
 }
 
+/// callback_awaiter
+namespace detail {
+
 template <typename T>
 struct callback_awaiter_base {
   using callback_function_no_executor = std::function<void(std::function<void(T)>)>;
@@ -286,10 +289,12 @@ struct callback_awaiter_base<void> {
   void await_resume() noexcept {}
 };
 
+}  // namespace detail
+
 template <typename T>
-struct callback_awaiter : callback_awaiter_base<T> {
-  using callback_function_no_executor = callback_awaiter_base<T>::callback_function_no_executor;
-  using callback_function_with_executor = callback_awaiter_base<T>::callback_function_with_executor;
+struct callback_awaiter : detail::callback_awaiter_base<T> {
+  using callback_function_no_executor = detail::callback_awaiter_base<T>::callback_function_no_executor;
+  using callback_function_with_executor = detail::callback_awaiter_base<T>::callback_function_with_executor;
   std::variant<callback_function_no_executor, callback_function_with_executor> callback_function_;
 
   explicit callback_awaiter(callback_function_no_executor callback) : callback_function_(std::move(callback)) {}
@@ -341,6 +346,34 @@ struct callback_awaiter : callback_awaiter_base<T> {
     }
   }
 };
+
+/// current_executor_awaiter
+namespace detail {
+
+struct current_executor_awaiter {
+  bool await_ready() const noexcept {
+    return false;
+  }
+
+  template <typename Promise>
+  bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
+    exec_ = h.promise().executor_;
+    return false;
+  }
+
+  executor* await_resume() const noexcept {
+    return exec_;
+  }
+
+ private:
+  executor* exec_ = nullptr;
+};
+
+}  // namespace detail
+
+detail::current_executor_awaiter current_executor() {
+  return detail::current_executor_awaiter{};
+}
 
 template <typename T>
 using async = awaitable<T>;
