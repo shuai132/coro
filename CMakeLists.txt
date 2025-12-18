@@ -76,4 +76,8 @@ if (CORO_BUILD_TEST)
     # test when
     set(TARGET_NAME ${PROJECT_NAME}_when)
     add_executable(${TARGET_NAME} test/coro_when.cpp)
+
+    # test multi thread
+    set(TARGET_NAME ${PROJECT_NAME}_multi_thread)
+    add_executable(${TARGET_NAME} test/coro_multi_thread.cpp)
 endif ()

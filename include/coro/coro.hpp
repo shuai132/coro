@@ -24,24 +24,34 @@
 /// compiler check and debug config
 #if defined(CORO_DEBUG_PROMISE_LEAK)
 #include <cstdio>
+#include <mutex>
 #include <unordered_set>
 struct debug_coro_promise {
   inline static std::unordered_set<void*> debug_coro_leak;
+  inline static std::mutex debug_coro_leak_mutex;
+
   static void dump() {
+    std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
     CORO_DEBUG_LEAK_LOG("debug: debug_coro_leak.size: %zu", debug_coro_leak.size());
   }
 
   void* operator new(std::size_t size) {
     void* ptr = std::malloc(size);
-    debug_coro_leak.insert(ptr);
-    CORO_DEBUG_LEAK_LOG("new: %p, size: %zu, num: %zu", ptr, size, debug_coro_leak.size());
+    {
+      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
+      debug_coro_leak.insert(ptr);
+      CORO_DEBUG_LEAK_LOG("new: %p, size: %zu, num: %zu", ptr, size, debug_coro_leak.size());
+    }
     return ptr;
   }
 
   void operator delete(void* ptr, [[maybe_unused]] std::size_t size) {
-    debug_coro_leak.erase(ptr);
+    {
+      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
+      debug_coro_leak.erase(ptr);
+      CORO_DEBUG_LEAK_LOG("free: %p, size: %zu, num: %zu", ptr, size, debug_coro_leak.size());
+    }
     std::free(ptr);
-    CORO_DEBUG_LEAK_LOG("free: %p, size: %zu, num: %zu", ptr, size, debug_coro_leak.size());
   }
 };
 #else
@@ -164,8 +174,8 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
   }
 
   std::coroutine_handle<> parent_handle_{};
-  executor* executor_ = nullptr;
-  awaitable<T>* awaitable_ = nullptr;
+  executor* executor_ = nullptr;       // from bind_executor or inherit from caller
+  awaitable<T>* awaitable_ = nullptr;  // have awaitable lived or detached
 };
 
 template <typename T>
@@ -218,7 +228,10 @@ struct awaitable {
   template <typename Promise>
   auto await_suspend(std::coroutine_handle<Promise> h) {
     CORO_DEBUG_LIFECYCLE("awaitable: await_suspend: %p, h: %p, p.h: %p", this, current_coro_handle_.address(), h.address());
-    current_coro_handle_.promise().executor_ = h.promise().executor_;
+    // use bind executor or inherit from caller
+    if (!current_coro_handle_.promise().executor_) {
+      current_coro_handle_.promise().executor_ = h.promise().executor_;
+    }
     current_coro_handle_.promise().parent_handle_ = h;
     return current_coro_handle_;
   }
@@ -228,12 +241,19 @@ struct awaitable {
     return current_coro_handle_.promise().get_value();
   }
 
-  auto detach(auto& executor) {
-    current_coro_handle_.promise().executor_ = &executor;
-    CORO_DEBUG_LIFECYCLE("awaitable: resume begin: %p, h: %p", this, current_coro_handle_.address());
-    current_coro_handle_.resume();
-    CORO_DEBUG_LIFECYCLE("awaitable: resume end: %p, h: %p", this, current_coro_handle_.address());
+  auto bind_executor(executor& exec) {
+    current_coro_handle_.promise().executor_ = &exec;
     return std::move(*this);
+  }
+
+  void detach(auto& executor) {
+    auto* exec_to_use = current_coro_handle_.promise().executor_ ? current_coro_handle_.promise().executor_ : &executor;
+    exec_to_use->dispatch([coro = std::make_shared<awaitable<T>>(std::move(*this)), exec_to_use]() mutable {
+      coro->current_coro_handle_.promise().executor_ = exec_to_use;
+      CORO_DEBUG_LIFECYCLE("awaitable: resume begin: %p, h: %p", coro.get(), coro->current_coro_handle_.address());
+      coro->current_coro_handle_.resume();
+      CORO_DEBUG_LIFECYCLE("awaitable: resume end: %p, h: %p", coro.get(), coro->current_coro_handle_.address());
+    });
   }
 
   template <typename Function>
@@ -386,9 +406,8 @@ template <typename T>
 using async = awaitable<T>;
 
 template <typename T>
-auto co_spawn(executor& executor, T&& coro) {
+void co_spawn(executor& executor, T&& coro) {
   coro.detach(executor);
-  return coro;
 }
 
 }  // namespace coro

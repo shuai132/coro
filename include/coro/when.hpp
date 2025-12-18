@@ -48,21 +48,23 @@ using void_to_placeholder_t = typename void_to_placeholder<T>::type;
 template <typename... Ts>
 struct when_all_state {
   std::tuple<void_to_placeholder_t<Ts>...> results;
-  size_t completed_count = 0;
+  std::atomic<size_t> completed_count{0};
   size_t total_count = sizeof...(Ts);
   std::coroutine_handle<> parent_handle;
   executor* exec = nullptr;
 #ifndef CORO_DISABLE_EXCEPTION
+  std::atomic<bool> exception_set{false};
   std::exception_ptr exception;  // Add exception support
 #endif
 
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
-    if (!exception) {
+    bool expected = false;
+    if (exception_set.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       exception = ex;
     }
-    completed_count++;
-    if (completed_count == total_count && parent_handle && exec) {
+    size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (count == total_count && parent_handle && exec) {
       exec->dispatch([h = parent_handle]() {
         h.resume();
       });
@@ -73,8 +75,8 @@ struct when_all_state {
   template <size_t Index, typename T>
   void set_result(T&& value) {
     std::get<Index>(results) = std::forward<T>(value);
-    completed_count++;
-    if (completed_count == total_count && parent_handle && exec) {
+    size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (count == total_count && parent_handle && exec) {
       exec->dispatch([h = parent_handle]() {
         h.resume();
       });
@@ -82,8 +84,8 @@ struct when_all_state {
   }
 
   void increment_completed() {
-    completed_count++;
-    if (completed_count == total_count && parent_handle && exec) {
+    size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (count == total_count && parent_handle && exec) {
       exec->dispatch([h = parent_handle]() {
         h.resume();
       });
@@ -413,7 +415,7 @@ template <bool AllVoid, typename... Ts>
 struct when_any_state_impl {
   std::variant<std::monostate, void_to_placeholder_t<Ts>...> result;
   size_t completed_index = 0;
-  bool completed = false;
+  std::atomic<bool> completed{false};
   std::coroutine_handle<> parent_handle;
   executor* exec = nullptr;
 #ifndef CORO_DISABLE_EXCEPTION
@@ -422,8 +424,8 @@ struct when_any_state_impl {
 
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
-    if (!completed) {
-      completed = true;
+    bool expected = false;
+    if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       exception = ex;
       if (parent_handle && exec) {
         exec->dispatch([h = parent_handle]() {
@@ -436,8 +438,8 @@ struct when_any_state_impl {
 
   template <size_t Index, typename T>
   void set_result(T&& value) {
-    if (!completed) {
-      completed = true;
+    bool expected = false;
+    if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       completed_index = Index;
       result.template emplace<Index + 1>(std::forward<T>(value));
       if (parent_handle && exec) {
@@ -450,8 +452,8 @@ struct when_any_state_impl {
 
   template <size_t Index>
   void set_completed_at() {
-    if (!completed) {
-      completed = true;
+    bool expected = false;
+    if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       completed_index = Index;
       // Store void_placeholder for void tasks
       result.template emplace<Index + 1>(void_placeholder{});
@@ -468,7 +470,7 @@ struct when_any_state_impl {
 template <typename... Ts>
 struct when_any_state_impl<true, Ts...> {
   size_t completed_index = 0;
-  bool completed = false;
+  std::atomic<bool> completed{false};
   std::coroutine_handle<> parent_handle;
   executor* exec = nullptr;
 #ifndef CORO_DISABLE_EXCEPTION
@@ -477,8 +479,8 @@ struct when_any_state_impl<true, Ts...> {
 
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
-    if (!completed) {
-      completed = true;
+    bool expected = false;
+    if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       exception = ex;
       if (parent_handle && exec) {
         exec->dispatch([h = parent_handle]() {
@@ -491,8 +493,8 @@ struct when_any_state_impl<true, Ts...> {
 
   template <size_t Index>
   void set_completed_at() {
-    if (!completed) {
-      completed = true;
+    bool expected = false;
+    if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       completed_index = Index;
       if (parent_handle && exec) {
         exec->dispatch([h = parent_handle]() {

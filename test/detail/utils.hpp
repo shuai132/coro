@@ -4,6 +4,7 @@
 
 inline void check_coro_leak() {
 #ifdef CORO_DEBUG_PROMISE_LEAK
+  std::lock_guard<std::mutex> lock(debug_coro_promise::debug_coro_leak_mutex);
   LOG("debug: debug_coro_leak.size: %zu", debug_coro_promise::debug_coro_leak.size());
   ASSERT(debug_coro_promise::debug_coro_leak.empty());
 #endif
