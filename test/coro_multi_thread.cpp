@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <thread>
+#include <vector>
 
 #include "TimeCount.hpp"
 #include "assert_def.h"
@@ -70,6 +71,124 @@ async<void> run_test(executor& exec1, executor& exec2) {
   LOG("=== Mutex Multi-Thread Test PASSED ===");
 }
 
+// Channel producer task
+async<void> channel_producer(coro::channel<int>& ch, int producer_id, int num_items) {
+  LOG("Producer %d: started, will send %d items", producer_id, num_items);
+
+  for (int i = 0; i < num_items; ++i) {
+    int value = producer_id * 1000 + i;
+    LOG("Producer %d: sending value %d", producer_id, value);
+
+    bool success = co_await ch.send(value);
+    if (!success) {
+      LOG("Producer %d: channel closed, stopping", producer_id);
+      break;
+    }
+
+    LOG("Producer %d: sent value %d", producer_id, value);
+    co_await sleep(10ms);  // Simulate some work
+  }
+
+  LOG("Producer %d: finished", producer_id);
+}
+
+// Channel consumer task
+async<void> channel_consumer(coro::channel<int>& ch, int consumer_id, std::vector<int>& received_values) {
+  LOG("Consumer %d: started", consumer_id);
+
+  while (true) {
+    LOG("Consumer %d: waiting for value", consumer_id);
+    auto value = co_await ch.recv();
+
+    if (!value.has_value()) {
+      LOG("Consumer %d: channel closed, stopping", consumer_id);
+      break;
+    }
+
+    LOG("Consumer %d: received value %d", consumer_id, value.value());
+    received_values.push_back(value.value());
+
+    co_await sleep(15ms);  // Simulate some work
+  }
+
+  LOG("Consumer %d: finished, received %zu items", consumer_id, received_values.size());
+}
+
+async<void> run_channel_test(executor& exec1, executor& exec2) {
+  LOG("=== Testing Channel Across Threads ===");
+
+  // Test 1: Unbuffered channel (capacity = 0)
+  {
+    LOG("--- Test 1: Unbuffered Channel ---");
+    coro::channel<int> ch(0);  // Unbuffered
+    std::vector<int> received1, received2;
+    TimeCount t;
+
+    auto producer1 = channel_producer(ch, 1, 5).bind_executor(exec1);
+    auto producer2 = channel_producer(ch, 2, 5).bind_executor(exec2);
+    auto consumer1 = channel_consumer(ch, 1, received1).bind_executor(exec1);
+    auto consumer2 = channel_consumer(ch, 2, received2).bind_executor(exec2);
+
+    // Run producers and consumers concurrently
+    co_await when_all(std::move(producer1), std::move(producer2), std::move(consumer1), std::move(consumer2));
+
+    ch.close();
+
+    int total_received = received1.size() + received2.size();
+    LOG("Unbuffered channel test: received %d items (expected 10), elapsed: %d ms", total_received, (int)t.elapsed());
+    ASSERT(total_received == 10);
+    LOG("--- Unbuffered Channel Test PASSED ---");
+  }
+
+  // Test 2: Buffered channel (capacity = 3)
+  {
+    LOG("--- Test 2: Buffered Channel (capacity=3) ---");
+    coro::channel<int> ch(3);  // Buffered with capacity 3
+    std::vector<int> received;
+    TimeCount t;
+
+    auto producer = channel_producer(ch, 3, 10).bind_executor(exec1);
+    auto consumer = channel_consumer(ch, 3, received).bind_executor(exec2);
+
+    co_await when_all(std::move(producer), std::move(consumer));
+
+    ch.close();
+
+    LOG("Buffered channel test: received %zu items (expected 10), elapsed: %d ms", received.size(), (int)t.elapsed());
+    ASSERT(received.size() == 10);
+
+    // Verify all values were received in order
+    for (size_t i = 0; i < received.size(); ++i) {
+      int expected = 3000 + i;
+      ASSERT(received[i] == expected);
+    }
+    LOG("--- Buffered Channel Test PASSED ---");
+  }
+
+  // Test 3: Multiple producers, single consumer
+  {
+    LOG("--- Test 3: Multiple Producers, Single Consumer ---");
+    coro::channel<int> ch(5);
+    std::vector<int> received;
+    TimeCount t;
+
+    auto producer1 = channel_producer(ch, 4, 8).bind_executor(exec1);
+    auto producer2 = channel_producer(ch, 5, 8).bind_executor(exec2);
+    auto producer3 = channel_producer(ch, 6, 8).bind_executor(exec1);
+    auto consumer = channel_consumer(ch, 4, received).bind_executor(exec2);
+
+    co_await when_all(std::move(producer1), std::move(producer2), std::move(producer3), std::move(consumer));
+
+    ch.close();
+
+    LOG("Multi-producer test: received %zu items (expected 24), elapsed: %d ms", received.size(), (int)t.elapsed());
+    ASSERT(received.size() == 24);
+    LOG("--- Multiple Producers Test PASSED ---");
+  }
+
+  LOG("=== Channel Multi-Thread Test PASSED ===");
+}
+
 int main() {
   LOG("Multi-thread test init");
 
@@ -90,8 +209,18 @@ int main() {
     LOG("Thread 2: executor loop stopped");
   });
 
-  // Start the test on executor 1
-  run_test(exec1, exec2).detach_with_callback(exec1, [&] {
+  // Start the tests on executor 1
+  auto test_coro = [](executor& exec1, executor& exec2) -> async<void> {
+    // Run mutex test
+    co_await run_test(exec1, exec2);
+
+    // Run channel test
+    co_await run_channel_test(exec1, exec2);
+
+    LOG("All tests completed");
+  }(exec1, exec2);
+
+  test_coro.detach_with_callback(exec1, [&] {
     LOG("Test completed, stopping executors");
     exec1.stop();
     exec2.stop();
