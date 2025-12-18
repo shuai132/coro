@@ -90,24 +90,31 @@ async<void> loop_task(const char* tag, int ms) {
 }
 
 void test_coro(executor& executor) {
+  // test: loop_task
   co_spawn(executor, loop_task("A", 100));
   co_spawn(executor, loop_task("B", 200));
   co_spawn(executor, loop_task("C", 300));
 
+  /// test: coro_task
   co_spawn(executor, coro_task());
-  // or: coro_task().detach(executor);
+  // or:
+  coro_task().detach(executor);
 
+  /// test: coro_task_int
   coro_task_int().detach(executor);
-
+  // or
   coro_task().detach_with_callback(executor, [&] {
     LOG("coro_task finished");
   });
+  // or:
+  coro_task_int().with_callback([](int) {}).detach(executor);
 
+  /// test: coro_task_exception
   coro_task_exception().detach_with_callback(executor, [&](int v) {
     LOG("coro_task_exception finished: %d", v);
     ASSERT(v == 2);
   });
-
+  // or:
 #ifndef CORO_DISABLE_EXCEPTION
   coro_task_exception(true).detach_with_callback(
       executor,

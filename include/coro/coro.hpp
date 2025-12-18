@@ -233,11 +233,12 @@ struct awaitable {
     CORO_DEBUG_LIFECYCLE("awaitable: resume begin: %p, h: %p", this, current_coro_handle_.address());
     current_coro_handle_.resume();
     CORO_DEBUG_LIFECYCLE("awaitable: resume end: %p, h: %p", this, current_coro_handle_.address());
+    return std::move(*this);
   }
 
   template <typename Function>
-  auto detach_with_callback(auto& executor, Function completion_handler, std::function<void(std::exception_ptr)> exception_handler = nullptr) {
-    auto launched_coro = [](awaitable<T> lazy, auto completion_handler, [[maybe_unused]] auto exception_handler) mutable -> awaitable<void> {
+  auto with_callback(Function completion_handler, std::function<void(std::exception_ptr)> exception_handler = nullptr) {
+    auto coro = [](awaitable<T> lazy, auto completion_handler, [[maybe_unused]] auto exception_handler) mutable -> awaitable<void> {
 #ifndef CORO_DISABLE_EXCEPTION
       try {
 #endif
@@ -253,7 +254,13 @@ struct awaitable {
       }
 #endif
     }(std::move(*this), std::move(completion_handler), std::move(exception_handler));
-    return launched_coro.detach(executor);
+    return coro;
+  }
+
+  template <typename Function>
+  auto detach_with_callback(auto& executor, Function completion_handler, std::function<void(std::exception_ptr)> exception_handler = nullptr) {
+    auto coro = with_callback(std::move(completion_handler), std::move(exception_handler));
+    return coro.detach(executor);  // launched here
   }
 
   std::coroutine_handle<promise_type> current_coro_handle_;

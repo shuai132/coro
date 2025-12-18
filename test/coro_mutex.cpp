@@ -133,21 +133,20 @@ async<void> mutex_race_condition_test() {
 
   // Run multiple tasks concurrently that increment the counter
   TimeCount t;
-  auto& exec = *co_await current_executor();
-  increment_task("A", 10).detach_with_callback(exec, [&] {
+  auto a = increment_task("A", 10).with_callback([&] {
     LOG("finish increment_task 1 after: %d", (int)t.elapsed());
   });
-  increment_task("B", 10).detach_with_callback(exec, [&] {
+  auto b = increment_task("B", 10).with_callback([&] {
     LOG("finish increment_task 2 after: %d", (int)t.elapsed());
   });
-  increment_task("C", 10).detach_with_callback(exec, [&] {
+  auto c = increment_task("C", 10).with_callback([&] {
     LOG("finish increment_task 3 after: %d", (int)t.elapsed());
   });
 
   // Wait for all tasks to complete
-  co_await sleep(1000ms);  // GitHub ci slow on macOS
+  co_await when_all(std::move(a), std::move(b), std::move(c));
 
-  LOG("Race condition test - final counter value: %d", shared_counter);
+  LOG("Race condition test: shared_counter: %d, %d ms", shared_counter, (int)t.elapsed());
   ASSERT(shared_counter == 30);
   LOG("Race condition test passed: OK");
 }
