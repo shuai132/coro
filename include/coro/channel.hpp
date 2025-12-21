@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -36,16 +37,21 @@ struct channel {
 
     template <typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> h) {
-      exec_ = h.promise().executor_;
+      {
+        std::unique_lock<MUTEX> lock(ch_->mutex_);
+        exec_ = h.promise().executor_;
+      }
 
       {
         std::unique_lock<MUTEX> lock(ch_->mutex_);
 
         // Check if there's a waiting receiver for direct transfer
         if (!ch_->closed_.load(std::memory_order_acquire) && !ch_->recv_queue_.empty()) {
-          auto [recv_handle, recv_executor] = ch_->recv_queue_.front();
+          auto [recv_handle, recv_executor, recv_pending_value] = ch_->recv_queue_.front();
           ch_->recv_queue_.pop();
-          ch_->pending_value_ = std::move(value_);
+
+          // Store the value in the receiver's pending value slot
+          *(recv_pending_value) = std::move(value_);
 
           // Resume receiver immediately with the value
           lock.unlock();
@@ -95,16 +101,20 @@ struct channel {
   struct recv_awaitable {
     channel* ch_;
     executor* exec_ = nullptr;
+    std::optional<T> pending_value_ = std::nullopt;
 
     bool await_ready() const noexcept {
       // Check if channel is closed and no data available without suspending
-      // std::lock_guard<MUTEX> lock(ch_->mutex_);
+      std::lock_guard<MUTEX> lock(ch_->mutex_);
       return ch_->closed_.load(std::memory_order_acquire) && ch_->buffer_.empty();
     }
 
     template <typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> h) {
-      exec_ = h.promise().executor_;
+      {
+        std::unique_lock<MUTEX> lock(ch_->mutex_);
+        exec_ = h.promise().executor_;
+      }
 
       {
         std::unique_lock<MUTEX> lock(ch_->mutex_);
@@ -119,8 +129,8 @@ struct channel {
         if (!ch_->closed_.load(std::memory_order_acquire) && !ch_->send_queue_.empty()) {
           auto [send_handle, value, send_executor] = std::move(ch_->send_queue_.front());
           ch_->send_queue_.pop();
-          // Store the value for this receiver
-          ch_->pending_value_ = std::move(value);
+          // Store the value in our local pending value
+          pending_value_ = std::move(value);
 
           // Resume sender immediately so it can continue
           lock.unlock();
@@ -137,8 +147,8 @@ struct channel {
         }
 
         if (!ch_->closed_.load(std::memory_order_acquire)) {
-          // No data available, wait in recv queue
-          ch_->recv_queue_.push(std::make_pair(h, exec_));
+          // No data available, wait in recv queue with our own pending value storage
+          ch_->recv_queue_.push(std::make_tuple(h, exec_, &pending_value_));
           return true;  // Suspend
         }
       }
@@ -150,14 +160,14 @@ struct channel {
     std::optional<T> await_resume() {
       std::unique_lock<MUTEX> lock(ch_->mutex_);
 
-      if (ch_->closed_.load(std::memory_order_acquire) && ch_->buffer_.empty() && !ch_->pending_value_.has_value()) {
+      if (ch_->closed_.load(std::memory_order_acquire) && ch_->buffer_.empty() && !pending_value_.has_value()) {
         return std::nullopt;  // Channel is closed and no data available
       }
 
       // Check if we have a pending value from direct transfer
-      if (ch_->pending_value_.has_value()) {
-        auto result = std::move(ch_->pending_value_.value());
-        ch_->pending_value_.reset();
+      if (pending_value_.has_value()) {
+        auto result = std::move(pending_value_.value());
+        pending_value_.reset();
         return result;
       }
 
@@ -187,6 +197,7 @@ struct channel {
       }
 
       // This should not happen in normal flow
+      assert(false);
       return std::nullopt;
     }
   };
@@ -202,7 +213,7 @@ struct channel {
   void close() {
     // Collect handles to resume outside the lock to minimize lock time
     std::vector<std::pair<std::coroutine_handle<>, executor*>> senders_to_resume;
-    std::vector<std::pair<std::coroutine_handle<>, executor*>> receivers_to_resume;
+    std::vector<std::tuple<std::coroutine_handle<>, executor*, std::optional<T>*>> receivers_to_resume;
 
     {
       std::lock_guard<MUTEX> lock(mutex_);
@@ -233,7 +244,7 @@ struct channel {
         h.resume();
       }
     }
-    for (auto [h, exec] : receivers_to_resume) {
+    for (auto [h, exec, pending_val_ptr] : receivers_to_resume) {
       if (exec) {
         exec->dispatch([h]() {
           h.resume();
@@ -265,11 +276,10 @@ struct channel {
 
  private:
   size_t capacity_;
-  mutable MUTEX mutex_;                                                       // Protects all mutable state
-  std::queue<T> buffer_;                                                      // For buffered channels
-  std::queue<std::tuple<std::coroutine_handle<>, T, executor*>> send_queue_;  // Waiting senders with values and executors
-  std::queue<std::pair<std::coroutine_handle<>, executor*>> recv_queue_;      // Waiting receivers with executors
-  std::optional<T> pending_value_;                                            // Temporary storage for direct value passing
+  mutable MUTEX mutex_;                                                                       // Protects all mutable state
+  std::queue<T> buffer_;                                                                      // For buffered channels
+  std::queue<std::tuple<std::coroutine_handle<>, T, executor*>> send_queue_;                  // Waiting senders with values and executors
+  std::queue<std::tuple<std::coroutine_handle<>, executor*, std::optional<T>*>> recv_queue_;  // Waiting receivers
   std::atomic<bool> closed_{false};
 };
 

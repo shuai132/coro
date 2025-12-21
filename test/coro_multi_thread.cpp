@@ -90,7 +90,7 @@ async<void> run_mutex_test(executor& exec1, executor& exec2, std::thread::id exe
 }
 
 // Channel producer task
-async<void> channel_producer(auto& ch, int producer_id, int num_items, executor& expected_exec, std::thread::id expected_tid) {
+async<void> channel_producer(channel_t<int>& ch, int producer_id, int num_items, executor& expected_exec, std::thread::id expected_tid) {
   LOG("Producer %d: started, will send %d items", producer_id, num_items);
   ASSERT(std::this_thread::get_id() == expected_tid);
 
@@ -120,7 +120,7 @@ async<void> channel_producer(auto& ch, int producer_id, int num_items, executor&
 }
 
 // Channel consumer task
-async<void> channel_consumer(auto& ch, int consumer_id, std::vector<int>& received_values, int expected_count, executor& expected_exec,
+async<void> channel_consumer(channel_t<int>& ch, int consumer_id, std::vector<int>& received_values, int expected_count, executor& expected_exec,
                              std::thread::id expected_tid) {
   LOG("Consumer %d: started", consumer_id);
 

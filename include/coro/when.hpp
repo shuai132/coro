@@ -3,6 +3,7 @@
 #include <atomic>
 #include <coroutine>
 #include <memory>
+#include <mutex>
 #include <tuple>
 #include <variant>
 
@@ -52,6 +53,7 @@ struct when_all_state {
   size_t total_count = sizeof...(Ts);
   std::coroutine_handle<> parent_handle;
   executor* parent_exec = nullptr;
+  mutable std::mutex mtx;  // Mutex to protect shared state access
 #ifndef CORO_DISABLE_EXCEPTION
   std::atomic<bool> exception_set{false};
   std::exception_ptr exception;  // Add exception support
@@ -60,35 +62,47 @@ struct when_all_state {
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
     bool expected = false;
+    std::unique_lock<std::mutex> lock(mtx);
     if (exception_set.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       exception = ex;
     }
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
-    if (count == total_count && parent_handle && parent_exec) {
-      parent_exec->dispatch([h = parent_handle]() {
-        h.resume();
-      });
+    if (count == total_count) {
+      if (parent_handle && parent_exec) {
+        lock.unlock();
+        parent_exec->dispatch([h = parent_handle]() {
+          h.resume();
+        });
+      }
     }
   }
 #endif
 
   template <size_t Index, typename T>
   void set_result(T&& value) {
+    std::unique_lock<std::mutex> lock(mtx);
     std::get<Index>(results) = std::forward<T>(value);
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
-    if (count == total_count && parent_handle && parent_exec) {
-      parent_exec->dispatch([h = parent_handle]() {
-        h.resume();
-      });
+    if (count == total_count) {
+      if (parent_handle && parent_exec) {
+        lock.unlock();
+        parent_exec->dispatch([h = parent_handle]() {
+          h.resume();
+        });
+      }
     }
   }
 
   void increment_completed() {
+    std::unique_lock<std::mutex> lock(mtx);
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
-    if (count == total_count && parent_handle && parent_exec) {
-      parent_exec->dispatch([h = parent_handle]() {
-        h.resume();
-      });
+    if (count == total_count) {
+      if (parent_handle && parent_exec) {
+        lock.unlock();
+        parent_exec->dispatch([h = parent_handle]() {
+          h.resume();
+        });
+      }
     }
   }
 };
@@ -124,6 +138,7 @@ struct when_all_init_state_awaiter {
 
   template <typename Promise>
   bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
+    std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_exec = h.promise().executor_;
     state_->parent_handle = h;
     return false;  // Don't actually suspend
@@ -146,6 +161,7 @@ struct when_all_awaiter<State, std::tuple<>> {
   }
 
   bool await_suspend(std::coroutine_handle<> h) noexcept {
+    std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
   }
@@ -215,6 +231,7 @@ struct when_all_awaiter<State, std::tuple<ResultTypes...>> {
   }
 
   bool await_suspend(std::coroutine_handle<> h) noexcept {
+    std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
   }
@@ -247,6 +264,7 @@ struct when_all_awaiter<State, ResultType, std::enable_if_t<!is_tuple<ResultType
   }
 
   bool await_suspend(std::coroutine_handle<> h) noexcept {
+    std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
   }
@@ -362,6 +380,7 @@ struct when_all_void_awaiter {
   }
 
   bool await_suspend(std::coroutine_handle<> h) noexcept {
+    std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
   }
@@ -422,6 +441,7 @@ struct when_any_state_impl {
   std::atomic<bool> completed{false};
   std::coroutine_handle<> parent_handle;
   executor* parent_exec = nullptr;
+  mutable std::mutex mtx;  // Mutex to protect shared state access
 #ifndef CORO_DISABLE_EXCEPTION
   std::exception_ptr exception;  // Add exception support
 #endif
@@ -430,8 +450,10 @@ struct when_any_state_impl {
   void set_exception(std::exception_ptr ex) {
     bool expected = false;
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      std::unique_lock<std::mutex> lock(mtx);
       exception = ex;
       if (parent_handle && parent_exec) {
+        lock.unlock();
         parent_exec->dispatch([h = parent_handle]() {
           h.resume();
         });
@@ -444,9 +466,11 @@ struct when_any_state_impl {
   void set_result(T&& value) {
     bool expected = false;
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      std::unique_lock<std::mutex> lock(mtx);
       completed_index = Index;
       result.template emplace<Index + 1>(std::forward<T>(value));
       if (parent_handle && parent_exec) {
+        lock.unlock();
         parent_exec->dispatch([h = parent_handle]() {
           h.resume();
         });
@@ -458,10 +482,12 @@ struct when_any_state_impl {
   void set_completed_at() {
     bool expected = false;
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      std::unique_lock<std::mutex> lock(mtx);
       completed_index = Index;
       // Store void_placeholder for void tasks
       result.template emplace<Index + 1>(void_placeholder{});
       if (parent_handle && parent_exec) {
+        lock.unlock();
         parent_exec->dispatch([h = parent_handle]() {
           h.resume();
         });
@@ -477,6 +503,7 @@ struct when_any_state_impl<true, Ts...> {
   std::atomic<bool> completed{false};
   std::coroutine_handle<> parent_handle;
   executor* parent_exec = nullptr;
+  mutable std::mutex mtx;  // Mutex to protect shared state access
 #ifndef CORO_DISABLE_EXCEPTION
   std::exception_ptr exception;  // Add exception support
 #endif
@@ -485,8 +512,10 @@ struct when_any_state_impl<true, Ts...> {
   void set_exception(std::exception_ptr ex) {
     bool expected = false;
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      std::unique_lock<std::mutex> lock(mtx);
       exception = ex;
       if (parent_handle && parent_exec) {
+        lock.unlock();
         parent_exec->dispatch([h = parent_handle]() {
           h.resume();
         });
@@ -499,8 +528,10 @@ struct when_any_state_impl<true, Ts...> {
   void set_completed_at() {
     bool expected = false;
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      std::unique_lock<std::mutex> lock(mtx);
       completed_index = Index;
       if (parent_handle && parent_exec) {
+        lock.unlock();
         parent_exec->dispatch([h = parent_handle]() {
           h.resume();
         });
@@ -578,6 +609,7 @@ struct when_any_init_state_awaiter {
 
   template <typename Promise>
   bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
+    std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_exec = h.promise().executor_;
     state_->parent_handle = h;
     return false;  // Don't actually suspend
@@ -596,6 +628,7 @@ struct when_any_awaiter_impl {
   }
 
   bool await_suspend(std::coroutine_handle<> h) noexcept {
+    std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return !state_->completed;
   }
@@ -620,6 +653,7 @@ struct when_any_awaiter_impl<State, ResultType, true> {
   }
 
   bool await_suspend(std::coroutine_handle<> h) noexcept {
+    std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return !state_->completed;
   }
