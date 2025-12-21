@@ -80,4 +80,9 @@ if (CORO_BUILD_TEST)
     # test multi thread
     set(TARGET_NAME ${PROJECT_NAME}_multi_thread)
     add_executable(${TARGET_NAME} test/coro_multi_thread.cpp)
+
+    # test multi thread(use single thread)
+    set(TARGET_NAME ${PROJECT_NAME}_multi_thread_st)
+    add_executable(${TARGET_NAME} test/coro_multi_thread.cpp)
+    target_compile_definitions(${TARGET_NAME} PRIVATE -DCORO_USE_SINGLE_THREAD)
 endif ()

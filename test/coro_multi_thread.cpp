@@ -16,15 +16,28 @@
 
 using namespace coro;
 
+#ifndef CORO_USE_SINGLE_THREAD
+template <typename T>
+using channel_t = mt_channel<T>;
+#else
+template <typename T>
+using channel_t = st_channel<T>;
+#endif
+
 // Coroutine task that acquires mutex and modifies shared counter
 // This task will run on its own executor in a separate thread
-async<void> mutex_task(coro::mutex& mtx, std::atomic<int>& shared_counter, int task_id, executor& expected_exec) {
+async<void> mutex_task(coro::mutex& mtx, std::atomic<int>& shared_counter, int task_id, executor& expected_exec, std::thread::id expected_tid) {
+  LOG("Test mutex_task task_id: %d", task_id);
+  ASSERT(std::this_thread::get_id() == expected_tid);
+
   ASSERT(co_await current_executor() == &expected_exec);
+  ASSERT(std::this_thread::get_id() == expected_tid);
 
   for (int i = 0; i < 10; ++i) {
     // Acquire the mutex
     auto guard = co_await mtx.scoped_lock();
     ASSERT(co_await current_executor() == &expected_exec);
+    ASSERT(std::this_thread::get_id() == expected_tid);
 
     // Critical section: read-modify-write on shared counter
     int temp = shared_counter.load();
@@ -33,6 +46,7 @@ async<void> mutex_task(coro::mutex& mtx, std::atomic<int>& shared_counter, int t
     // Simulate some work with the lock held
     co_await sleep(5ms);
     ASSERT(co_await current_executor() == &expected_exec);
+    ASSERT(std::this_thread::get_id() == expected_tid);
 
     // Increment the counter
     shared_counter.store(temp + 1);
@@ -42,10 +56,11 @@ async<void> mutex_task(coro::mutex& mtx, std::atomic<int>& shared_counter, int t
   }
 
   ASSERT(co_await current_executor() == &expected_exec);
+  ASSERT(std::this_thread::get_id() == expected_tid);
   LOG("Task %d: finished", task_id);
 }
 
-async<void> run_test(executor& exec1, executor& exec2) {
+async<void> run_mutex_test(executor& exec1, executor& exec2, std::thread::id exec1_tid, std::thread::id exec2_tid) {
   LOG("=== Testing Mutex Across Threads ===");
 
   // Create a shared mutex and counter
@@ -54,8 +69,8 @@ async<void> run_test(executor& exec1, executor& exec2) {
   TimeCount t;
 
   // Launch two tasks on different executors (different threads)
-  auto task1 = mutex_task(mtx, shared_counter, 1, exec1).bind_executor(exec1);
-  auto task2 = mutex_task(mtx, shared_counter, 2, exec2).bind_executor(exec2);
+  auto task1 = mutex_task(mtx, shared_counter, 1, exec1, exec1_tid).bind_executor(exec1);
+  auto task2 = mutex_task(mtx, shared_counter, 2, exec2, exec2_tid).bind_executor(exec2);
 
   // Start test
 #if 1
@@ -75,10 +90,12 @@ async<void> run_test(executor& exec1, executor& exec2) {
 }
 
 // Channel producer task
-async<void> channel_producer(coro::channel<int>& ch, int producer_id, int num_items, executor& expected_exec) {
+async<void> channel_producer(auto& ch, int producer_id, int num_items, executor& expected_exec, std::thread::id expected_tid) {
   LOG("Producer %d: started, will send %d items", producer_id, num_items);
+  ASSERT(std::this_thread::get_id() == expected_tid);
 
   ASSERT(co_await current_executor() == &expected_exec);
+  ASSERT(std::this_thread::get_id() == expected_tid);
 
   for (int i = 0; i < num_items; ++i) {
     int value = producer_id * 1000 + i;
@@ -86,6 +103,7 @@ async<void> channel_producer(coro::channel<int>& ch, int producer_id, int num_it
 
     bool success = co_await ch.send(value);
     ASSERT(co_await current_executor() == &expected_exec);
+    ASSERT(std::this_thread::get_id() == expected_tid);
 
     if (!success) {
       LOG("Producer %d: channel closed, stopping", producer_id);
@@ -95,22 +113,25 @@ async<void> channel_producer(coro::channel<int>& ch, int producer_id, int num_it
     LOG("Producer %d: sent value %d", producer_id, value);
     co_await sleep(10ms);  // Simulate some work
     ASSERT(co_await current_executor() == &expected_exec);
+    ASSERT(std::this_thread::get_id() == expected_tid);
   }
 
   LOG("Producer %d: finished", producer_id);
 }
 
 // Channel consumer task
-async<void> channel_consumer(coro::channel<int>& ch, int consumer_id, std::vector<int>& received_values, int expected_count,
-                             executor& expected_exec) {
+async<void> channel_consumer(auto& ch, int consumer_id, std::vector<int>& received_values, int expected_count, executor& expected_exec,
+                             std::thread::id expected_tid) {
   LOG("Consumer %d: started", consumer_id);
 
   ASSERT(co_await current_executor() == &expected_exec);
+  ASSERT(std::this_thread::get_id() == expected_tid);
 
   while (true) {
     LOG("Consumer %d: waiting for value", consumer_id);
     auto value = co_await ch.recv();
     ASSERT(co_await current_executor() == &expected_exec);
+    ASSERT(std::this_thread::get_id() == expected_tid);
 
     if (!value.has_value()) {
       LOG("Consumer %d: channel closed, stopping", consumer_id);
@@ -122,6 +143,7 @@ async<void> channel_consumer(coro::channel<int>& ch, int consumer_id, std::vecto
 
     co_await sleep(15ms);  // Simulate some work
     ASSERT(co_await current_executor() == &expected_exec);
+    ASSERT(std::this_thread::get_id() == expected_tid);
 
     // If we know the expected count and have received that many items, we can break early
     if (expected_count > 0 && received_values.size() >= static_cast<size_t>(expected_count)) {
@@ -133,21 +155,21 @@ async<void> channel_consumer(coro::channel<int>& ch, int consumer_id, std::vecto
   LOG("Consumer %d: finished, received %zu items", consumer_id, received_values.size());
 }
 
-async<void> run_channel_test(executor& exec1, executor& exec2) {
+async<void> run_channel_test(executor& exec1, executor& exec2, std::thread::id exec1_tid, std::thread::id exec2_tid) {
   LOG("=== Testing Channel Across Threads ===");
 
   // Test 1: Unbuffered channel (capacity = 0)
   {
     LOG("--- Test 1: Unbuffered Channel ---");
-    coro::channel<int> ch(0);  // Unbuffered
+    channel_t<int> ch(0);  // Unbuffered
     std::vector<int> received1, received2;
     TimeCount t;
 
     // Create tasks
-    auto producer1 = channel_producer(ch, 1, 5, exec1).bind_executor(exec1);
-    auto producer2 = channel_producer(ch, 2, 5, exec2).bind_executor(exec2);
-    auto consumer1 = channel_consumer(ch, 1, received1, 5, exec1).bind_executor(exec1);
-    auto consumer2 = channel_consumer(ch, 2, received2, 5, exec2).bind_executor(exec2);
+    auto producer1 = channel_producer(ch, 1, 5, exec1, exec1_tid).bind_executor(exec1);
+    auto producer2 = channel_producer(ch, 2, 5, exec2, exec2_tid).bind_executor(exec2);
+    auto consumer1 = channel_consumer(ch, 1, received1, 5, exec1, exec1_tid).bind_executor(exec1);
+    auto consumer2 = channel_consumer(ch, 2, received2, 5, exec2, exec2_tid).bind_executor(exec2);
 
     // Run all tasks concurrently
     co_await when_all(std::move(producer1), std::move(producer2), std::move(consumer1), std::move(consumer2));
@@ -163,16 +185,16 @@ async<void> run_channel_test(executor& exec1, executor& exec2) {
   // Test 2: Buffered channel (capacity = 3)
   {
     LOG("--- Test 2: Buffered Channel (capacity=3) ---");
-    coro::channel<int> ch(3);  // Buffered with capacity 3
+    channel_t<int> ch(3);  // Buffered with capacity 3
     std::vector<int> received;
     TimeCount t;
 
-    auto producer = channel_producer(ch, 3, 10, exec1)
+    auto producer = channel_producer(ch, 3, 10, exec1, exec1_tid)
                         .with_callback([] {
                           LOG("producer end");
                         })
                         .bind_executor(exec1);
-    auto consumer = channel_consumer(ch, 3, received, 10, exec2)
+    auto consumer = channel_consumer(ch, 3, received, 10, exec2, exec2_tid)
                         .with_callback([] {
                           LOG("consumer end");
                         })
@@ -196,14 +218,14 @@ async<void> run_channel_test(executor& exec1, executor& exec2) {
   // Test 3: Multiple producers, single consumer
   {
     LOG("--- Test 3: Multiple Producers, Single Consumer ---");
-    coro::channel<int> ch(5);
+    channel_t<int> ch(5);
     std::vector<int> received;
     TimeCount t;
 
-    auto producer1 = channel_producer(ch, 4, 8, exec1).bind_executor(exec1);
-    auto producer2 = channel_producer(ch, 5, 8, exec2).bind_executor(exec2);
-    auto producer3 = channel_producer(ch, 6, 8, exec1).bind_executor(exec1);
-    auto consumer = channel_consumer(ch, 4, received, 24, exec2).bind_executor(exec2);
+    auto producer1 = channel_producer(ch, 4, 8, exec1, exec1_tid).bind_executor(exec1);
+    auto producer2 = channel_producer(ch, 5, 8, exec2, exec2_tid).bind_executor(exec2);
+    auto producer3 = channel_producer(ch, 6, 8, exec1, exec1_tid).bind_executor(exec1);
+    auto consumer = channel_consumer(ch, 4, received, 24, exec2, exec2_tid).bind_executor(exec2);
 
     co_await when_all(std::move(producer1), std::move(producer2), std::move(producer3), std::move(consumer));
 
@@ -220,11 +242,21 @@ async<void> run_channel_test(executor& exec1, executor& exec2) {
 int main() {
   LOG("Multi-thread test init");
 
+#ifndef CORO_USE_SINGLE_THREAD
   executor_loop exec1;
   executor_loop exec2;
+  executor_loop exec3;
+
+  // Record thread IDs
+  std::thread::id exec1_tid;
+  std::thread::id exec2_tid;
+  std::thread::id exec3_tid;
+  std::atomic<int> exec_tid_ready = 0;
 
   // Thread 1: Run executor 1
   std::thread thread1([&] {
+    exec1_tid = std::this_thread::get_id();
+    exec_tid_ready.fetch_add(1, std::memory_order_release);
     LOG("Thread 1: starting executor loop");
     exec1.run_loop();
     LOG("Thread 1: executor loop stopped");
@@ -232,31 +264,65 @@ int main() {
 
   // Thread 2: Run executor 2
   std::thread thread2([&] {
+    exec2_tid = std::this_thread::get_id();
+    exec_tid_ready.fetch_add(1, std::memory_order_release);
     LOG("Thread 2: starting executor loop");
     exec2.run_loop();
     LOG("Thread 2: executor loop stopped");
   });
 
+  // Thread 3: Run executor main
+  std::thread thread3([&] {
+    exec3_tid = std::this_thread::get_id();
+    exec_tid_ready.fetch_add(1, std::memory_order_release);
+    LOG("Thread 3: starting executor loop");
+    exec3.run_loop();
+    LOG("Thread 3: executor loop stopped");
+  });
+
+  while (exec_tid_ready.load(std::memory_order_acquire) < 3) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+#else
+  executor_loop exec1;
+  executor_loop& exec2 = exec1;
+  executor_loop& exec3 = exec1;
+
+  // Record thread IDs
+  std::thread::id exec1_tid;
+  std::thread::id& exec2_tid = exec1_tid;
+  exec1_tid = std::this_thread::get_id();
+  LOG("Thread 1: starting executor loop");
+  LOG("Thread 1: executor loop stopped");
+#endif
+
   // Start the tests on executor 1
-  auto test_coro = [](executor& exec1, executor& exec2) -> async<void> {
+  auto test_coro = [](auto& exec1, auto& exec2, auto exec1_tid, auto exec2_tid) -> async<void> {
     // Run mutex test
-    co_await run_test(exec1, exec2);
+    co_await run_mutex_test(exec1, exec2, exec1_tid, exec2_tid);
 
     // Run channel test
-    co_await run_channel_test(exec1, exec2);
+    co_await run_channel_test(exec1, exec2, exec1_tid, exec2_tid);
 
     LOG("All tests completed");
-  }(exec1, exec2);
+  }(exec1, exec2, exec1_tid, exec2_tid);
 
-  test_coro.detach_with_callback(exec1, [&] {
+  test_coro.detach_with_callback(exec3, [&] {
     LOG("Test completed, stopping executors");
     exec1.stop();
     exec2.stop();
+    exec3.stop();
   });
 
   // Wait for both executors to finish
+
+#ifndef CORO_USE_SINGLE_THREAD
   thread1.join();
   thread2.join();
+  thread3.join();
+#else
+  exec1.run_loop();
+#endif
   LOG("Test completed successfully");
 
   check_coro_leak();

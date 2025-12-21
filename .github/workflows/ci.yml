@@ -140,3 +140,9 @@ jobs:
         working-directory: build
         run: |
           ./coro_multi_thread${{ matrix.env.BIN_SUFFIX }}
+
+      - name: Test multi_thread(use single thread)
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_multi_thread_st${{ matrix.env.BIN_SUFFIX }}
