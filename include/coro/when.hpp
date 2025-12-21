@@ -51,7 +51,7 @@ struct when_all_state {
   std::atomic<size_t> completed_count{0};
   size_t total_count = sizeof...(Ts);
   std::coroutine_handle<> parent_handle;
-  executor* exec = nullptr;
+  executor* parent_exec = nullptr;
 #ifndef CORO_DISABLE_EXCEPTION
   std::atomic<bool> exception_set{false};
   std::exception_ptr exception;  // Add exception support
@@ -64,8 +64,8 @@ struct when_all_state {
       exception = ex;
     }
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
-    if (count == total_count && parent_handle && exec) {
-      exec->dispatch([h = parent_handle]() {
+    if (count == total_count && parent_handle && parent_exec) {
+      parent_exec->dispatch([h = parent_handle]() {
         h.resume();
       });
     }
@@ -76,8 +76,8 @@ struct when_all_state {
   void set_result(T&& value) {
     std::get<Index>(results) = std::forward<T>(value);
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
-    if (count == total_count && parent_handle && exec) {
-      exec->dispatch([h = parent_handle]() {
+    if (count == total_count && parent_handle && parent_exec) {
+      parent_exec->dispatch([h = parent_handle]() {
         h.resume();
       });
     }
@@ -85,8 +85,8 @@ struct when_all_state {
 
   void increment_completed() {
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
-    if (count == total_count && parent_handle && exec) {
-      exec->dispatch([h = parent_handle]() {
+    if (count == total_count && parent_handle && parent_exec) {
+      parent_exec->dispatch([h = parent_handle]() {
         h.resume();
       });
     }
@@ -124,7 +124,7 @@ struct when_all_init_state_awaiter {
 
   template <typename Promise>
   bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
-    state_->exec = h.promise().executor_;
+    state_->parent_exec = h.promise().executor_;
     state_->parent_handle = h;
     return false;  // Don't actually suspend
   }
@@ -386,7 +386,11 @@ awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_im
   co_await when_all_init_state_awaiter<state_type>{state};
 
   // Launch all tasks
-  (when_all_task<Is>(std::forward<Awaitables>(awaitables), state).detach(*state->exec), ...);
+  auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw&& aw) {
+    auto* exec = aw.get_executor() ? aw.get_executor() : parent_exec;
+    when_all_task<I>(std::forward<Aw>(aw), state).bind_executor(*exec).detach(*exec);
+  };
+  (launch_task.template operator()<Is>(state->parent_exec, std::forward<Awaitables>(awaitables)), ...);
 
   // Wait for all to complete
   if constexpr (std::is_void_v<result_tuple>) {
@@ -417,7 +421,7 @@ struct when_any_state_impl {
   size_t completed_index = 0;
   std::atomic<bool> completed{false};
   std::coroutine_handle<> parent_handle;
-  executor* exec = nullptr;
+  executor* parent_exec = nullptr;
 #ifndef CORO_DISABLE_EXCEPTION
   std::exception_ptr exception;  // Add exception support
 #endif
@@ -427,8 +431,8 @@ struct when_any_state_impl {
     bool expected = false;
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       exception = ex;
-      if (parent_handle && exec) {
-        exec->dispatch([h = parent_handle]() {
+      if (parent_handle && parent_exec) {
+        parent_exec->dispatch([h = parent_handle]() {
           h.resume();
         });
       }
@@ -442,8 +446,8 @@ struct when_any_state_impl {
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       completed_index = Index;
       result.template emplace<Index + 1>(std::forward<T>(value));
-      if (parent_handle && exec) {
-        exec->dispatch([h = parent_handle]() {
+      if (parent_handle && parent_exec) {
+        parent_exec->dispatch([h = parent_handle]() {
           h.resume();
         });
       }
@@ -457,8 +461,8 @@ struct when_any_state_impl {
       completed_index = Index;
       // Store void_placeholder for void tasks
       result.template emplace<Index + 1>(void_placeholder{});
-      if (parent_handle && exec) {
-        exec->dispatch([h = parent_handle]() {
+      if (parent_handle && parent_exec) {
+        parent_exec->dispatch([h = parent_handle]() {
           h.resume();
         });
       }
@@ -472,7 +476,7 @@ struct when_any_state_impl<true, Ts...> {
   size_t completed_index = 0;
   std::atomic<bool> completed{false};
   std::coroutine_handle<> parent_handle;
-  executor* exec = nullptr;
+  executor* parent_exec = nullptr;
 #ifndef CORO_DISABLE_EXCEPTION
   std::exception_ptr exception;  // Add exception support
 #endif
@@ -482,8 +486,8 @@ struct when_any_state_impl<true, Ts...> {
     bool expected = false;
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       exception = ex;
-      if (parent_handle && exec) {
-        exec->dispatch([h = parent_handle]() {
+      if (parent_handle && parent_exec) {
+        parent_exec->dispatch([h = parent_handle]() {
           h.resume();
         });
       }
@@ -496,8 +500,8 @@ struct when_any_state_impl<true, Ts...> {
     bool expected = false;
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       completed_index = Index;
-      if (parent_handle && exec) {
-        exec->dispatch([h = parent_handle]() {
+      if (parent_handle && parent_exec) {
+        parent_exec->dispatch([h = parent_handle]() {
           h.resume();
         });
       }
@@ -574,7 +578,7 @@ struct when_any_init_state_awaiter {
 
   template <typename Promise>
   bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
-    state_->exec = h.promise().executor_;
+    state_->parent_exec = h.promise().executor_;
     state_->parent_handle = h;
     return false;  // Don't actually suspend
   }
@@ -649,7 +653,11 @@ awaitable<when_any_result<awaitable_result_t<Awaitables>...>> when_any_impl(std:
   co_await when_any_init_state_awaiter<state_type>{state};
 
   // Launch all tasks
-  (when_any_task<Is>(std::forward<Awaitables>(awaitables), state).detach(*state->exec), ...);
+  auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw&& aw) {
+    auto* exec = aw.get_executor() ? aw.get_executor() : parent_exec;
+    when_any_task<I>(std::forward<Aw>(aw), state).bind_executor(*exec).detach(*exec);
+  };
+  (launch_task.template operator()<Is>(state->parent_exec, std::forward<Awaitables>(awaitables)), ...);
 
   // Wait for first to complete
   co_return co_await when_any_awaiter<state_type, result_type, awaitable_result_t<Awaitables>...>{state};

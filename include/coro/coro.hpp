@@ -246,6 +246,10 @@ struct awaitable {
     return std::move(*this);
   }
 
+  executor* get_executor() const {
+    return current_coro_handle_.promise().executor_;
+  }
+
   void detach(auto& executor) {
     auto* exec_to_use = current_coro_handle_.promise().executor_ ? current_coro_handle_.promise().executor_ : &executor;
     exec_to_use->dispatch([coro = std::make_shared<awaitable<T>>(std::move(*this)), exec_to_use]() mutable {
