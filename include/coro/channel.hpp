@@ -7,14 +7,9 @@
 #include <queue>
 
 #include "coro/coro.hpp"
+#include "coro/dummy_mutex.hpp"
 
 namespace coro {
-
-// Dummy mutex for single-threaded scenarios (no overhead)
-struct dummy_mutex {
-  constexpr void lock() noexcept {}
-  constexpr void unlock() noexcept {}
-};
 
 template <typename T, typename MUTEX = std::mutex>
 struct channel {
@@ -290,19 +285,19 @@ struct channel {
 };
 
 template <typename T>
-using mt_channel = channel<T, std::mutex>;  // Multi-threaded channel
+using channel_mt = channel<T, std::mutex>;
 
 template <typename T>
-using st_channel = channel<T, dummy_mutex>;  // Single-threaded channel (no lock overhead)
+using channel_st = channel<T, dummy_mutex>;
 
 // Aliases for convenience
 template <typename T, typename M>
 using unbuffered_channel = channel<T, M>;
 
 template <typename T>
-using mt_unbuffered_channel = unbuffered_channel<T, std::mutex>;
+using unbuffered_channel_mt = unbuffered_channel<T, std::mutex>;
 
 template <typename T>
-using st_unbuffered_channel = unbuffered_channel<T, dummy_mutex>;
+using unbuffered_channel_st = unbuffered_channel<T, dummy_mutex>;
 
 }  // namespace coro

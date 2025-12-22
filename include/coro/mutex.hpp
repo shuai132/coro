@@ -2,29 +2,36 @@
 
 #include <atomic>
 #include <coroutine>
+#include <mutex>
 
 #include "coro/coro.hpp"
+#include "coro/dummy_mutex.hpp"
 
 namespace coro {
 
-struct mutex {
+// Coroutine mutex with configurable thread safety
+// Template parameter MUTEX controls internal thread safety:
+//   - std::mutex: Thread-safe for multithreaded use (default)
+//   - dummy_mutex: No lock overhead for single-threaded use
+template <typename MUTEX = std::mutex>
+struct mutex_t {
  private:
   // Intrusive list node stored in the awaitable (which is part of coroutine frame)
   struct waiter_node {
     std::coroutine_handle<> handle;
-    executor* exec;
-    waiter_node* next{nullptr};
+    executor* exec{};
+    waiter_node* next{};
   };
 
  public:
-  mutex() : locked_(false), head_(nullptr), tail_(nullptr) {}
+  mutex_t() : locked_(false), head_(nullptr), tail_(nullptr) {}
 
   bool is_locked() const {
     return locked_.load(std::memory_order_acquire);
   }
 
   struct lock_awaitable {
-    mutex* m_;
+    mutex_t* m_;
     waiter_node node_{};  // Node lives as long as the awaitable (part of coroutine frame)
 
     bool await_ready() noexcept {
@@ -43,14 +50,17 @@ struct mutex {
       node_.exec = h.promise().executor_;
       node_.next = nullptr;
 
-      // Add to the waiting list
-      waiter_node* old_tail = m_->tail_.load(std::memory_order_acquire);
-      if (old_tail) {
-        old_tail->next = &node_;
-      } else {
-        m_->head_.store(&node_, std::memory_order_release);
+      // Add to the waiting list (protected by internal mutex for thread safety)
+      {
+        std::lock_guard<MUTEX> lock(m_->list_lock_);
+        waiter_node* old_tail = m_->tail_;
+        if (old_tail) {
+          old_tail->next = &node_;
+        } else {
+          m_->head_ = &node_;
+        }
+        m_->tail_ = &node_;
       }
-      m_->tail_.store(&node_, std::memory_order_release);
 
       // Return true to suspend
       return true;
@@ -68,7 +78,7 @@ struct mutex {
   }
 
   struct scoped_lock_awaitable {
-    mutex* m_;
+    mutex_t* m_;
     waiter_node node_{};  // Node lives as long as the awaitable (part of coroutine frame)
 
     bool await_ready() noexcept {
@@ -87,14 +97,17 @@ struct mutex {
       node_.exec = h.promise().executor_;
       node_.next = nullptr;
 
-      // Add to the waiting list
-      waiter_node* old_tail = m_->tail_.load(std::memory_order_acquire);
-      if (old_tail) {
-        old_tail->next = &node_;
-      } else {
-        m_->head_.store(&node_, std::memory_order_release);
+      // Add to the waiting list (protected by internal mutex for thread safety)
+      {
+        std::lock_guard<MUTEX> lock(m_->list_lock_);
+        waiter_node* old_tail = m_->tail_;
+        if (old_tail) {
+          old_tail->next = &node_;
+        } else {
+          m_->head_ = &node_;
+        }
+        m_->tail_ = &node_;
       }
-      m_->tail_.store(&node_, std::memory_order_release);
 
       // Return true to suspend
       return true;
@@ -113,21 +126,30 @@ struct mutex {
   }
 
   void unlock() {
-    // Check if there are waiting coroutines
-    waiter_node* node = head_.load(std::memory_order_acquire);
-    if (node) {
-      auto next_handle = node->handle;
-      auto* next_exec = node->exec;
+    // Check if there are waiting coroutines (protected by internal mutex)
+    waiter_node* node;
+    std::coroutine_handle<> next_handle;
+    executor* next_exec;
 
-      // Move head to next BEFORE resuming
-      // This is critical: we must update the list before resume
-      // because the node will be destroyed when the coroutine runs
-      waiter_node* next_node = node->next;
-      head_.store(next_node, std::memory_order_release);
-      if (!next_node) {
-        tail_.store(nullptr, std::memory_order_release);
+    {
+      std::lock_guard<MUTEX> lock(list_lock_);
+      node = head_;
+      if (node) {
+        next_handle = node->handle;
+        next_exec = node->exec;
+
+        // Move head to next BEFORE resuming
+        // This is critical: we must update the list before resume
+        // because the node will be destroyed when the coroutine runs
+        waiter_node* next_node = node->next;
+        head_ = next_node;
+        if (!next_node) {
+          tail_ = nullptr;
+        }
       }
+    }
 
+    if (node) {
       // The lock remains held (locked_ stays true), transfer to next coroutine
       // When next_handle resumes, it will return from co_await and the node
       // will be destroyed, but we've already updated head_ so it's safe
@@ -146,14 +168,15 @@ struct mutex {
 
  private:
   std::atomic<bool> locked_;
-  std::atomic<waiter_node*> head_;  // Head of waiting list
-  std::atomic<waiter_node*> tail_;  // Tail of waiting list
+  mutable MUTEX list_lock_;  // Protects head_ and tail_ for thread safety
+  waiter_node* head_;        // Head of waiting list
+  waiter_node* tail_;        // Tail of waiting list
 
  public:
   // RAII-style lock guard that unlocks when destroyed
   class lock_guard {
    public:
-    explicit lock_guard(mutex* m) : mutex_(m) {}
+    explicit lock_guard(mutex_t* m) : mutex_(m) {}
 
     ~lock_guard() {
       unlock();
@@ -161,7 +184,7 @@ struct mutex {
 
     // Manually unlock the mutex
     void unlock() {
-      mutex* m = mutex_.load(std::memory_order_acquire);
+      mutex_t* m = mutex_.load(std::memory_order_acquire);
       if (m) {
         m->unlock();
         mutex_.store(nullptr, std::memory_order_release);
@@ -178,8 +201,13 @@ struct mutex {
     lock_guard& operator=(const lock_guard&) = delete;
 
    private:
-    std::atomic<mutex*> mutex_;
+    std::atomic<mutex_t*> mutex_;
   };
 };
+
+// Type aliases for convenience
+using mutex = mutex_t<std::mutex>;
+using mutex_mt = mutex_t<std::mutex>;
+using mutex_st = mutex_t<dummy_mutex>;
 
 }  // namespace coro

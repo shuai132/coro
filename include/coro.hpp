@@ -17,3 +17,6 @@
 
 // when
 #include "coro/when.hpp"
+
+// condition_variable
+#include "coro/condition_variable.hpp"

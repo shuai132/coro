@@ -69,6 +69,14 @@ if (CORO_BUILD_TEST)
     set(TARGET_NAME ${PROJECT_NAME}_mutex)
     add_executable(${TARGET_NAME} test/coro_mutex.cpp)
 
+    # test condition_variable
+    set(TARGET_NAME ${PROJECT_NAME}_condition_variable)
+    add_executable(${TARGET_NAME} test/coro_condition_variable.cpp)
+
+    # test condition_variable multi-threaded
+    set(TARGET_NAME ${PROJECT_NAME}_condition_variable_mt)
+    add_executable(${TARGET_NAME} test/coro_condition_variable_mt.cpp)
+
     # test channel
     set(TARGET_NAME ${PROJECT_NAME}_channel)
     add_executable(${TARGET_NAME} test/coro_channel.cpp)

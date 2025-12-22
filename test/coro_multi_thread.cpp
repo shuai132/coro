@@ -18,10 +18,10 @@ using namespace coro;
 
 #ifndef CORO_USE_SINGLE_THREAD
 template <typename T>
-using channel_t = mt_channel<T>;
+using channel_t = channel_mt<T>;
 #else
 template <typename T>
-using channel_t = st_channel<T>;
+using channel_t = channel_st<T>;
 #endif
 
 // Coroutine task that acquires mutex and modifies shared counter
