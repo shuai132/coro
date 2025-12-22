@@ -20,3 +20,6 @@
 
 // condition_variable
 #include "coro/condition_variable.hpp"
+
+// wait_group
+#include "coro/wait_group.hpp"
