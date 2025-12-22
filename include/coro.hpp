@@ -26,3 +26,6 @@
 
 // latch
 #include "coro/latch.hpp"
+
+// semaphore
+#include "coro/semaphore.hpp"

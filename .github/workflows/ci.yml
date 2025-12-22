@@ -159,11 +159,23 @@ jobs:
         run: |
           ./coro_wait_group_mt${{ matrix.env.BIN_SUFFIX }}
 
-      - name: Test wait_latch
+      - name: Test latch
         if: always()
         working-directory: build
         run: |
           ./coro_latch${{ matrix.env.BIN_SUFFIX }}
+
+      - name: Test semaphore
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_semaphore${{ matrix.env.BIN_SUFFIX }}
+
+      - name: Test semaphore_mt
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_semaphore_mt${{ matrix.env.BIN_SUFFIX }}
 
       - name: Test multi_thread
         if: always()

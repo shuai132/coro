@@ -97,6 +97,14 @@ if (CORO_BUILD_TEST)
     set(TARGET_NAME ${PROJECT_NAME}_latch)
     add_executable(${TARGET_NAME} test/coro_latch.cpp)
 
+    # test semaphore
+    set(TARGET_NAME ${PROJECT_NAME}_semaphore)
+    add_executable(${TARGET_NAME} test/coro_semaphore.cpp)
+
+    # test semaphore multi-threaded
+    set(TARGET_NAME ${PROJECT_NAME}_semaphore_mt)
+    add_executable(${TARGET_NAME} test/coro_semaphore_mt.cpp)
+
     # test multi thread
     set(TARGET_NAME ${PROJECT_NAME}_multi_thread)
     add_executable(${TARGET_NAME} test/coro_multi_thread.cpp)
