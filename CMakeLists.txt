@@ -93,6 +93,10 @@ if (CORO_BUILD_TEST)
     set(TARGET_NAME ${PROJECT_NAME}_wait_group_mt)
     add_executable(${TARGET_NAME} test/coro_wait_group_mt.cpp)
 
+    # test latch
+    set(TARGET_NAME ${PROJECT_NAME}_latch)
+    add_executable(${TARGET_NAME} test/coro_latch.cpp)
+
     # test multi thread
     set(TARGET_NAME ${PROJECT_NAME}_multi_thread)
     add_executable(${TARGET_NAME} test/coro_multi_thread.cpp)

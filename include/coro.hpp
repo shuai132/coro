@@ -23,3 +23,6 @@
 
 // wait_group
 #include "coro/wait_group.hpp"
+
+// latch
+#include "coro/latch.hpp"

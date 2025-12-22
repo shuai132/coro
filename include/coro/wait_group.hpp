@@ -124,6 +124,12 @@ struct wait_group_t {
     return wait_awaitable{this};
   }
 
+  // Support direct co_await on wait_group object
+  // Usage: co_await wg;
+  auto operator co_await() {
+    return wait_awaitable{this};
+  }
+
   // Get current counter value (for debugging/testing)
   int get_count() const {
     std::lock_guard<MUTEX> lock(mutex_);
