@@ -1,19 +1,16 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <coroutine>
-#include <mutex>
 
 #include "coro/coro.hpp"
-#include "coro/dummy_mutex.hpp"
 
 namespace coro {
 
-// Coroutine mutex with configurable thread safety
-// Template parameter MUTEX controls internal thread safety:
-//   - std::mutex: Thread-safe for multithreaded use (default)
-//   - dummy_mutex: No lock overhead for single-threaded use
-template <typename MUTEX = std::mutex>
+// Lock-free coroutine mutex
+// Inspired by async_simple's Mutex implementation
+// Uses atomic operations to manage lock state and waiter queue without internal locks
 struct mutex_t {
  private:
   // Intrusive list node stored in the awaitable (which is part of coroutine frame)
@@ -24,10 +21,30 @@ struct mutex_t {
   };
 
  public:
-  mutex_t() : locked_(false), head_(nullptr), tail_(nullptr) {}
+  mutex_t() : state_(unlocked_state()), waiters_(nullptr) {}
 
-  bool is_locked() const {
-    return locked_.load(std::memory_order_acquire);
+  ~mutex_t() {
+    // Check there are no waiters waiting to acquire the lock
+    assert(state_.load(std::memory_order_relaxed) == unlocked_state() || state_.load(std::memory_order_relaxed) == nullptr);
+    assert(waiters_ == nullptr);
+  }
+
+  mutex_t(const mutex_t&) = delete;
+  mutex_t(mutex_t&&) = delete;
+  mutex_t& operator=(const mutex_t&) = delete;
+  mutex_t& operator=(mutex_t&&) = delete;
+
+  // Check if the mutex is currently locked
+  // Note: This is a snapshot and may be stale immediately after return
+  bool is_locked() const noexcept {
+    return state_.load(std::memory_order_relaxed) != const_cast<mutex_t*>(this);
+  }
+
+  // Try to lock the mutex synchronously
+  // Returns true if lock was acquired, false otherwise
+  bool try_lock() noexcept {
+    void* old_value = unlocked_state();
+    return state_.compare_exchange_strong(old_value, nullptr, std::memory_order_acquire, std::memory_order_relaxed);
   }
 
   struct lock_awaitable {
@@ -35,142 +52,142 @@ struct mutex_t {
     waiter_node node_{};  // Node lives as long as the awaitable (part of coroutine frame)
 
     bool await_ready() noexcept {
-      // Try to acquire the lock atomically
-      bool expected = false;
-      if (m_->locked_.compare_exchange_strong(expected, true, std::memory_order_acquire)) {
-        return true;  // Don't suspend, we have the lock
-      }
-      return false;  // Suspend, as the lock is already taken
+      return m_->try_lock();
     }
 
     template <typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> h) {
-      // Initialize the node
       node_.handle = h;
       node_.exec = h.promise().executor_;
-      node_.next = nullptr;
-
-      // Add to the waiting list (protected by internal mutex for thread safety)
-      {
-        std::lock_guard<MUTEX> lock(m_->list_lock_);
-        waiter_node* old_tail = m_->tail_;
-        if (old_tail) {
-          old_tail->next = &node_;
-        } else {
-          m_->head_ = &node_;
-        }
-        m_->tail_ = &node_;
-      }
-
-      // Return true to suspend
-      return true;
+      return m_->lock_async_impl(&node_);
     }
 
-    void await_resume() noexcept {
-      // Lock acquired, nothing to return
-    }
+    void await_resume() noexcept {}
   };
-
-  // Low-level lock operation, must be paired with unlock()
-  // Usage: co_await mutex.lock();
-  auto lock() {
-    return lock_awaitable{this};
-  }
 
   struct scoped_lock_awaitable {
     mutex_t* m_;
     waiter_node node_{};  // Node lives as long as the awaitable (part of coroutine frame)
 
     bool await_ready() noexcept {
-      // Try to acquire the lock atomically
-      bool expected = false;
-      if (m_->locked_.compare_exchange_strong(expected, true, std::memory_order_acquire)) {
-        return true;  // Successfully acquired the lock, don't suspend
-      }
-      return false;  // Lock is held, need to suspend
+      return m_->try_lock();
     }
 
     template <typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> h) {
-      // Initialize the node
       node_.handle = h;
       node_.exec = h.promise().executor_;
-      node_.next = nullptr;
-
-      // Add to the waiting list (protected by internal mutex for thread safety)
-      {
-        std::lock_guard<MUTEX> lock(m_->list_lock_);
-        waiter_node* old_tail = m_->tail_;
-        if (old_tail) {
-          old_tail->next = &node_;
-        } else {
-          m_->head_ = &node_;
-        }
-        m_->tail_ = &node_;
-      }
-
-      // Return true to suspend
-      return true;
+      return m_->lock_async_impl(&node_);
     }
 
-    auto await_resume() {
+    auto await_resume() noexcept {
       // Return a RAII-style guard that releases the lock when destroyed
       return lock_guard{m_};
     }
   };
 
+  // Low-level lock operation, must be paired with unlock()
+  // Usage: co_await mutex.lock();
+  auto lock() noexcept {
+    return lock_awaitable{this};
+  }
+
   // RAII-style scoped lock that returns a lock_guard
   // Usage: auto guard = co_await mutex.scoped_lock();
-  auto scoped_lock() {
+  auto scoped_lock() noexcept {
     return scoped_lock_awaitable{this};
   }
 
-  void unlock() {
-    // Check if there are waiting coroutines (protected by internal mutex)
-    waiter_node* node;
-    std::coroutine_handle<> next_handle;
-    executor* next_exec;
+  // Unlock the mutex
+  // If there are waiting coroutines, the next one will be resumed
+  void unlock() noexcept {
+    assert(state_.load(std::memory_order_relaxed) != unlocked_state());
 
-    {
-      std::lock_guard<MUTEX> lock(list_lock_);
-      node = head_;
-      if (node) {
-        next_handle = node->handle;
-        next_exec = node->exec;
-
-        // Move head to next BEFORE resuming
-        // This is critical: we must update the list before resume
-        // because the node will be destroyed when the coroutine runs
-        waiter_node* next_node = node->next;
-        head_ = next_node;
-        if (!next_node) {
-          tail_ = nullptr;
+    auto* waiters_head = waiters_;
+    if (waiters_head == nullptr) {
+      void* current_state = state_.load(std::memory_order_relaxed);
+      if (current_state == nullptr) {
+        // Looks like there are no waiters waiting to acquire the lock
+        // Try to unlock it - use compare-exchange to handle race with new waiters
+        const bool released_lock =
+            state_.compare_exchange_strong(current_state, unlocked_state(), std::memory_order_release, std::memory_order_relaxed);
+        if (released_lock) {
+          return;
         }
       }
+
+      // There are some waiters that have been newly queued
+      // Dequeue them and reverse their order from LIFO to FIFO
+      current_state = state_.exchange(nullptr, std::memory_order_acquire);
+      assert(current_state != unlocked_state());
+      assert(current_state != nullptr);
+
+      auto* waiter = static_cast<waiter_node*>(current_state);
+      do {
+        auto* temp = waiter->next;
+        waiter->next = waiters_head;
+        waiters_head = waiter;
+        waiter = temp;
+      } while (waiter != nullptr);
     }
 
-    if (node) {
-      // The lock remains held (locked_ stays true), transfer to next coroutine
-      // When next_handle resumes, it will return from co_await and the node
-      // will be destroyed, but we've already updated head_ so it's safe
-      if (next_exec) {
-        next_exec->dispatch([next_handle]() {
-          next_handle.resume();
-        });
-      } else {
+    assert(waiters_head != nullptr);
+    waiters_ = waiters_head->next;
+
+    // Resume the next waiter
+    auto next_handle = waiters_head->handle;
+    auto next_exec = waiters_head->exec;
+
+    if (next_exec) {
+      next_exec->dispatch([next_handle]() {
         next_handle.resume();
-      }
+      });
     } else {
-      // No waiters, release the lock
-      locked_.store(false, std::memory_order_release);
+      next_handle.resume();
     }
   }
 
  private:
-  std::atomic<bool> locked_;
-  mutable MUTEX list_lock_;  // Protects head_ and tail_ for thread safety
-  waiter_node* head_;        // Head of waiting list
-  waiter_node* tail_;        // Tail of waiting list
+  // Special value for state_ that indicates the mutex is not locked
+  void* unlocked_state() noexcept {
+    return this;
+  }
+
+  // Try to lock the mutex asynchronously
+  // Returns true if the coroutine should suspend (lock not acquired)
+  // Returns false if the lock was acquired synchronously (don't suspend)
+  bool lock_async_impl(waiter_node* awaiter) {
+    void* old_value = state_.load(std::memory_order_relaxed);
+    while (true) {
+      if (old_value == unlocked_state()) {
+        // Mutex looks unlocked, try to acquire it synchronously
+        void* new_value = nullptr;
+        if (state_.compare_exchange_weak(old_value, new_value, std::memory_order_acquire, std::memory_order_relaxed)) {
+          // Acquired synchronously, don't suspend
+          return false;
+        }
+      } else {
+        // Mutex is locked, try to queue this waiter to the list
+        void* new_value = awaiter;
+        awaiter->next = static_cast<waiter_node*>(old_value);
+        if (state_.compare_exchange_weak(old_value, new_value, std::memory_order_release, std::memory_order_relaxed)) {
+          // Queued waiter successfully, should suspend
+          return true;
+        }
+      }
+    }
+  }
+
+  // This contains either:
+  // - this    => Not locked (unlocked_state)
+  // - nullptr => Locked, no newly queued waiters (empty list of waiters)
+  // - other   => Pointer to first waiter_node* in a linked-list of newly
+  //              queued waiters in LIFO order
+  std::atomic<void*> state_;
+
+  // Linked-list of waiters in FIFO order
+  // Only the current lock holder is allowed to access this member
+  waiter_node* waiters_;
 
  public:
   // RAII-style lock guard that unlocks when destroyed
@@ -184,30 +201,27 @@ struct mutex_t {
 
     // Manually unlock the mutex
     void unlock() {
-      mutex_t* m = mutex_.load(std::memory_order_acquire);
-      if (m) {
-        m->unlock();
-        mutex_.store(nullptr, std::memory_order_release);
+      if (mutex_) {
+        mutex_->unlock();
+        mutex_ = nullptr;
       }
     }
 
-    // move semantics - transfer ownership
-    lock_guard(lock_guard&& other) noexcept : mutex_(other.mutex_.load(std::memory_order_acquire)) {
-      other.mutex_.store(nullptr, std::memory_order_release);
+    // Move semantics - transfer ownership
+    lock_guard(lock_guard&& other) noexcept : mutex_(other.mutex_) {
+      other.mutex_ = nullptr;
     }
 
-    // disable copy
+    // Disable copy
     lock_guard(const lock_guard&) = delete;
     lock_guard& operator=(const lock_guard&) = delete;
 
    private:
-    std::atomic<mutex_t*> mutex_;
+    mutex_t* mutex_;
   };
 };
 
 // Type aliases for convenience
-using mutex = mutex_t<std::mutex>;
-using mutex_mt = mutex_t<std::mutex>;
-using mutex_st = mutex_t<dummy_mutex>;
+using mutex = mutex_t;
 
 }  // namespace coro
