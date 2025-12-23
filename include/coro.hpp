@@ -27,5 +27,8 @@
 // latch
 #include "coro/latch.hpp"
 
+// event
+#include "coro/event.hpp"
+
 // semaphore
 #include "coro/semaphore.hpp"

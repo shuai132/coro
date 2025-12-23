@@ -165,6 +165,12 @@ jobs:
         run: |
           ./coro_latch${{ matrix.env.BIN_SUFFIX }}
 
+      - name: Test event
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_event${{ matrix.env.BIN_SUFFIX }}
+
       - name: Test semaphore
         if: always()
         working-directory: build

@@ -97,6 +97,10 @@ if (CORO_BUILD_TEST)
     set(TARGET_NAME ${PROJECT_NAME}_latch)
     add_executable(${TARGET_NAME} test/coro_latch.cpp)
 
+    # test event
+    set(TARGET_NAME ${PROJECT_NAME}_event)
+    add_executable(${TARGET_NAME} test/coro_event.cpp)
+
     # test semaphore
     set(TARGET_NAME ${PROJECT_NAME}_semaphore)
     add_executable(${TARGET_NAME} test/coro_semaphore.cpp)
