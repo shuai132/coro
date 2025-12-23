@@ -81,6 +81,10 @@ if (CORO_BUILD_TEST)
     set(TARGET_NAME ${PROJECT_NAME}_channel)
     add_executable(${TARGET_NAME} test/coro_channel.cpp)
 
+    # test broadcast
+    set(TARGET_NAME ${PROJECT_NAME}_broadcast)
+    add_executable(${TARGET_NAME} test/coro_broadcast.cpp)
+
     # test when
     set(TARGET_NAME ${PROJECT_NAME}_when)
     add_executable(${TARGET_NAME} test/coro_when.cpp)

@@ -141,6 +141,12 @@ jobs:
         run: |
           ./coro_channel${{ matrix.env.BIN_SUFFIX }}
 
+      - name: Test broadcast
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_broadcast${{ matrix.env.BIN_SUFFIX }}
+
       - name: Test when
         if: always()
         working-directory: build

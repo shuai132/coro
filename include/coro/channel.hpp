@@ -87,6 +87,75 @@ struct channel {
     return send_awaitable{this, std::move(value)};
   }
 
+  // Broadcast awaitable: sends the value to ALL waiting receivers
+  struct broadcast_awaitable {
+    channel* ch_;
+    T value_;
+    std::coroutine_handle<> handle_{};
+    executor* exec_ = nullptr;
+    size_t receivers_notified_ = 0;
+
+    bool await_ready() const noexcept {
+      return ch_->closed_.load(std::memory_order_acquire);
+    }
+
+    template <typename Promise>
+    bool await_suspend([[maybe_unused]] std::coroutine_handle<Promise> h) {
+      std::unique_lock<MUTEX> lock(ch_->mutex_);
+
+      if (ch_->closed_.load(std::memory_order_relaxed)) {
+        return false;
+      }
+
+      // Broadcast to ALL waiting receivers (not just one)
+      if (ch_->recv_queue_head_ != nullptr) {
+        auto* recv_awaiter = ch_->recv_queue_head_;
+
+        // Iterate through all waiting receivers and notify them
+        while (recv_awaiter != nullptr) {
+          // Copy the value to each receiver's pending value
+          recv_awaiter->pending_value_ = value_;
+          receivers_notified_++;
+
+          auto recv_handle = recv_awaiter->handle_;
+          auto recv_exec = recv_awaiter->exec_;
+          auto* next = recv_awaiter->next_;
+
+          // Resume the receiver, must use post
+          assert(recv_exec);
+          recv_exec->post([recv_handle]() {
+            recv_handle.resume();
+          });
+
+          recv_awaiter = next;
+        }
+
+        // Clear the receiver queue as all have been notified
+        ch_->recv_queue_head_ = nullptr;
+
+        return false;  // Don't suspend, broadcast is complete
+      }
+
+      // No receivers waiting - for broadcast, we typically don't buffer
+      // and just complete immediately. If you want buffering behavior,
+      // you can modify this logic.
+      return false;
+    }
+
+    size_t await_resume() {
+      if (ch_->closed_.load(std::memory_order_acquire)) {
+        return 0;
+      }
+      return receivers_notified_;
+    }
+  };
+
+  // Broadcast: sends value to ALL waiting receivers
+  // Returns the number of receivers that received the broadcast
+  auto broadcast(T value) {
+    return broadcast_awaitable{this, std::move(value)};
+  }
+
   struct recv_awaitable {
     channel* ch_;
     std::coroutine_handle<> handle_;
