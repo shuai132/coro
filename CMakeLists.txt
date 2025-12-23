@@ -41,7 +41,10 @@ if (CORO_BUILD_TEST)
     endif ()
     if (CORO_DISABLE_EXCEPTION)
         if (MSVC)
-            # MSVC
+            # MSVC: Remove default exception handling flags and add disable flags
+            string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+            string(REPLACE "/EHs" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+            string(REPLACE "/EHc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
             add_compile_options(/EHs-c-)
             add_definitions(-D_HAS_EXCEPTIONS=0)
         else ()

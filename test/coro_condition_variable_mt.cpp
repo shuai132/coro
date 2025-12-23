@@ -35,8 +35,8 @@ void test_concurrent_notify() {
     auto exec = std::make_unique<executor_loop>();
     auto* exec_ptr = exec.get();
 
-    // Capture i by value properly
-    static auto waiter = [&mtx, &cv, &wakeup_count, id = i]() -> async<void> {
+    // Create waiter with proper parameter passing
+    auto waiter = [](coro::mutex& mtx, coro::condition_variable& cv, std::atomic<int>& wakeup_count, int id) -> async<void> {
       LOG("Waiter %d: starting", id);
       co_await mtx.lock();
       LOG("Waiter %d: acquired lock, waiting", id);
@@ -49,7 +49,7 @@ void test_concurrent_notify() {
       LOG("Waiter %d: finished", id);
     };
 
-    waiter().detach(*exec_ptr);
+    waiter(mtx, cv, wakeup_count, i).detach(*exec_ptr);
 
     // Each executor runs in its own thread
     threads.emplace_back([exec_ptr]() {
@@ -126,7 +126,7 @@ void test_concurrent_wait() {
     for (int wid = 0; wid < waiters_per_thread; wid++) {
       int unique_id = tid * waiters_per_thread + wid;
 
-      static auto waiter = [&mtx, &cv, &ready_count, unique_id]() -> async<void> {
+      auto waiter = [](coro::mutex& mtx, coro::condition_variable& cv, std::atomic<int>& ready_count, int unique_id) -> async<void> {
         co_await mtx.lock();
         LOG("Waiter %d: waiting", unique_id);
         co_await cv.wait(mtx);
@@ -136,7 +136,7 @@ void test_concurrent_wait() {
         mtx.unlock();
       };
 
-      waiter().detach(*exec_ptr);
+      waiter(mtx, cv, ready_count, unique_id).detach(*exec_ptr);
     }
 
     threads.emplace_back([exec_ptr]() {

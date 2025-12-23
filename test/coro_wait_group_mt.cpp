@@ -255,7 +255,7 @@ async<void> wait_group_reuse_mt_test(executor& exec1, executor& exec2, std::thre
 }
 
 // Test wait_group_st (single-threaded version) on multiple threads to verify it works
-async<void> wait_group_st_test(executor& exec1, executor& exec2, std::thread::id exec1_tid, std::thread::id exec2_tid) {
+async<void> wait_group_st_test() {
   LOG("=== Single-Thread WaitGroup Type Test ===");
 
   // Note: wait_group_st is for single-threaded use, but we test it still works correctly
@@ -309,7 +309,7 @@ async<void> run_all_tests(executor& exec1, executor& exec2, std::thread::id exec
   co_await wait_group_reuse_mt_test(exec1, exec2, exec1_tid, exec2_tid);
   LOG("");
 
-  co_await wait_group_st_test(exec1, exec2, exec1_tid, exec2_tid);
+  co_await wait_group_st_test();
   LOG("");
 
   LOG("=== All Wait Group Multi-Thread Tests PASSED! ===");

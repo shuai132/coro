@@ -18,7 +18,7 @@ namespace coro {
 //   - std::mutex: Thread-safe for multithreaded use (default)
 //   - dummy_mutex: No lock overhead for single-threaded use
 template <typename MUTEX = std::mutex>
-struct condition_variable {
+struct condition_variable_t {
  private:
   // Intrusive list node for waiting coroutines
   struct waiter_node {
@@ -28,14 +28,14 @@ struct condition_variable {
   };
 
  public:
-  condition_variable() : head_(nullptr), tail_(nullptr) {}
+  condition_variable_t() : head_(nullptr), tail_(nullptr) {}
 
   // Wait releases the mutex and suspends the coroutine
   // When resumed by notify, the mutex is NOT automatically re-acquired
   // You must manually re-acquire the lock after wait returns
   // Similar to Go's cond.Wait()
   struct wait_awaitable {
-    condition_variable* cv_;
+    condition_variable_t* cv_;
     void* mtx_{};                 // Type-erased mutex pointer
     void (*unlock_fn_)(void*){};  // Function pointer to unlock
     waiter_node node_{};
@@ -178,7 +178,8 @@ struct condition_variable {
 };
 
 // Type aliases for convenience
-using condition_variable_mt = condition_variable<std::mutex>;
-using condition_variable_st = condition_variable<dummy_mutex>;
+using condition_variable = condition_variable_t<std::mutex>;
+using condition_variable_mt = condition_variable_t<std::mutex>;
+using condition_variable_st = condition_variable_t<dummy_mutex>;
 
 }  // namespace coro
