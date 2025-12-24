@@ -103,8 +103,7 @@ struct counting_semaphore_t {
   // Release n permits (default 1)
   // Wakes up waiting coroutines if possible
   void release(int n = 1) {
-    waiter_node* nodes_to_resume[32];  // Batch resume for efficiency
-    int resume_count = 0;
+    waiter_node* nodes_to_resume = nullptr;  // Head of resume list
 
     {
       std::lock_guard<MUTEX> lock(mutex_);
@@ -114,13 +113,12 @@ struct counting_semaphore_t {
       waiter_node* prev = nullptr;
       waiter_node* node = head_;
 
-      while (node && resume_count < 32) {
+      while (node) {
         if (counter_ >= node->desired) {
           // This waiter can be satisfied
           counter_ -= node->desired;
-          nodes_to_resume[resume_count++] = node;
 
-          // Remove from list
+          // Remove from waiting list
           if (prev) {
             prev->next = node->next;
           } else {
@@ -132,6 +130,11 @@ struct counting_semaphore_t {
           }
 
           waiter_node* next = node->next;
+
+          // Add to resume list (prepend for O(1))
+          node->next = nodes_to_resume;
+          nodes_to_resume = node;
+
           node = next;
         } else {
           prev = node;
@@ -141,8 +144,9 @@ struct counting_semaphore_t {
     }
 
     // Resume all satisfied waiters outside the lock
-    for (int i = 0; i < resume_count; i++) {
-      auto* waiter = nodes_to_resume[i];
+    waiter_node* waiter = nodes_to_resume;
+    while (waiter) {
+      waiter_node* next = waiter->next;
       if (waiter->exec) {
         waiter->exec->dispatch([handle = waiter->handle]() {
           handle.resume();
@@ -150,6 +154,7 @@ struct counting_semaphore_t {
       } else {
         waiter->handle.resume();
       }
+      waiter = next;
     }
   }
 

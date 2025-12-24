@@ -333,7 +333,11 @@ async<void> test_multiple_producers_consumers() {
   co_spawn(exec, consumer(1, &consumer1_completed));
   co_spawn(exec, consumer(2, &consumer2_completed));
 
-  co_await sleep(200ms);
+#ifdef CORO_TEST_RUNNER_VERY_SLOW
+  co_await sleep(300ms);
+#else
+  co_await sleep(100ms);
+#endif
 
   LOG("Verify that all coroutines have completed");
   ASSERT(producer1_completed);
