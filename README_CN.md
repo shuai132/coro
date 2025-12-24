@@ -8,6 +8,7 @@
 
 ## 目录
 
+- [前言](#前言)
 - [API 概览](#api-概览)
 - [特性](#特性)
 - [要求](#要求)
@@ -16,12 +17,69 @@
 - [执行器 (Executor)](#执行器-executor)
 - [定时器](#定时器)
 - [并发操作](#并发操作)
-- [Channel](#channel)
-- [Mutex](#mutex)
+- [同步原语 (Synchronization Primitives)](#同步原语)
+    - [mutex](#mutex)
+    - [condition_variable](#condition_variable)
+    - [semaphore](#semaphore)
+    - [channel](#channel)
+    - [wait_group](#wait_group)
+    - [latch](#latch)
+    - [event](#event)
 - [回调转协程](#回调转协程)
 - [配置选项](#配置选项)
 - [构建测试](#构建测试)
 - [项目结构](#项目结构)
+
+## 前言
+
+本项目最初是为了学习C++20协程而写，周末有空就索性完善了一些必要的API和同步原语，功能已非常完备。
+
+### 设计目标：
+
+* 流程清晰、简单易懂（希望如此）
+
+  C++20的协程设计非常晦涩，其api主要面向库开发者。而对于任何的协程库，想要读懂其中的设计，还是要先理解协程api的流程和行为。
+  也因此未必能简单易懂，只是相对而言，本库尽量不使用晦涩的模板、concept约束、类型嵌套、切换跳转行为。
+
+
+* 多平台支持
+
+  嵌入式平台支持，甚至可以用在MCU，这也是设计出发点之一。在一些平台上没有通用OS，也没有RTOS，甚至不支持异常，因此很多开源库无法使用。
+  而且对编译器要求较高，一些复杂的特性，在一些编译器无法完全支持，即使gcc版本看起来比较高。
+
+
+* bugfree（尤其是内存和线程问题）
+
+  我发现很多开源库，竟然单元测试都特别简单，尤其是在多线程方面几乎都未测试。也缺少线程竞争和内存泄露的自动化测试（基于Sanitize），其高质量太依赖使用者反馈，即使知名度很高，但是实际上工程化是不够好的。
+
+也有了解到已经有一些知名的C++20协程的开源库，比如：
+
+* [https://github.com/alibaba/async_simple](https://github.com/alibaba/async_simple)
+* [https://github.com/jbaldwin/libcoro](https://github.com/jbaldwin/libcoro)
+
+### 为什么重复造轮子：
+
+* 首先是设计目标不同，上面已经有提到。
+
+
+* 另一个很大的原因是，设计取舍不同。我想要把**易于使用**放在第一位，无论是api设计、功能设计和实现。
+
+  比如`libcoro`里支持`co_await tp->schedule()`而且作为切换线程的推荐范式，我认为这是及其不恰当的。在同一个代码块上下文切换线程非常反直觉和容易出错。
+
+  再比如`async_simple`和`libcoro`的同步原语设计，需要用户在协程上下文调用，比如`co_await semaphore.release()`。
+  我认为宽松的约束更容易使用，用户可以在任意地方调用`semaphore.release()`。
+
+  有很多类似的设计取舍，不再一一列举。
+
+
+* 它们在协程类型和行为的设计上，稍显繁琐。
+
+  比如为了detach一个协程，要经过层层包装。这虽然不是一个大的问题，但我认为是完全没必要的。这会经过好多个协程创建到销毁的生命周期，难以排查问题。
+
+
+* 总结
+
+  这些开源库都有自己独到的设计。后来看到`async_simple`的实现后，惊奇的发现有很多设计都很类似！但是细节和取舍又有所不同，最终只参考了它mutex的无锁实现。
 
 ## API 概览
 
@@ -34,6 +92,11 @@
 | `coro::sleep(duration)`                      | 异步等待指定时间（chrono duration）          |
 | `coro::delay(ms)`                            | 异步等待指定毫秒数                          |
 | `coro::mutex`                                | 协程安全的互斥锁                           |
+| `coro::condition_variable`                   | 协程安全的条件变量，用于同步操作                   |
+| `coro::event`                                | 事件同步原语                             |
+| `coro::latch`                                | 倒计时门闩，用于同步操作                       |
+| `coro::semaphore`                            | 计数信号量，用于资源控制                       |
+| `coro::wait_group`                           | 等待组，用于协调多个协程                       |
 | `coro::channel<T>`                           | Go 风格的 channel，用于协程间通信             |
 | `coro::executor`                             | 执行器基类接口                            |
 | `coro::executor_loop`                        | 基于事件循环的执行器                         |
@@ -55,6 +118,7 @@
 - 🛠️ **调试支持**：内置协程泄漏检测功能
 - 🔍 **单元测试**：完善的单元测试和集成测试
 - 📦 **嵌入式支持**：支持 MCU 和嵌入式平台
+- 🧩 **扩展同步原语**：提供额外的同步工具，包括条件变量、事件、门闩、信号量和等待组
 
 ## 要求
 
@@ -264,59 +328,6 @@ async<void> example() {
 }
 ```
 
-## Channel
-
-Go 风格的 channel 实现，用于协程间通信：
-
-### 无缓冲 Channel
-
-```cpp
-#include "coro/channel.hpp"
-
-async<void> producer(channel<int>& ch) {
-    co_await ch.send(42);  // 阻塞直到有接收者
-    co_await ch.send(100);
-    ch.close();
-}
-
-async<void> consumer(channel<int>& ch) {
-    while (true) {
-        auto val = co_await ch.recv();
-        if (!val.has_value()) {
-            // Channel 已关闭
-            break;
-        }
-        std::cout << "Received: " << *val << std::endl;
-    }
-}
-
-async<void> example() {
-    channel<int> ch;  // 无缓冲 channel
-    
-    auto& exec = *co_await current_executor();
-    co_spawn(exec, producer(ch));
-    co_spawn(exec, consumer(ch));
-}
-```
-
-### 缓冲 Channel
-
-```cpp
-async<void> example() {
-    channel<int> ch(10);  // 缓冲大小为 10
-    
-    // 缓冲未满时 send 不会阻塞
-    co_await ch.send(1);
-    co_await ch.send(2);
-    
-    // 检查状态
-    bool empty = ch.empty();
-    bool full = ch.full();
-    size_t size = ch.size();
-    size_t capacity = ch.capacity();
-}
-```
-
 ## Mutex
 
 协程安全的互斥锁：
@@ -355,8 +366,267 @@ async<void> early_unlock() {
     // 临界区代码...
     
     guard.unlock();  // 提前手动解锁
-    
+
     // 非临界区代码...
+}
+```
+
+## 同步原语
+
+该库提供了多个协程安全的同步原语：
+
+### mutex
+
+协程安全的互斥锁：
+
+#### 使用 scoped_lock（推荐）
+
+```cpp
+#include "coro/mutex.hpp"
+
+coro::mutex mtx;
+
+async<void> critical_section() {
+    {
+        auto guard = co_await mtx.scoped_lock();
+        // 临界区代码
+        // ...
+    }  // 自动解锁
+}
+```
+
+#### 手动 lock/unlock
+
+```cpp
+async<void> manual_lock() {
+    co_await mtx.lock();
+    // 临界区代码
+    mtx.unlock();
+}
+```
+
+#### 提前解锁
+
+```cpp
+async<void> early_unlock() {
+    auto guard = co_await mtx.scoped_lock();
+    // 临界区代码...
+
+    guard.unlock();  // 提前手动解锁
+
+    // 非临界区代码...
+}
+```
+
+### condition_variable
+
+协程安全的条件变量，类似于 Go 的 `sync.Cond`。必须与 `coro::mutex` 一起使用。
+
+```cpp
+#include "coro/condition_variable.hpp"
+#include "coro/mutex.hpp"
+
+coro::condition_variable cv;
+coro::mutex mtx;
+bool ready = false;
+
+async<void> waiter() {
+    // 等待会释放互斥锁并暂停协程
+    co_await cv.wait(mtx);
+    // 等待返回后必须手动重新获取锁
+    co_await mtx.lock();
+
+    // 或使用带谓词的版本，会自动重新获取锁
+    // co_await cv.wait(mtx, [&]{ return ready; });
+}
+
+async<void> notifier() {
+    {
+        auto guard = co_await mtx.scoped_lock();
+        ready = true;
+    }
+    // 唤醒一个等待的协程
+    cv.notify_one();
+    // 或唤醒所有等待的协程
+    // cv.notify_all();
+}
+```
+
+### semaphore
+
+计数信号量，用于控制对有限数量资源的访问。
+
+```cpp
+#include "coro/semaphore.hpp"
+
+async<void> example() {
+    // 创建具有 3 个许可的信号量
+    coro::counting_semaphore sem(3);
+
+    // 获取许可（如果不可用则暂停）
+    co_await sem.acquire();
+
+    // 或获取多个许可
+    // co_await sem.acquire(2);
+
+    // 释放许可
+    sem.release();
+
+    // 或释放多个许可
+    // sem.release(2);
+
+    // 尝试获取而不阻塞
+    if (sem.try_acquire()) {
+        // 获取成功
+        sem.release(); // 记得释放
+    }
+
+    // 检查可用许可数
+    int available = sem.available();
+
+    // 对于二进制信号量（类似互斥锁的行为）
+    // coro::binary_semaphore binary_sem(1);
+}
+```
+
+### channel
+
+Go 风格的 channel 实现，用于协程间通信：
+
+#### 无缓冲 Channel
+
+```cpp
+#include "coro/channel.hpp"
+
+async<void> producer(channel<int>& ch) {
+    co_await ch.send(42);  // 阻塞直到有接收者
+    co_await ch.send(100);
+    ch.close();
+}
+
+async<void> consumer(channel<int>& ch) {
+    while (true) {
+        auto val = co_await ch.recv();
+        if (!val.has_value()) {
+            // Channel 已关闭
+            break;
+        }
+        std::cout << "Received: " << *val << std::endl;
+    }
+}
+
+async<void> example() {
+    channel<int> ch;  // 无缓冲 channel
+
+    auto& exec = *co_await current_executor();
+    co_spawn(exec, producer(ch));
+    co_spawn(exec, consumer(ch));
+}
+```
+
+#### 缓冲 Channel
+
+```cpp
+async<void> example() {
+    channel<int> ch(10);  // 缓冲大小为 10
+
+    // 缓冲未满时 send 不会阻塞
+    co_await ch.send(1);
+    co_await ch.send(2);
+
+    // 检查状态
+    bool empty = ch.empty();
+    bool full = ch.full();
+    size_t size = ch.size();
+    size_t capacity = ch.capacity();
+}
+```
+
+### wait_group
+
+等待组，类似于 Go 的 `sync.WaitGroup`，用于协调多个协程。
+
+```cpp
+#include "coro/wait_group.hpp"
+
+async<void> worker_task(coro::wait_group& wg, std::string name, int work_ms) {
+    // 执行一些工作
+    co_await sleep(work_ms * 1ms);
+    std::cout << name << " completed\n";
+
+    // 信号完成
+    wg.done();  // 或 wg.add(-1);
+}
+
+async<void> example() {
+    coro::wait_group wg;
+
+    // 添加 2 个需要等待的操作
+    wg.add(2);
+
+    // 启动工作协程
+    co_spawn(executor, worker_task(wg, "Worker1", 100));
+    co_spawn(executor, worker_task(wg, "Worker2", 150));
+
+    // 等待所有操作完成
+    co_await wg.wait();
+    // 或直接使用 co_await: co_await wg;
+
+    // 检查当前计数
+    int count = wg.get_count();
+}
+```
+
+### latch
+
+倒计时门闩，允许协程等待直到指定数量的操作完成。
+
+```cpp
+#include "coro/latch.hpp"
+
+async<void> example() {
+    // 创建计数为 3 的门闩
+    coro::latch latch(3);
+
+    // 在其他协程中，进行计数递减：
+    // latch.count_down(); // 由不同协程调用 3 次
+
+    // 等待门闩计数到达零
+    co_await latch.wait();
+    // 或直接使用 co_await: co_await latch;
+
+    // 另一种方式：计数递减并等待一次性完成
+    // co_await latch.arrive_and_wait();
+
+    // 检查当前计数
+    int current_count = latch.get_count();
+}
+```
+
+### event
+
+事件同步原语，允许一个或多个协程等待直到事件被设置。
+
+```cpp
+#include "coro/event.hpp"
+
+coro::event evt;
+
+async<void> waiter() {
+    // 等待事件被设置
+    co_await evt.wait();
+    // 或直接使用 co_await: co_await evt;
+}
+
+async<void> setter() {
+    // 设置事件，唤醒所有等待者
+    evt.set();
+
+    // 清除事件（未来的等待将阻塞，直到再次调用 set()）
+    // evt.clear();
+
+    // 检查事件是否已设置（非阻塞）
+    bool is_set = evt.is_set();
 }
 ```
 
@@ -433,6 +703,11 @@ make
 ./coro_mutex
 ./coro_channel
 ./coro_when
+./coro_condition_variable
+./coro_event
+./coro_latch
+./coro_semaphore
+./coro_wait_group
 ```
 
 ### CMake 选项
@@ -458,7 +733,12 @@ coro/
 │       ├── executor_loop.hpp # 事件循环执行器
 │       ├── time.hpp          # 定时器
 │       ├── channel.hpp       # Channel
+│       ├── condition_variable.hpp # 条件变量
+│       ├── event.hpp         # 事件同步原语
+│       ├── latch.hpp         # 门闩
 │       ├── mutex.hpp         # Mutex
+│       ├── semaphore.hpp     # 信号量
+│       ├── wait_group.hpp    # 等待组
 │       └── when.hpp          # when_all/when_any
 └── test/                     # 测试文件
 ```

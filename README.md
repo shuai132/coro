@@ -8,6 +8,7 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 
 ## Table of Contents
 
+- [Preface](#preface)
 - [API Overview](#api-overview)
 - [Features](#features)
 - [Requirements](#requirements)
@@ -16,30 +17,108 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 - [Executors](#executors)
 - [Timer](#timer)
 - [Concurrency Operations](#concurrency-operations)
-- [Channel](#channel)
-- [Mutex](#mutex)
+- [Synchronization Primitives](#synchronization-primitives)
+    - [mutex](#mutex)
+    - [condition_variable](#condition_variable)
+    - [semaphore](#semaphore)
+    - [channel](#channel)
+    - [wait_group](#wait_group)
+    - [latch](#latch)
+    - [event](#event)
 - [Callback to Coroutine](#callback-to-coroutine)
 - [Configuration Options](#configuration-options)
 - [Building Tests](#building-tests)
 - [Project Structure](#project-structure)
 
+## Preface
+
+This project was initially created for learning C++20 coroutines. During some free time on weekends, I decided to
+improve it by adding necessary APIs and synchronization primitives, and it has now become very comprehensive.
+
+### Design Goals:
+
+* Clear process, simple and easy to understand (hopefully so)
+
+  C++20's coroutine design is very obscure, with APIs mainly designed for library developers. For any coroutine library,
+  to understand its design, one must first understand the process and behavior of coroutine APIs.
+  Therefore, it may not really be simple and easy to understand, but relatively speaking, this library tries not to use
+  obscure templates, concept constraints, type nesting, or switching jump behaviors.
+
+
+* Multi-platform support
+
+  Embedded platform support, even usable on MCUs, is one of the design goals! On some platforms without general-purpose
+  OS, or even without RTOS, and even without exception support, many open-source libraries cannot be used.
+  And the compiler requirements are relatively high; some complex features are not fully supported by some compilers,
+  even if the GCC version appears to be high.
+
+
+* Bug-free (especially memory and threading issues)
+
+  I found that many open-source libraries have surprisingly simple unit tests, especially in multi-threading where
+  testing is almost non-existent. They also lack automated testing for race conditions and memory leaks (based on
+  Sanitize), and their quality relies too heavily on user feedback. Even with high prominence, the engineering quality
+  is not good enough.
+
+I have also learned about some well-known C++20 coroutine open-source libraries, such as:
+
+* [https://github.com/alibaba/async_simple](https://github.com/alibaba/async_simple)
+* [https://github.com/jbaldwin/libcoro](https://github.com/jbaldwin/libcoro)
+
+### Why reinventing the wheel:
+
+* First, the design goals are different, as mentioned above.
+
+
+* Another major reason is the design trade-offs. I want to prioritize **ease of use** in API design, feature design, and
+  implementation.
+
+  For example, `libcoro` supports `co_await tp->schedule()` and recommends it as the paradigm for thread switching,
+  which I think is extremely inappropriate. Switching threads within the same code block context is very
+  counter-intuitive and error-prone.
+
+  For example, the synchronization primitive design in `async_simple` and `libcoro` requires users to call them in
+  coroutine context, such as `co_await semaphore.release()`.
+  I believe looser constraints are easier to use, allowing users to call `semaphore.release()` anywhere.
+
+  There are many similar design trade-offs, not listing them one by one.
+
+
+* They are somewhat cumbersome in the design of coroutine types and behaviors.
+
+  For example, to detach a coroutine, one has to go through multiple layers of wrapping. This is not a major issue, but
+  I think it's completely unnecessary. This would go through multiple coroutine creation-to-destruction lifecycles,
+  making it difficult to troubleshoot issues.
+
+
+* Summary
+
+  These open-source libraries all have their unique designs. After later seeing the implementation of `async_simple`, I
+  was surprised to find that many designs are very similar! But the details and trade-offs are different, and ultimately
+  only referenced its mutex lock-free implementation.
+
 ## API Overview
 
-| Name                                         | Description                                          |
-|----------------------------------------------|------------------------------------------------------|
-| `coro::async<T>`                             | Async task type, supports `co_await` and `co_return` |
-| `coro::co_spawn(executor, awaitable)`        | Spawn a coroutine on an executor                     |
-| `coro::when_all(awaitables...) -> awaitable` | Wait for all tasks to complete                       |
-| `coro::when_any(awaitables...) -> awaitable` | Wait for any task to complete                        |
-| `coro::sleep(duration)`                      | Async wait for specified duration (chrono duration)  |
-| `coro::delay(ms)`                            | Async wait for specified milliseconds                |
-| `coro::mutex`                                | Coroutine-safe mutex                                 |
-| `coro::channel<T>`                           | Go-style channel for inter-coroutine communication   |
-| `coro::executor`                             | Executor base class interface                        |
-| `coro::executor_loop`                        | Event loop based executor                            |
-| `coro::executor_poll`                        | Polling based executor                               |
-| `coro::current_executor()`                   | Get current executor                                 |
-| `coro::callback_awaiter<T>`                  | Convert callback-style APIs to coroutines            |
+| Name                                         | Description                                           |
+|----------------------------------------------|-------------------------------------------------------|
+| `coro::async<T>`                             | Async task type, supports `co_await` and `co_return`  |
+| `coro::co_spawn(executor, awaitable)`        | Spawn a coroutine on an executor                      |
+| `coro::when_all(awaitables...) -> awaitable` | Wait for all tasks to complete                        |
+| `coro::when_any(awaitables...) -> awaitable` | Wait for any task to complete                         |
+| `coro::sleep(duration)`                      | Async wait for specified duration (chrono duration)   |
+| `coro::delay(ms)`                            | Async wait for specified milliseconds                 |
+| `coro::mutex`                                | Coroutine-safe mutex                                  |
+| `coro::condition_variable`                   | Coroutine-safe condition variable for synchronization |
+| `coro::event`                                | Event synchronization primitive                       |
+| `coro::latch`                                | Countdown latch for synchronization                   |
+| `coro::semaphore`                            | Counting semaphore for resource control               |
+| `coro::wait_group`                           | Wait group for coordinating multiple coroutines       |
+| `coro::channel<T>`                           | Go-style channel for inter-coroutine communication    |
+| `coro::executor`                             | Executor base class interface                         |
+| `coro::executor_loop`                        | Event loop based executor                             |
+| `coro::executor_poll`                        | Polling based executor                                |
+| `coro::current_executor()`                   | Get current executor                                  |
+| `coro::callback_awaiter<T>`                  | Convert callback-style APIs to coroutines             |
 
 ## Features
 
@@ -55,6 +134,8 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 - 🛠️ **Debug Support**: Built-in coroutine leak detection
 - 🔍 **Unit Tests**: Comprehensive unit and integration tests
 - 📦 **Embedded Support**: Compatible with MCU and embedded platforms
+- 🧩 **Extended Synchronization Primitives**: Additional synchronization tools including condition variables, events,
+  latches, semaphores, and wait groups
 
 ## Requirements
 
@@ -264,59 +345,6 @@ async<void> example() {
 }
 ```
 
-## Channel
-
-Go-style channel implementation for inter-coroutine communication:
-
-### Unbuffered Channel
-
-```cpp
-#include "coro/channel.hpp"
-
-async<void> producer(channel<int>& ch) {
-    co_await ch.send(42);  // Blocks until receiver is ready
-    co_await ch.send(100);
-    ch.close();
-}
-
-async<void> consumer(channel<int>& ch) {
-    while (true) {
-        auto val = co_await ch.recv();
-        if (!val.has_value()) {
-            // Channel is closed
-            break;
-        }
-        std::cout << "Received: " << *val << std::endl;
-    }
-}
-
-async<void> example() {
-    channel<int> ch;  // Unbuffered channel
-    
-    auto& exec = *co_await current_executor();
-    co_spawn(exec, producer(ch));
-    co_spawn(exec, consumer(ch));
-}
-```
-
-### Buffered Channel
-
-```cpp
-async<void> example() {
-    channel<int> ch(10);  // Buffer size of 10
-    
-    // Send doesn't block when buffer is not full
-    co_await ch.send(1);
-    co_await ch.send(2);
-    
-    // Check status
-    bool empty = ch.empty();
-    bool full = ch.full();
-    size_t size = ch.size();
-    size_t capacity = ch.capacity();
-}
-```
-
 ## Mutex
 
 Coroutine-safe mutex:
@@ -355,8 +383,267 @@ async<void> early_unlock() {
     // Critical section code...
     
     guard.unlock();  // Manual early unlock
-    
+
     // Non-critical section code...
+}
+```
+
+## Synchronization Primitives
+
+The library provides several coroutine-safe synchronization primitives:
+
+### mutex
+
+Coroutine-safe mutex:
+
+#### Using scoped_lock (Recommended)
+
+```cpp
+#include "coro/mutex.hpp"
+
+coro::mutex mtx;
+
+async<void> critical_section() {
+    {
+        auto guard = co_await mtx.scoped_lock();
+        // Critical section code
+        // ...
+    }  // Auto unlock
+}
+```
+
+#### Manual lock/unlock
+
+```cpp
+async<void> manual_lock() {
+    co_await mtx.lock();
+    // Critical section code
+    mtx.unlock();
+}
+```
+
+#### Early Unlock
+
+```cpp
+async<void> early_unlock() {
+    auto guard = co_await mtx.scoped_lock();
+    // Critical section code...
+
+    guard.unlock();  // Manual early unlock
+
+    // Non-critical section code...
+}
+```
+
+### condition_variable
+
+Coroutine-safe condition variable, similar to Go's `sync.Cond`. Must be used with `coro::mutex`.
+
+```cpp
+#include "coro/condition_variable.hpp"
+#include "coro/mutex.hpp"
+
+coro::condition_variable cv;
+coro::mutex mtx;
+bool ready = false;
+
+async<void> waiter() {
+    // Wait releases the mutex and suspends the coroutine
+    co_await cv.wait(mtx);
+    // Must manually re-acquire the lock after wait returns
+    co_await mtx.lock();
+
+    // Or use predicate version which automatically re-acquires the lock
+    // co_await cv.wait(mtx, [&]{ return ready; });
+}
+
+async<void> notifier() {
+    {
+        auto guard = co_await mtx.scoped_lock();
+        ready = true;
+    }
+    // Wake up one waiting coroutine
+    cv.notify_one();
+    // Or wake up all waiting coroutines
+    // cv.notify_all();
+}
+```
+
+### semaphore
+
+A counting semaphore for controlling access to a shared resource with a limited number of permits.
+
+```cpp
+#include "coro/semaphore.hpp"
+
+async<void> example() {
+    // Create a semaphore with 3 permits
+    coro::counting_semaphore sem(3);
+
+    // Acquire a permit (suspends if not available)
+    co_await sem.acquire();
+
+    // Or acquire multiple permits
+    // co_await sem.acquire(2);
+
+    // Release a permit
+    sem.release();
+
+    // Or release multiple permits
+    // sem.release(2);
+
+    // Try to acquire without blocking
+    if (sem.try_acquire()) {
+        // Successfully acquired
+        sem.release(); // Don't forget to release
+    }
+
+    // Check available permits
+    int available = sem.available();
+
+    // For binary semaphore (mutex-like behavior)
+    // coro::binary_semaphore binary_sem(1);
+}
+```
+
+### channel
+
+Go-style channel implementation for inter-coroutine communication:
+
+#### Unbuffered Channel
+
+```cpp
+#include "coro/channel.hpp"
+
+async<void> producer(channel<int>& ch) {
+    co_await ch.send(42);  // Blocks until receiver is ready
+    co_await ch.send(100);
+    ch.close();
+}
+
+async<void> consumer(channel<int>& ch) {
+    while (true) {
+        auto val = co_await ch.recv();
+        if (!val.has_value()) {
+            // Channel is closed
+            break;
+        }
+        std::cout << "Received: " << *val << std::endl;
+    }
+}
+
+async<void> example() {
+    channel<int> ch;  // Unbuffered channel
+
+    auto& exec = *co_await current_executor();
+    co_spawn(exec, producer(ch));
+    co_spawn(exec, consumer(ch));
+}
+```
+
+#### Buffered Channel
+
+```cpp
+async<void> example() {
+    channel<int> ch(10);  // Buffer size of 10
+
+    // Send doesn't block when buffer is not full
+    co_await ch.send(1);
+    co_await ch.send(2);
+
+    // Check status
+    bool empty = ch.empty();
+    bool full = ch.full();
+    size_t size = ch.size();
+    size_t capacity = ch.capacity();
+}
+```
+
+### wait_group
+
+A wait group, similar to Go's `sync.WaitGroup`, for coordinating multiple coroutines.
+
+```cpp
+#include "coro/wait_group.hpp"
+
+async<void> worker_task(coro::wait_group& wg, std::string name, int work_ms) {
+    // Do some work
+    co_await sleep(work_ms * 1ms);
+    std::cout << name << " completed\n";
+
+    // Signal completion
+    wg.done();  // or wg.add(-1);
+}
+
+async<void> example() {
+    coro::wait_group wg;
+
+    // Add 2 operations to wait for
+    wg.add(2);
+
+    // Launch worker coroutines
+    co_spawn(executor, worker_task(wg, "Worker1", 100));
+    co_spawn(executor, worker_task(wg, "Worker2", 150));
+
+    // Wait for all operations to complete
+    co_await wg.wait();
+    // Or use direct co_await: co_await wg;
+
+    // Check current count
+    int count = wg.get_count();
+}
+```
+
+### latch
+
+A countdown latch that allows coroutines to wait until a set number of operations complete.
+
+```cpp
+#include "coro/latch.hpp"
+
+async<void> example() {
+    // Create a latch with count 3
+    coro::latch latch(3);
+
+    // In some other coroutines, count down:
+    // latch.count_down(); // Called 3 times by different coroutines
+
+    // Wait for the latch to reach zero
+    co_await latch.wait();
+    // Or use direct co_await: co_await latch;
+
+    // Alternative: count down and wait in one operation
+    // co_await latch.arrive_and_wait();
+
+    // Check current count
+    int current_count = latch.get_count();
+}
+```
+
+### event
+
+An event synchronization primitive that allows one or more coroutines to wait until the event is set.
+
+```cpp
+#include "coro/event.hpp"
+
+coro::event evt;
+
+async<void> waiter() {
+    // Wait for the event to be set
+    co_await evt.wait();
+    // Or use direct co_await: co_await evt;
+}
+
+async<void> setter() {
+    // Set the event, waking up all waiters
+    evt.set();
+
+    // Clear the event (future waits will block until set() is called again)
+    // evt.clear();
+
+    // Check if the event is set (non-blocking)
+    bool is_set = evt.is_set();
 }
 ```
 
@@ -433,6 +720,11 @@ make
 ./coro_mutex
 ./coro_channel
 ./coro_when
+./coro_condition_variable
+./coro_event
+./coro_latch
+./coro_semaphore
+./coro_wait_group
 ```
 
 ### CMake Options
@@ -458,7 +750,12 @@ coro/
 │       ├── executor_loop.hpp # Event loop executor
 │       ├── time.hpp          # Timer
 │       ├── channel.hpp       # Channel
+│       ├── condition_variable.hpp # Condition variable
+│       ├── event.hpp         # Event synchronization primitive
+│       ├── latch.hpp         # Latch
 │       ├── mutex.hpp         # Mutex
+│       ├── semaphore.hpp     # Semaphore
+│       ├── wait_group.hpp    # Wait group
 │       └── when.hpp          # when_all/when_any
 └── test/                     # Test files
 ```
