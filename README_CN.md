@@ -1,6 +1,8 @@
 # coro
 
 [![CI](https://github.com/shuai132/coro/actions/workflows/ci.yml/badge.svg)](https://github.com/shuai132/coro/actions/workflows/ci.yml)
+<img alt="feature" src="https://img.shields.io/badge/c++20-Coroutines-orange">
+<img alt="language" src="https://img.shields.io/github/languages/top/shuai132/coro">
 
 一个轻量级的 C++20 协程库，支持异步任务、并发控制和同步原语。
 
@@ -62,7 +64,7 @@
 * 首先是设计目标不同，上面已经有提到。
 
 
-* 另一个很大的原因是，设计取舍不同。我想要把**易于使用**放在第一位，无论是api设计、功能设计和实现。
+* 另一个很大的原因是，设计取舍不同。我想要把**易于理解和使用**放在第一位，无论是api设计、功能设计和实现。
 
   比如`libcoro`里支持`co_await tp->schedule()`而且作为切换线程的推荐范式，我认为这是及其不恰当的。在同一个代码块上下文切换线程非常反直觉和容易出错。
 
@@ -79,7 +81,7 @@
 
 * 总结
 
-  这些开源库都有自己独到的设计。后来看到`async_simple`的实现后，惊奇的发现有很多设计都很类似！但是细节和取舍又有所不同，最终只参考了它mutex的无锁实现。
+  这些开源库都有自己独到的设计。后来看到`async_simple`的实现后，惊奇的发现有很多设计都很类似！但是细节和取舍又有所不同。
 
 ## API 概览
 
@@ -541,6 +543,46 @@ async<void> example() {
     size_t capacity = ch.capacity();
 }
 ```
+
+#### Channel 广播
+
+该库还支持广播功能，可以同时向所有等待的接收者发送值：
+
+```cpp
+#include "coro/channel.hpp"
+
+async<void> broadcast_example() {
+    channel<int> ch;  // 用于广播示例的无缓冲 channel
+
+    // 多个接收者等待数据
+    auto receiver = [](channel<int>& ch, int id) -> async<void> {
+        auto val = co_await ch.recv();
+        if (val.has_value()) {
+            std::cout << "接收者 " << id << " 收到: " << *val << std::endl;
+        }
+    };
+
+    auto& exec = *co_await current_executor();
+
+    // 启动多个接收者
+    co_spawn(exec, receiver(ch, 1));
+    co_spawn(exec, receiver(ch, 2));
+    co_spawn(exec, receiver(ch, 3));
+
+    // 广播将值发送给所有等待的接收者
+    size_t notified_count = co_await ch.broadcast(42);
+    std::cout << "广播通知了 " << notified_count << " 个接收者" << std::endl;
+
+    // 所有 3 个接收者都将收到值 42
+}
+```
+
+广播与常规发送的区别：
+
+- `send()` 只向一个接收者发送（如果没有接收者则阻塞）
+- `broadcast()` 同时向所有当前等待的接收者发送
+- `broadcast()` 返回被通知的接收者数量
+- 如果没有接收者在等待，`broadcast()` 会立即完成，不进行缓冲
 
 ### wait_group
 

@@ -1,6 +1,8 @@
 # coro
 
 [![CI](https://github.com/shuai132/coro/actions/workflows/ci.yml/badge.svg)](https://github.com/shuai132/coro/actions/workflows/ci.yml)
+<img alt="feature" src="https://img.shields.io/badge/c++20-Coroutines-orange">
+<img alt="language" src="https://img.shields.io/github/languages/top/shuai132/coro">
 
 A lightweight C++20 coroutine library with async tasks, concurrency control, and synchronization primitives.
 
@@ -70,8 +72,8 @@ I have also learned about some well-known C++20 coroutine open-source libraries,
 * First, the design goals are different, as mentioned above.
 
 
-* Another major reason is the design trade-offs. I want to prioritize **ease of use** in API design, feature design, and
-  implementation.
+* Another major reason is the design trade-offs. I want to prioritize **ease of understand and use** in API design,
+  feature design, and implementation.
 
   For example, `libcoro` supports `co_await tp->schedule()` and recommends it as the paradigm for thread switching,
   which I think is extremely inappropriate. Switching threads within the same code block context is very
@@ -94,8 +96,7 @@ I have also learned about some well-known C++20 coroutine open-source libraries,
 * Summary
 
   These open-source libraries all have their unique designs. After later seeing the implementation of `async_simple`, I
-  was surprised to find that many designs are very similar! But the details and trade-offs are different, and ultimately
-  only referenced its mutex lock-free implementation.
+  was surprised to find that many designs are very similar! But the details and trade-offs are different.
 
 ## API Overview
 
@@ -558,6 +559,46 @@ async<void> example() {
     size_t capacity = ch.capacity();
 }
 ```
+
+#### Channel Broadcast
+
+The library also supports broadcast functionality, which sends a value to ALL waiting receivers simultaneously:
+
+```cpp
+#include "coro/channel.hpp"
+
+async<void> broadcast_example() {
+    channel<int> ch;  // Unbuffered channel for broadcast example
+
+    // Multiple receivers waiting for data
+    auto receiver = [](channel<int>& ch, int id) -> async<void> {
+        auto val = co_await ch.recv();
+        if (val.has_value()) {
+            std::cout << "Receiver " << id << " got: " << *val << std::endl;
+        }
+    };
+
+    auto& exec = *co_await current_executor();
+
+    // Spawn multiple receivers
+    co_spawn(exec, receiver(ch, 1));
+    co_spawn(exec, receiver(ch, 2));
+    co_spawn(exec, receiver(ch, 3));
+
+    // Broadcasting sends the value to ALL waiting receivers
+    size_t notified_count = co_await ch.broadcast(42);
+    std::cout << "Broadcast notified " << notified_count << " receivers" << std::endl;
+
+    // All 3 receivers will receive the value 42
+}
+```
+
+Broadcast differs from regular send in that:
+
+- `send()` sends to only one receiver (or blocks if no receiver is available)
+- `broadcast()` sends to ALL currently waiting receivers simultaneously
+- `broadcast()` returns the number of receivers that were notified
+- If no receivers are waiting, `broadcast()` completes immediately without buffering
 
 ### wait_group
 
