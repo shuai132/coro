@@ -30,6 +30,11 @@ struct condition_variable_t {
  public:
   condition_variable_t() : head_(nullptr), tail_(nullptr) {}
 
+  condition_variable_t(const condition_variable_t&) = delete;
+  condition_variable_t(condition_variable_t&&) = delete;
+  condition_variable_t& operator=(const condition_variable_t&) = delete;
+  condition_variable_t& operator=(condition_variable_t&&) = delete;
+
   // Wait releases the mutex and suspends the coroutine
   // When resumed by notify, the mutex is NOT automatically re-acquired
   // You must manually re-acquire the lock after wait returns

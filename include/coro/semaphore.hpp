@@ -31,6 +31,11 @@ struct counting_semaphore_t {
   explicit counting_semaphore_t(int desired, int least_max_value = INT_MAX)
       : counter_(desired), max_value_(least_max_value), head_(nullptr), tail_(nullptr) {}
 
+  counting_semaphore_t(const counting_semaphore_t&) = delete;
+  counting_semaphore_t(counting_semaphore_t&&) = delete;
+  counting_semaphore_t& operator=(const counting_semaphore_t&) = delete;
+  counting_semaphore_t& operator=(counting_semaphore_t&&) = delete;
+
   // Acquire n permits (default 1)
   // Suspends if not enough permits are available
   struct acquire_awaitable {

@@ -12,7 +12,7 @@
 #include "executor.hpp"
 
 namespace coro {
-class executor_basic_task : public coro::executor {
+class executor_base : public coro::executor {
  protected:
   struct DelayedTask {
     std::chrono::steady_clock::time_point execute_at;
@@ -61,11 +61,16 @@ class executor_basic_task : public coro::executor {
   }
 
  public:
-  executor_basic_task() = default;
+  executor_base() = default;
 
-  ~executor_basic_task() override {
-    executor_basic_task::stop();
+  ~executor_base() override {
+    executor_base::stop();
   }
+
+  executor_base(const executor_base&) = delete;
+  executor_base(executor_base&&) = delete;
+  executor_base& operator=(const executor_base&) = delete;
+  executor_base& operator=(executor_base&&) = delete;
 
   void dispatch(std::function<void()> fn) override {
     if (running_thread_id_.load(std::memory_order_acquire) == std::hash<std::thread::id>{}(std::this_thread::get_id())) {

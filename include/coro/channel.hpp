@@ -19,6 +19,11 @@ struct channel {
     close();
   }
 
+  channel(const channel&) = delete;
+  channel(channel&&) = delete;
+  channel& operator=(const channel&) = delete;
+  channel& operator=(channel&&) = delete;
+
   struct send_awaitable {
     channel* ch_;
     T value_;

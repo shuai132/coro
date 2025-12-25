@@ -13,7 +13,7 @@
 #include "executor_poll.hpp"
 
 namespace coro {
-class executor_loop : public executor_basic_task {
+class executor_loop : public executor_base {
  private:
   std::condition_variable condition_;
 
@@ -22,6 +22,11 @@ class executor_loop : public executor_basic_task {
   ~executor_loop() override {
     executor_loop::stop();
   };
+
+  executor_loop(const executor_loop&) = delete;
+  executor_loop(executor_loop&&) = delete;
+  executor_loop& operator=(const executor_loop&) = delete;
+  executor_loop& operator=(executor_loop&&) = delete;
 
   void run_loop() {
     running_thread_id_.store(std::hash<std::thread::id>{}(std::this_thread::get_id()), std::memory_order_release);
@@ -76,17 +81,17 @@ class executor_loop : public executor_basic_task {
   }
 
   void post_delayed_ns(std::function<void()> fn, const uint64_t delay_ns) override {
-    executor_basic_task::post_delayed_ns(std::move(fn), delay_ns);
+    executor_base::post_delayed_ns(std::move(fn), delay_ns);
     condition_.notify_one();
   }
 
   void post(std::function<void()> fn) override {
-    executor_basic_task::post(std::move(fn));
+    executor_base::post(std::move(fn));
     condition_.notify_one();
   }
 
   void stop() override {
-    executor_basic_task::stop();
+    executor_base::stop();
     condition_.notify_one();
   }
 };

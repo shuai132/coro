@@ -28,6 +28,11 @@ struct wait_group_t {
  public:
   wait_group_t() : counter_(0), head_(nullptr), tail_(nullptr) {}
 
+  wait_group_t(const wait_group_t&) = delete;
+  wait_group_t(wait_group_t&&) = delete;
+  wait_group_t& operator=(const wait_group_t&) = delete;
+  wait_group_t& operator=(wait_group_t&&) = delete;
+
   // Add delta to the wait group counter
   // Similar to Go's wg.Add(delta)
   void add(int delta) {

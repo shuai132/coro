@@ -30,6 +30,11 @@ struct latch_t {
     }
   }
 
+  latch_t(const latch_t&) = delete;
+  latch_t(latch_t&&) = delete;
+  latch_t& operator=(const latch_t&) = delete;
+  latch_t& operator=(latch_t&&) = delete;
+
   // Count down the latch by n (default 1)
   // When the count reaches zero, all waiting coroutines are resumed
   void count_down(int n = 1) {

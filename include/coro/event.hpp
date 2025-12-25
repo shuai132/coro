@@ -28,6 +28,11 @@ struct event_t {
     wg_.add(1);  // Start with counter = 1 (unset state)
   }
 
+  event_t(const event_t&) = delete;
+  event_t(event_t&&) = delete;
+  event_t& operator=(const event_t&) = delete;
+  event_t& operator=(event_t&&) = delete;
+
   // Set the event and wake up all waiting coroutines
   // All current and future waiters will proceed until clear() is called
   // Usage: evt.set();
