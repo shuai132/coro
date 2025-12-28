@@ -21,10 +21,9 @@ async<void> event_basic_test() {
     co_return;
   };
 
-  auto exec = co_await current_executor();
-  co_spawn(*exec, waiter());
-  co_spawn(*exec, waiter());
-  co_spawn(*exec, waiter());
+  co_await spawn_local(waiter());
+  co_await spawn_local(waiter());
+  co_await spawn_local(waiter());
 
   co_await sleep(10ms);
   ASSERT(completed == 0);
@@ -56,10 +55,9 @@ async<void> event_already_set_test() {
     co_return;
   };
 
-  auto exec = co_await current_executor();
-  co_spawn(*exec, waiter());
-  co_spawn(*exec, waiter());
-  co_spawn(*exec, waiter());
+  co_await spawn_local(waiter());
+  co_await spawn_local(waiter());
+  co_await spawn_local(waiter());
 
   co_await sleep(10ms);
   ASSERT(completed == 3);
@@ -91,8 +89,7 @@ async<void> event_clear_reset_test() {
     co_return;
   };
 
-  auto exec = co_await current_executor();
-  co_spawn(*exec, waiter());
+  co_await spawn_local(waiter());
 
   co_await sleep(10ms);
   ASSERT(completed == 0);
@@ -118,8 +115,7 @@ async<void> event_direct_await_test() {
     co_return;
   };
 
-  auto exec = co_await current_executor();
-  co_spawn(*exec, task());
+  co_await spawn_local(task());
 
   co_await sleep(10ms);
   ASSERT(completed == 0);
@@ -147,9 +143,8 @@ async<void> event_multiple_cycles_test() {
       co_return;
     };
 
-    auto exec = co_await current_executor();
-    co_spawn(*exec, waiter());
-    co_spawn(*exec, waiter());
+    co_await spawn_local(waiter());
+    co_await spawn_local(waiter());
 
     co_await sleep(10ms);
     ASSERT(completed == 0);
@@ -180,9 +175,8 @@ async<void> event_many_waiters_test() {
     co_return;
   };
 
-  auto exec = co_await current_executor();
   for (int i = 0; i < NUM_WAITERS; ++i) {
-    co_spawn(*exec, waiter());
+    co_await spawn_local(waiter());
   }
 
   co_await sleep(10ms);

@@ -70,15 +70,13 @@ async<void> semaphore_multiple_waiters_test() {
     co_return;
   };
 
-  auto exec = co_await current_executor();
-
   // Spawn 5 workers competing for 2 permits
   wg.add(5);
-  co_spawn(*exec, worker(1));
-  co_spawn(*exec, worker(2));
-  co_spawn(*exec, worker(3));
-  co_spawn(*exec, worker(4));
-  co_spawn(*exec, worker(5));
+  co_await spawn_local(worker(1));
+  co_await spawn_local(worker(2));
+  co_await spawn_local(worker(3));
+  co_await spawn_local(worker(4));
+  co_await spawn_local(worker(5));
 
   co_await wg.wait();
 
@@ -128,12 +126,10 @@ async<void> semaphore_resource_pool_test() {
     co_return;
   };
 
-  auto exec = co_await current_executor();
-
   // Spawn 10 tasks
   wg.add(10);
   for (int i = 0; i < 10; i++) {
-    co_spawn(*exec, use_resource(i));
+    co_await spawn_local(use_resource(i));
   }
 
   // Wait for all tasks to complete

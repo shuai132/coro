@@ -75,10 +75,9 @@ async<void> mutex_test_concurrent_tasks() {
   coro::mutex mtx;
 
   // Launch multiple tasks that compete for the same mutex
-  auto exec = co_await current_executor();
-  co_spawn(*exec, mutex_test_task(mtx, "A", 10));
-  co_spawn(*exec, mutex_test_task(mtx, "B", 10));
-  co_spawn(*exec, mutex_test_task(mtx, "C", 10));
+  co_await spawn_local(mutex_test_task(mtx, "A", 10));
+  co_await spawn_local(mutex_test_task(mtx, "B", 10));
+  co_await spawn_local(mutex_test_task(mtx, "C", 10));
 
   // Wait a bit more to ensure all tasks complete
   co_await sleep(200ms);

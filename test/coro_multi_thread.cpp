@@ -76,8 +76,8 @@ async<void> run_mutex_test(executor& exec1, executor& exec2, std::thread::id exe
 #if 1
   co_await when_all(std::move(task1), std::move(task2));
 #else
-  co_spawn(exec1, std::move(task1));
-  co_spawn(exec2, std::move(task2));
+  spawn(exec1, std::move(task1));
+  spawn(exec2, std::move(task2));
   co_await sleep(1s);
 #endif
 

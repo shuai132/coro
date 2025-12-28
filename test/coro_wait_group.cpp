@@ -28,12 +28,10 @@ async<void> wait_group_basic_test() {
   // Add 3 tasks
   wg.add(3);
 
-  auto exec = co_await current_executor();
-
   // Spawn 3 worker tasks
-  co_spawn(*exec, worker_task(wg, "A", 50));
-  co_spawn(*exec, worker_task(wg, "B", 100));
-  co_spawn(*exec, worker_task(wg, "C", 75));
+  co_await spawn_local(worker_task(wg, "A", 50));
+  co_await spawn_local(worker_task(wg, "B", 100));
+  co_await spawn_local(worker_task(wg, "C", 75));
 
   LOG("Main: waiting for all workers to complete...");
   co_await wg.wait();
@@ -73,8 +71,6 @@ async<void> wait_group_multiple_waiters_test() {
   LOG("=== Multiple Waiters Test ===");
   wait_group wg;
 
-  auto exec = co_await current_executor();
-
   // Waiter tasks
   auto waiter_task = [&wg](const char* name) -> async<void> {
     LOG("Waiter %s: waiting...", name);
@@ -86,9 +82,9 @@ async<void> wait_group_multiple_waiters_test() {
   wg.add(2);
 
   // Spawn multiple waiters
-  co_spawn(*exec, waiter_task("W1"));
-  co_spawn(*exec, waiter_task("W2"));
-  co_spawn(*exec, waiter_task("W3"));
+  co_await spawn_local(waiter_task("W1"));
+  co_await spawn_local(waiter_task("W2"));
+  co_await spawn_local(waiter_task("W3"));
 
   // Let waiters start
   co_await sleep(10ms);
@@ -110,13 +106,11 @@ async<void> wait_group_incremental_add_test() {
   LOG("=== Incremental Add Test ===");
   wait_group wg;
 
-  auto exec = co_await current_executor();
-
   // Add tasks one by one
   for (int i = 0; i < 5; i++) {
     wg.add(1);
     auto name = std::string("Worker-") + std::to_string(i);
-    co_spawn(*exec, worker_task(wg, name.c_str(), 20 + i * 10));
+    co_await spawn_local(worker_task(wg, name.c_str(), 20 + i * 10));
   }
 
   LOG("Main: added 5 tasks, waiting...");
@@ -150,8 +144,6 @@ async<void> wait_group_concurrent_test() {
   LOG("=== Concurrent Workers Test ===");
   wait_group wg;
 
-  auto exec = co_await current_executor();
-
   const int num_workers = 10;
   wg.add(num_workers);
 
@@ -161,7 +153,7 @@ async<void> wait_group_concurrent_test() {
   for (int i = 0; i < num_workers; i++) {
     auto name = std::string("W") + std::to_string(i);
     int work_time = 10 + (i % 3) * 20;  // 10, 30, 50, 10, 30...
-    co_spawn(*exec, worker_task(wg, name, work_time));
+    co_await spawn_local(worker_task(wg, name, work_time));
   }
 
   LOG("Main: waiting for %d workers...", num_workers);
@@ -177,22 +169,20 @@ async<void> wait_group_reuse_test() {
   LOG("=== Reuse Wait Group Test ===");
   wait_group wg;
 
-  auto exec = co_await current_executor();
-
   // First batch
   LOG("First batch: adding 3 tasks");
   wg.add(3);
-  co_spawn(*exec, worker_task(wg, "Batch1-A", 20));
-  co_spawn(*exec, worker_task(wg, "Batch1-B", 20));
-  co_spawn(*exec, worker_task(wg, "Batch1-C", 20));
+  co_await spawn_local(worker_task(wg, "Batch1-A", 20));
+  co_await spawn_local(worker_task(wg, "Batch1-B", 20));
+  co_await spawn_local(worker_task(wg, "Batch1-C", 20));
   co_await wg.wait();
   LOG("First batch completed");
 
   // Second batch
   LOG("Second batch: adding 2 tasks");
   wg.add(2);
-  co_spawn(*exec, worker_task(wg, "Batch2-A", 20));
-  co_spawn(*exec, worker_task(wg, "Batch2-B", 20));
+  co_await spawn_local(worker_task(wg, "Batch2-A", 20));
+  co_await spawn_local(worker_task(wg, "Batch2-B", 20));
   co_await wg.wait();
   LOG("Second batch completed");
 

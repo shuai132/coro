@@ -3,7 +3,7 @@
 #include <chrono>
 #include <cstdint>
 
-#include "coro/coro.hpp"
+#include "coro.hpp"
 
 namespace coro {
 

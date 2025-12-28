@@ -88,7 +88,8 @@
 | 名称                                           | 说明                                 |
 |----------------------------------------------|------------------------------------|
 | `coro::async<T>`                             | 异步任务类型，支持 `co_await` 和 `co_return` |
-| `coro::co_spawn(executor, awaitable)`        | 在执行器上启动协程                          |
+| `coro::spawn(executor, awaitable)`           | 在执行器上启动协程                          |
+| `coro::spawn_local(awaitable)`               | 在当前执行器上启动协程                        |
 | `coro::when_all(awaitables...) -> awaitable` | 等待所有任务完成                           |
 | `coro::when_any(awaitables...) -> awaitable` | 等待任意一个任务完成                         |
 | `coro::sleep(duration)`                      | 异步等待指定时间（chrono duration）          |
@@ -169,14 +170,19 @@ async<void> process() {
 
 int main() {
     executor_loop executor;
-    
-    // 启动协程
-    co_spawn(executor, process());
+
+    // 在指定执行器上启动协程
+    spawn(executor, process());
     // 或者: process().detach(executor);
-    
+
     // 运行事件循环
     executor.run_loop();
     return 0;
+}
+
+// 在协程内部使用 spawn_local 在当前执行器上启动协程
+async<void> main_task() {
+    co_await spawn_local(process());
 }
 ```
 
@@ -520,9 +526,8 @@ async<void> consumer(channel<int>& ch) {
 async<void> example() {
     channel<int> ch;  // 无缓冲 channel
 
-    auto& exec = *co_await current_executor();
-    co_spawn(exec, producer(ch));
-    co_spawn(exec, consumer(ch));
+    co_await spawn_local(producer(ch));
+    co_await spawn_local(consumer(ch));
 }
 ```
 
@@ -562,12 +567,10 @@ async<void> broadcast_example() {
         }
     };
 
-    auto& exec = *co_await current_executor();
-
     // 启动多个接收者
-    co_spawn(exec, receiver(ch, 1));
-    co_spawn(exec, receiver(ch, 2));
-    co_spawn(exec, receiver(ch, 3));
+    co_await spawn_local(receiver(ch, 1));
+    co_await spawn_local(receiver(ch, 2));
+    co_await spawn_local(receiver(ch, 3));
 
     // 广播将值发送给所有等待的接收者
     size_t notified_count = co_await ch.broadcast(42);
@@ -607,8 +610,8 @@ async<void> example() {
     wg.add(2);
 
     // 启动工作协程
-    co_spawn(executor, worker_task(wg, "Worker1", 100));
-    co_spawn(executor, worker_task(wg, "Worker2", 150));
+    spawn(executor, worker_task(wg, "Worker1", 100));
+    spawn(executor, worker_task(wg, "Worker2", 150));
 
     // 等待所有操作完成
     co_await wg.wait();

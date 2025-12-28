@@ -103,7 +103,8 @@ I have also learned about some well-known C++20 coroutine open-source libraries,
 | Name                                         | Description                                           |
 |----------------------------------------------|-------------------------------------------------------|
 | `coro::async<T>`                             | Async task type, supports `co_await` and `co_return`  |
-| `coro::co_spawn(executor, awaitable)`        | Spawn a coroutine on an executor                      |
+| `coro::spawn(executor, awaitable)`           | Spawn a coroutine on an executor                      |
+| `coro::spawn_local(awaitable)`               | Spawn a coroutine on the current executor             |
 | `coro::when_all(awaitables...) -> awaitable` | Wait for all tasks to complete                        |
 | `coro::when_any(awaitables...) -> awaitable` | Wait for any task to complete                         |
 | `coro::sleep(duration)`                      | Async wait for specified duration (chrono duration)   |
@@ -185,14 +186,19 @@ async<void> process() {
 
 int main() {
     executor_loop executor;
-    
-    // Launch coroutine
-    co_spawn(executor, process());
+
+    // Launch coroutine on specific executor
+    spawn(executor, process());
     // Or: process().detach(executor);
     
     // Run event loop
     executor.run_loop();
     return 0;
+}
+
+// Using spawn_local inside coroutine
+async<void> main_task() {
+    co_await spawn_local(process());
 }
 ```
 
@@ -536,9 +542,8 @@ async<void> consumer(channel<int>& ch) {
 async<void> example() {
     channel<int> ch;  // Unbuffered channel
 
-    auto& exec = *co_await current_executor();
-    co_spawn(exec, producer(ch));
-    co_spawn(exec, consumer(ch));
+    co_await spawn_local(producer(ch));
+    co_await spawn_local(consumer(ch));
 }
 ```
 
@@ -578,12 +583,10 @@ async<void> broadcast_example() {
         }
     };
 
-    auto& exec = *co_await current_executor();
-
     // Spawn multiple receivers
-    co_spawn(exec, receiver(ch, 1));
-    co_spawn(exec, receiver(ch, 2));
-    co_spawn(exec, receiver(ch, 3));
+    co_await spawn_local(receiver(ch, 1));
+    co_await spawn_local(receiver(ch, 2));
+    co_await spawn_local(receiver(ch, 3));
 
     // Broadcasting sends the value to ALL waiting receivers
     size_t notified_count = co_await ch.broadcast(42);
@@ -623,8 +626,8 @@ async<void> example() {
     wg.add(2);
 
     // Launch worker coroutines
-    co_spawn(executor, worker_task(wg, "Worker1", 100));
-    co_spawn(executor, worker_task(wg, "Worker2", 150));
+    spawn(executor, worker_task(wg, "Worker1", 100));
+    spawn(executor, worker_task(wg, "Worker2", 150));
 
     // Wait for all operations to complete
     co_await wg.wait();

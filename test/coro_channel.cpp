@@ -74,9 +74,8 @@ async<void> test_unbuffered_channel() {
   };
 
   // Start producer first (it should block immediately)
-  auto& exec = *co_await current_executor();
-  co_spawn(exec, tracked_producer());
-  co_spawn(exec, tracked_consumer());
+  co_await spawn_local(tracked_producer());
+  co_await spawn_local(tracked_consumer());
 
   // Allow time for operations to complete
   co_await sleep(100ms);
@@ -161,9 +160,8 @@ async<void> test_buffered_channel() {
     co_return;
   };
 
-  auto& exec = *co_await current_executor();
-  co_spawn(exec, tracked_producer());
-  co_spawn(exec, tracked_consumer());
+  co_await spawn_local(tracked_producer());
+  co_await spawn_local(tracked_consumer());
 
   // Wait for operations to complete
   co_await sleep(200ms);
@@ -198,8 +196,7 @@ async<void> test_channel_close() {
     receiver_completed = true;
   };
 
-  auto& exec = *co_await current_executor();
-  co_spawn(exec, receiver());
+  co_await spawn_local(receiver());
 
   // Allow receiver to start waiting
   co_await sleep(10ms);
@@ -275,9 +272,8 @@ async<void> test_ping_pong() {
     co_return;
   };
 
-  auto& exec = *co_await current_executor();
-  co_spawn(exec, server());
-  co_spawn(exec, client());
+  co_await spawn_local(server());
+  co_await spawn_local(client());
 
   co_await sleep(100ms);
 
@@ -327,11 +323,10 @@ async<void> test_multiple_producers_consumers() {
   };
 
   // Start 2 producers and 2 consumers
-  auto& exec = *co_await current_executor();
-  co_spawn(exec, producer(1, &producer1_completed));
-  co_spawn(exec, producer(2, &producer2_completed));
-  co_spawn(exec, consumer(1, &consumer1_completed));
-  co_spawn(exec, consumer(2, &consumer2_completed));
+  co_await spawn_local(producer(1, &producer1_completed));
+  co_await spawn_local(producer(2, &producer2_completed));
+  co_await spawn_local(consumer(1, &consumer1_completed));
+  co_await spawn_local(consumer(2, &consumer2_completed));
 
 #ifdef CORO_TEST_RUNNER_VERY_SLOW
   co_await sleep(300ms);

@@ -38,10 +38,9 @@ async<void> latch_multiple_waiters_test() {
     co_return;
   };
 
-  auto exec = co_await current_executor();
-  co_spawn(*exec, waiter());
-  co_spawn(*exec, waiter());
-  co_spawn(*exec, waiter());
+  co_await spawn_local(waiter());
+  co_await spawn_local(waiter());
+  co_await spawn_local(waiter());
 
   // Count down after short delay
   co_await sleep(10ms);
@@ -65,10 +64,9 @@ async<void> latch_arrive_and_wait_test() {
     co_return;
   };
 
-  auto exec = co_await current_executor();
-  co_spawn(*exec, worker());
-  co_spawn(*exec, worker());
-  co_spawn(*exec, worker());
+  co_await spawn_local(worker());
+  co_await spawn_local(worker());
+  co_await spawn_local(worker());
 
   co_await sleep(50ms);
   ASSERT(completed == 3);

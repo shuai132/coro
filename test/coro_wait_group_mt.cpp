@@ -52,12 +52,12 @@ async<void> wait_group_basic_mt_test(executor& exec1, executor& exec2, std::thre
   auto task6 = worker_task_mt(wg, 6, 90, exec2, exec2_tid).bind_executor(exec2);
 
   // Spawn all tasks
-  co_spawn(exec1, std::move(task1));
-  co_spawn(exec2, std::move(task2));
-  co_spawn(exec1, std::move(task3));
-  co_spawn(exec2, std::move(task4));
-  co_spawn(exec1, std::move(task5));
-  co_spawn(exec2, std::move(task6));
+  spawn(exec1, std::move(task1));
+  spawn(exec2, std::move(task2));
+  spawn(exec1, std::move(task3));
+  spawn(exec2, std::move(task4));
+  spawn(exec1, std::move(task5));
+  spawn(exec2, std::move(task6));
 
   LOG("Main: waiting for all workers to complete...");
   co_await wg.wait();
@@ -99,10 +99,10 @@ async<void> wait_group_multiple_waiters_mt_test(executor& exec1, executor& exec2
   auto waiter3 = waiter_task(3, exec1, exec1_tid).bind_executor(exec1);
   auto waiter4 = waiter_task(4, exec2, exec2_tid).bind_executor(exec2);
 
-  co_spawn(exec1, std::move(waiter1));
-  co_spawn(exec2, std::move(waiter2));
-  co_spawn(exec1, std::move(waiter3));
-  co_spawn(exec2, std::move(waiter4));
+  spawn(exec1, std::move(waiter1));
+  spawn(exec2, std::move(waiter2));
+  spawn(exec1, std::move(waiter3));
+  spawn(exec2, std::move(waiter4));
 
   // Let waiters start
   co_await sleep(20ms);
@@ -167,8 +167,8 @@ async<void> wait_group_concurrent_operations_test(executor& exec1, executor& exe
   auto dw1 = dynamic_worker(1, 5, exec1, exec1_tid).bind_executor(exec1);
   auto dw2 = dynamic_worker(2, 5, exec2, exec2_tid).bind_executor(exec2);
 
-  co_spawn(exec1, std::move(dw1));
-  co_spawn(exec2, std::move(dw2));
+  spawn(exec1, std::move(dw1));
+  spawn(exec2, std::move(dw2));
 
   // Wait for all to complete (including the sentinel counts)
   co_await wg.wait();
@@ -202,7 +202,7 @@ async<void> wait_group_stress_test(executor& exec1, executor& exec2, std::thread
     int work_time = 10 + (i % 5) * 10;
 
     auto worker = worker_task_mt(wg, 100 + i, work_time, exec, tid).bind_executor(exec);
-    co_spawn(exec, std::move(worker));
+    spawn(exec, std::move(worker));
   }
 
   LOG("Main: waiting for %d workers across 2 threads...", num_workers);
@@ -223,10 +223,10 @@ async<void> wait_group_reuse_mt_test(executor& exec1, executor& exec2, std::thre
   // First batch - mix of threads
   LOG("First batch: adding 4 tasks");
   wg.add(4);
-  co_spawn(exec1, worker_task_mt(wg, 201, 20, exec1, exec1_tid).bind_executor(exec1));
-  co_spawn(exec2, worker_task_mt(wg, 202, 20, exec2, exec2_tid).bind_executor(exec2));
-  co_spawn(exec1, worker_task_mt(wg, 203, 20, exec1, exec1_tid).bind_executor(exec1));
-  co_spawn(exec2, worker_task_mt(wg, 204, 20, exec2, exec2_tid).bind_executor(exec2));
+  spawn(exec1, worker_task_mt(wg, 201, 20, exec1, exec1_tid).bind_executor(exec1));
+  spawn(exec2, worker_task_mt(wg, 202, 20, exec2, exec2_tid).bind_executor(exec2));
+  spawn(exec1, worker_task_mt(wg, 203, 20, exec1, exec1_tid).bind_executor(exec1));
+  spawn(exec2, worker_task_mt(wg, 204, 20, exec2, exec2_tid).bind_executor(exec2));
   co_await wg.wait();
   LOG("First batch completed, count=%d", wg.get_count());
   ASSERT(wg.get_count() == 0);
@@ -234,9 +234,9 @@ async<void> wait_group_reuse_mt_test(executor& exec1, executor& exec2, std::thre
   // Second batch - different distribution
   LOG("Second batch: adding 3 tasks");
   wg.add(3);
-  co_spawn(exec1, worker_task_mt(wg, 205, 20, exec1, exec1_tid).bind_executor(exec1));
-  co_spawn(exec1, worker_task_mt(wg, 206, 20, exec1, exec1_tid).bind_executor(exec1));
-  co_spawn(exec2, worker_task_mt(wg, 207, 20, exec2, exec2_tid).bind_executor(exec2));
+  spawn(exec1, worker_task_mt(wg, 205, 20, exec1, exec1_tid).bind_executor(exec1));
+  spawn(exec1, worker_task_mt(wg, 206, 20, exec1, exec1_tid).bind_executor(exec1));
+  spawn(exec2, worker_task_mt(wg, 207, 20, exec2, exec2_tid).bind_executor(exec2));
   co_await wg.wait();
   LOG("Second batch completed, count=%d", wg.get_count());
   ASSERT(wg.get_count() == 0);
@@ -244,8 +244,8 @@ async<void> wait_group_reuse_mt_test(executor& exec1, executor& exec2, std::thre
   // Third batch - all on one thread
   LOG("Third batch: adding 2 tasks");
   wg.add(2);
-  co_spawn(exec2, worker_task_mt(wg, 208, 20, exec2, exec2_tid).bind_executor(exec2));
-  co_spawn(exec2, worker_task_mt(wg, 209, 20, exec2, exec2_tid).bind_executor(exec2));
+  spawn(exec2, worker_task_mt(wg, 208, 20, exec2, exec2_tid).bind_executor(exec2));
+  spawn(exec2, worker_task_mt(wg, 209, 20, exec2, exec2_tid).bind_executor(exec2));
   co_await wg.wait();
   LOG("Third batch completed, count=%d", wg.get_count());
   ASSERT(wg.get_count() == 0);

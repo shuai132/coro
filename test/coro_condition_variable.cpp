@@ -157,9 +157,8 @@ async<void> cv_producer_consumer_test() {
     co_return consumed;
   };
 
-  auto exec = co_await current_executor();
-  co_spawn(*exec, producer(1));
-  co_spawn(*exec, producer(2));
+  co_await spawn_local(producer(1));
+  co_await spawn_local(producer(2));
 
   auto c1 = consumer(1);
   auto c2 = consumer(2);

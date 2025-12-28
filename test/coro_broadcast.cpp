@@ -34,12 +34,10 @@ async<void> test_broadcast_multiple_receivers() {
     co_return;
   };
 
-  auto& exec = *co_await current_executor();
-
   // Start 3 receivers
-  co_spawn(exec, receiver(1, &receiver1_value, &receiver1_done));
-  co_spawn(exec, receiver(2, &receiver2_value, &receiver2_done));
-  co_spawn(exec, receiver(3, &receiver3_value, &receiver3_done));
+  co_await spawn_local(receiver(1, &receiver1_value, &receiver1_done));
+  co_await spawn_local(receiver(2, &receiver2_value, &receiver2_done));
+  co_await spawn_local(receiver(3, &receiver3_value, &receiver3_done));
 
   // Give receivers time to start waiting
   co_await sleep(50ms);
@@ -86,11 +84,9 @@ async<void> test_broadcast_vs_send() {
     co_return;
   };
 
-  auto& exec = *co_await current_executor();
-
   // Start 2 receivers
-  co_spawn(exec, receiver(1, &receiver1_value, &receiver1_done));
-  co_spawn(exec, receiver(2, &receiver2_value, &receiver2_done));
+  co_await spawn_local(receiver(1, &receiver1_value, &receiver1_done));
+  co_await spawn_local(receiver(2, &receiver2_value, &receiver2_done));
 
   co_await sleep(50ms);
 
@@ -161,10 +157,8 @@ async<void> test_sequential_broadcasts() {
     co_return;
   };
 
-  auto& exec = *co_await current_executor();
-
-  co_spawn(exec, receiver(1, &receiver1_values));
-  co_spawn(exec, receiver(2, &receiver2_values));
+  co_await spawn_local(receiver(1, &receiver1_values));
+  co_await spawn_local(receiver(2, &receiver2_values));
 
   co_await sleep(50ms);
 

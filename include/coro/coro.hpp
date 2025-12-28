@@ -220,7 +220,7 @@ struct awaitable {
   }
 
   /// co_await
-  bool await_ready() const noexcept {
+  [[nodiscard]] bool await_ready() const noexcept {
     CORO_DEBUG_LIFECYCLE("awaitable: await_ready: %p, h: %p", this, current_coro_handle_.address());
     return false;
   }
@@ -246,7 +246,7 @@ struct awaitable {
     return std::move(*this);
   }
 
-  executor* get_executor() const {
+  [[nodiscard]] executor* get_executor() const {
     return current_coro_handle_.promise().executor_;
   }
 
@@ -332,7 +332,7 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
   explicit callback_awaiter(callback_function_with_executor callback) : callback_function_(std::move(callback)) {}
   callback_awaiter(callback_awaiter&&) = default;
 
-  bool await_ready() const noexcept {
+  [[nodiscard]] bool await_ready() const noexcept {
     return false;
   }
 
@@ -382,7 +382,7 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
 namespace detail {
 
 struct current_executor_awaiter {
-  bool await_ready() const noexcept {
+  [[nodiscard]] bool await_ready() const noexcept {
     return false;
   }
 
@@ -392,7 +392,7 @@ struct current_executor_awaiter {
     return false;
   }
 
-  executor* await_resume() const noexcept {
+  [[nodiscard]] executor* await_resume() const noexcept {
     return exec_;
   }
 
@@ -402,7 +402,7 @@ struct current_executor_awaiter {
 
 }  // namespace detail
 
-detail::current_executor_awaiter current_executor() {
+[[nodiscard]] detail::current_executor_awaiter current_executor() {
   return detail::current_executor_awaiter{};
 }
 
@@ -410,8 +410,14 @@ template <typename T>
 using async = awaitable<T>;
 
 template <typename T>
-void co_spawn(executor& executor, T&& coro) {
+void spawn(executor& executor, T&& coro) {
   coro.detach(executor);
+}
+
+template <typename T>
+[[nodiscard]] async<void> spawn_local(T&& awaitable) {
+  auto* exec = co_await current_executor();
+  spawn(*exec, std::forward<T>(awaitable));
 }
 
 }  // namespace coro

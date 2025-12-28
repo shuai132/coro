@@ -91,12 +91,12 @@ async<void> loop_task(const char* tag, int ms) {
 
 void test_coro(executor& executor) {
   // test: loop_task
-  co_spawn(executor, loop_task("A", 100));
-  co_spawn(executor, loop_task("B", 200));
-  co_spawn(executor, loop_task("C", 300));
+  spawn(executor, loop_task("A", 100));
+  spawn(executor, loop_task("B", 200));
+  spawn(executor, loop_task("C", 300));
 
   /// test: coro_task
-  co_spawn(executor, coro_task());
+  spawn(executor, coro_task());
   // or:
   coro_task().detach(executor);
 
@@ -133,7 +133,7 @@ void test_coro(executor& executor) {
 }
 
 void test_simple(executor& executor) {
-  co_spawn(executor, [](auto e) -> async<void> {
+  spawn(executor, [](auto e) -> async<void> {
     ASSERT(e == co_await current_executor());
     TimeCount t;
     const auto ms = 100;
