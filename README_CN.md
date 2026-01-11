@@ -66,7 +66,7 @@
 
 * 另一个很大的原因是，设计取舍不同。我想要把**易于理解和使用**放在第一位，无论是api设计、功能设计和实现。
 
-  比如`libcoro`里支持`co_await tp->schedule()`而且作为切换线程的推荐范式，我认为这是及其不恰当的。在同一个代码块上下文切换线程非常反直觉和容易出错。
+  比如`libcoro`里支持`co_await tp->schedule()`而且作为切换线程的推荐范式，我认为这是极其不恰当的。在同一个代码块上下文切换线程非常反直觉和容易出错。
 
   再比如`async_simple`和`libcoro`的同步原语设计，需要用户在协程上下文调用，比如`co_await semaphore.release()`。
   我认为宽松的约束更容易使用，用户可以在任意地方调用`semaphore.release()`。
@@ -94,6 +94,7 @@
 | `coro::when_any(awaitables...) -> awaitable` | 等待任意一个任务完成                         |
 | `coro::sleep(duration)`                      | 异步等待指定时间（chrono duration）          |
 | `coro::delay(ms)`                            | 异步等待指定毫秒数                          |
+| `co_await chrono_duration`                   | 直接异步等待（例如`co_await 1s`）            |
 | `coro::mutex`                                | 协程安全的互斥锁                           |
 | `coro::condition_variable`                   | 协程安全的条件变量，用于同步操作                   |
 | `coro::event`                                | 事件同步原语                             |

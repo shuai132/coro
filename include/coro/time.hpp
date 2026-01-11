@@ -21,4 +21,9 @@ inline callback_awaiter<void> delay(uint64_t ms) {
   return sleep(std::chrono::milliseconds(ms));
 }
 
+template <typename Rep, typename Period>
+inline auto operator co_await(std::chrono::duration<Rep, Period> duration) {
+  return sleep(duration);
+}
+
 }  // namespace coro

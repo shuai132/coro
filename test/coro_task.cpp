@@ -28,6 +28,8 @@ async<int> coro_fun() {
     LOG("sleep 500ms begin");
     TimeCount t;
     co_await sleep(500ms);
+    co_await 0ms;
+    co_await std::chrono::milliseconds(0);
     ASSERT(int(t.elapsed()) >= 500);
     LOG("sleep 500ms end: %d", (int)t.elapsed());
   }
@@ -83,7 +85,7 @@ async<void> loop_task(const char* tag, int ms) {
   int count = 3;
   while (count--) {
     TimeCount t;
-    co_await sleep(std::chrono::milliseconds(ms));
+    co_await std::chrono::milliseconds(ms);
     LOG("%s: %d, elapsed: %d", tag, ms, (int)t.elapsed());
     ASSERT(int(t.elapsed()) >= ms);
   }

@@ -109,6 +109,7 @@ I have also learned about some well-known C++20 coroutine open-source libraries,
 | `coro::when_any(awaitables...) -> awaitable` | Wait for any task to complete                         |
 | `coro::sleep(duration)`                      | Async wait for specified duration (chrono duration)   |
 | `coro::delay(ms)`                            | Async wait for specified milliseconds                 |
+| `co_await chrono_duration`                   | Async wait directly (e.g., `co_await 1s`)             |
 | `coro::mutex`                                | Coroutine-safe mutex                                  |
 | `coro::condition_variable`                   | Coroutine-safe condition variable for synchronization |
 | `coro::event`                                | Event synchronization primitive                       |
