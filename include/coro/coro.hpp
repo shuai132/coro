@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <coroutine>
 #include <functional>
 #include <memory>
@@ -146,7 +147,7 @@ struct final_awaitable {
     if (h.promise().parent_handle_) {
       return h.promise().parent_handle_;
     } else {
-      if (h.done() && !h.promise().awaitable_) {
+      if (!h.promise().awaitable_) {
         h.destroy();
       }
       return std::noop_coroutine();
@@ -207,6 +208,9 @@ struct awaitable {
   /// enable move
   awaitable(awaitable&& other) noexcept : current_coro_handle_(other.current_coro_handle_) {
     CORO_DEBUG_LIFECYCLE("awaitable: move(c): %p to %p, h: %p", &other, this, current_coro_handle_.address());
+    if (current_coro_handle_) {
+      current_coro_handle_.promise().awaitable_ = this;
+    }
     other.current_coro_handle_ = nullptr;
   }
   awaitable& operator=(awaitable&& other) noexcept {
@@ -214,6 +218,9 @@ struct awaitable {
     if (this != &other) {
       if (current_coro_handle_) current_coro_handle_.destroy();
       current_coro_handle_ = other.current_coro_handle_;
+      if (current_coro_handle_) {
+        current_coro_handle_.promise().awaitable_ = this;
+      }
       other.current_coro_handle_ = nullptr;
     }
     return *this;
@@ -339,6 +346,7 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
   template <typename Promise>
   void await_suspend(std::coroutine_handle<Promise> handle) {
     auto executor = handle.promise().executor_;
+    assert(executor && "executor must be set before using callback_awaiter");
     switch (callback_function_.index()) {
       case 0: {
         auto& func = std::get<0>(callback_function_);
@@ -402,7 +410,7 @@ struct current_executor_awaiter {
 
 }  // namespace detail
 
-[[nodiscard]] detail::current_executor_awaiter current_executor() {
+[[nodiscard]] inline detail::current_executor_awaiter current_executor() {
   return detail::current_executor_awaiter{};
 }
 
