@@ -32,3 +32,6 @@
 
 // semaphore
 #include "coro/semaphore.hpp"
+
+// coro_local
+#include "coro/coro_local.hpp"

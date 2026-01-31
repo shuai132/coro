@@ -27,6 +27,7 @@
     - [wait_group](#wait_group)
     - [latch](#latch)
     - [event](#event)
+- [协程本地存储](#协程本地存储)
 - [回调转协程](#回调转协程)
 - [配置选项](#配置选项)
 - [构建测试](#构建测试)
@@ -107,6 +108,8 @@
 | `coro::executor_poll`                        | 基于轮询的执行器                           |
 | `coro::current_executor()`                   | 获取当前执行器                            |
 | `coro::callback_awaiter<T>`                  | 将回调式 API 转换为协程                     |
+| `coro::coro_local<T>`                        | 协程本地存储（类似 thread_local）            |
+| `coro::inherit_coro_local()`                 | 继承父协程的本地存储                         |
 
 ## 特性
 
@@ -123,6 +126,7 @@
 - 🔍 **单元测试**：完善的单元测试和集成测试
 - 📦 **嵌入式支持**：支持 MCU 和嵌入式平台
 - 🧩 **扩展同步原语**：提供额外的同步工具，包括条件变量、事件、门闩、信号量和等待组
+- 🗂️ **协程本地存储**：类似 thread_local 的协程作用域存储，支持继承
 
 ## 要求
 
@@ -673,6 +677,135 @@ async<void> setter() {
 
     // 检查事件是否已设置（非阻塞）
     bool is_set = evt.is_set();
+}
+```
+
+## 协程本地存储
+
+协程本地存储提供了类似 `thread_local` 的存储机制，但作用域是协程。每个 `coro_local<T>` 实例作为一个唯一的键来存储值，类似于
+`thread_local`，但针对协程。
+
+### 基本用法
+
+```cpp
+#include "coro/coro_local.hpp"
+
+// 定义存储键（类似 thread_local，通常为 static）
+static coro::coro_local<int> request_id;
+static coro::coro_local<std::string> user_name;
+
+async<void> process_request() {
+    // 为当前协程设置值
+    co_await request_id.set(42);
+    co_await user_name.set("Alice");
+
+    // 获取值（如果未设置则返回默认构造的 T）
+    int id = co_await request_id.get();
+    std::string name = co_await user_name.get();
+
+    std::cout << "处理请求 " << id << "，用户 " << name << std::endl;
+}
+```
+
+### API 参考
+
+```cpp
+coro::coro_local<T> storage;
+
+// 为当前协程设置值
+co_await storage.set(value);
+
+// 获取值（如果未设置则返回默认值 T{}）
+T value = co_await storage.get();
+
+// 获取 optional（如果未设置则返回 std::nullopt）
+std::optional<T> opt = co_await storage.get_optional();
+
+// 获取指针（如果未设置则返回 nullptr）
+T* ptr = co_await storage.get_ptr();
+
+// 检查值是否存在
+bool exists = co_await storage.has();
+
+// 删除值
+co_await storage.erase();
+```
+
+### 从父协程继承
+
+子协程可以继承父协程的值。默认情况下，子协程可以读取父协程的值。使用 `inherit_coro_local()` 启用写时复制语义，使修改仅对子协程生效。
+
+```cpp
+static coro::coro_local<int> context_id;
+
+async<void> parent_coro() {
+    co_await context_id.set(100);
+
+    // 子协程可以读取父协程的值
+    auto child = []() -> async<void> {
+        int id = co_await context_id.get();
+        std::cout << "子协程看到: " << id << std::endl;  // 输出: 100
+        co_return;
+    };
+
+    co_await child();
+}
+```
+
+### 写时复制语义
+
+当你希望子协程继承值但拥有自己的副本进行修改时，使用 `inherit_coro_local()`：
+
+```cpp
+async<void> parent_coro() {
+    co_await context_id.set(100);
+
+    auto child = []() -> async<void> {
+        // 启用写时复制继承
+        co_await coro::inherit_coro_local();
+
+        // 读取父协程的值
+        int id = co_await context_id.get();  // 100
+
+        // 本地修改（不影响父协程）
+        co_await context_id.set(200);
+
+        id = co_await context_id.get();  // 200
+        co_return;
+    };
+
+    co_await child();
+
+    // 父协程的值保持不变
+    int id = co_await context_id.get();  // 仍然是 100
+}
+```
+
+### 并发协程之间的隔离
+
+每个协程都有自己独立的存储空间。并发协程之间互不干扰：
+
+```cpp
+async<void> concurrent_example() {
+    static coro::coro_local<int> task_id;
+
+    auto task_a = []() -> async<void> {
+        co_await task_id.set(111);
+        co_await coro::sleep(50ms);
+        int id = co_await task_id.get();  // 仍然是 111
+        co_return;
+    };
+
+    auto task_b = []() -> async<void> {
+        co_await task_id.set(222);
+        co_await coro::sleep(50ms);
+        int id = co_await task_id.get();  // 仍然是 222
+        co_return;
+    };
+
+    // 两个任务并发运行，存储空间相互隔离
+    co_await coro::spawn_local(task_a());
+    co_await coro::spawn_local(task_b());
 }
 ```
 

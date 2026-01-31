@@ -27,6 +27,7 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
     - [wait_group](#wait_group)
     - [latch](#latch)
     - [event](#event)
+- [Coroutine-Local Storage](#coroutine-local-storage)
 - [Callback to Coroutine](#callback-to-coroutine)
 - [Configuration Options](#configuration-options)
 - [Building Tests](#building-tests)
@@ -122,6 +123,8 @@ I have also learned about some well-known C++20 coroutine open-source libraries,
 | `coro::executor_poll`                        | Polling based executor                                |
 | `coro::current_executor()`                   | Get current executor                                  |
 | `coro::callback_awaiter<T>`                  | Convert callback-style APIs to coroutines             |
+| `coro::coro_local<T>`                        | Coroutine-local storage (like thread_local)           |
+| `coro::inherit_coro_local()`                 | Inherit parent coroutine's local storage              |
 
 ## Features
 
@@ -139,6 +142,7 @@ I have also learned about some well-known C++20 coroutine open-source libraries,
 - 📦 **Embedded Support**: Compatible with MCU and embedded platforms
 - 🧩 **Extended Synchronization Primitives**: Additional synchronization tools including condition variables, events,
   latches, semaphores, and wait groups
+- 🗂️ **Coroutine-Local Storage**: Thread-local-like storage scoped to coroutines with inheritance support
 
 ## Requirements
 
@@ -689,6 +693,136 @@ async<void> setter() {
 
     // Check if the event is set (non-blocking)
     bool is_set = evt.is_set();
+}
+```
+
+## Coroutine-Local Storage
+
+Coroutine-local storage provides thread-local-like storage scoped to coroutines. Each `coro_local<T>` instance acts as a
+unique key for storing values, similar to `thread_local` but for coroutines.
+
+### Basic Usage
+
+```cpp
+#include "coro/coro_local.hpp"
+
+// Define a storage key (like thread_local, typically static)
+static coro::coro_local<int> request_id;
+static coro::coro_local<std::string> user_name;
+
+async<void> process_request() {
+    // Set value for current coroutine
+    co_await request_id.set(42);
+    co_await user_name.set("Alice");
+
+    // Get value (returns default-constructed T if not set)
+    int id = co_await request_id.get();
+    std::string name = co_await user_name.get();
+
+    std::cout << "Processing request " << id << " for " << name << std::endl;
+}
+```
+
+### API Reference
+
+```cpp
+coro::coro_local<T> storage;
+
+// Set value for current coroutine
+co_await storage.set(value);
+
+// Get value (returns default T{} if not set)
+T value = co_await storage.get();
+
+// Get as optional (returns std::nullopt if not set)
+std::optional<T> opt = co_await storage.get_optional();
+
+// Get pointer (returns nullptr if not set)
+T* ptr = co_await storage.get_ptr();
+
+// Check if value exists
+bool exists = co_await storage.has();
+
+// Erase the value
+co_await storage.erase();
+```
+
+### Inheritance from Parent Coroutine
+
+Child coroutines can inherit values from their parent coroutine. By default, child coroutines can read parent values.
+Use `inherit_coro_local()` to enable copy-on-write semantics where modifications are local to the child.
+
+```cpp
+static coro::coro_local<int> context_id;
+
+async<void> parent_coro() {
+    co_await context_id.set(100);
+
+    // Child coroutine can read parent's value
+    auto child = []() -> async<void> {
+        int id = co_await context_id.get();
+        std::cout << "Child sees: " << id << std::endl;  // Prints: 100
+        co_return;
+    };
+
+    co_await child();
+}
+```
+
+### Copy-on-Write Semantics
+
+Use `inherit_coro_local()` when you want the child to inherit values but have its own copy for modifications:
+
+```cpp
+async<void> parent_coro() {
+    co_await context_id.set(100);
+
+    auto child = []() -> async<void> {
+        // Enable copy-on-write inheritance
+        co_await coro::inherit_coro_local();
+
+        // Read parent's value
+        int id = co_await context_id.get();  // 100
+
+        // Modify locally (doesn't affect parent)
+        co_await context_id.set(200);
+
+        id = co_await context_id.get();  // 200
+        co_return;
+    };
+
+    co_await child();
+
+    // Parent's value is unchanged
+    int id = co_await context_id.get();  // Still 100
+}
+```
+
+### Isolation Between Concurrent Coroutines
+
+Each coroutine has its own isolated storage. Concurrent coroutines do not interfere with each other:
+
+```cpp
+async<void> concurrent_example() {
+    static coro::coro_local<int> task_id;
+
+    auto task_a = []() -> async<void> {
+        co_await task_id.set(111);
+        co_await coro::sleep(50ms);
+        int id = co_await task_id.get();  // Still 111
+        co_return;
+    };
+
+    auto task_b = []() -> async<void> {
+        co_await task_id.set(222);
+        co_await coro::sleep(50ms);
+        int id = co_await task_id.get();  // Still 222
+        co_return;
+    };
+
+    // Both tasks run concurrently with isolated storage
+    co_await coro::spawn_local(task_a());
+    co_await coro::spawn_local(task_b());
 }
 ```
 

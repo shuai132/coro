@@ -200,3 +200,9 @@ jobs:
         working-directory: build
         run: |
           ./coro_multi_thread_st${{ matrix.env.BIN_SUFFIX }}
+
+      - name: Test coro_local
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_coro_local${{ matrix.env.BIN_SUFFIX }}

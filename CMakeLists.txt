@@ -124,4 +124,8 @@ if (CORO_BUILD_TEST)
     set(TARGET_NAME ${PROJECT_NAME}_multi_thread_st)
     add_executable(${TARGET_NAME} test/coro_multi_thread.cpp)
     target_compile_definitions(${TARGET_NAME} PRIVATE -DCORO_USE_SINGLE_THREAD)
+
+    # test coro_local
+    set(TARGET_NAME ${PROJECT_NAME}_coro_local)
+    add_executable(${TARGET_NAME} test/coro_local.cpp)
 endif ()

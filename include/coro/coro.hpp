@@ -9,6 +9,7 @@
 #include <utility>
 #include <variant>
 
+#include "coro_local_map.hpp"
 #include "executor.hpp"
 
 /// options
@@ -177,6 +178,9 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
   std::coroutine_handle<> parent_handle_{};
   executor* executor_ = nullptr;       // from bind_executor or inherit from caller
   awaitable<T>* awaitable_ = nullptr;  // have awaitable lived or detached
+
+  // Local storage support (lazily created, inherits from parent via parent pointer in coro_local_map)
+  std::shared_ptr<detail::coro_local_map> local_storage_;
 };
 
 template <typename T>
@@ -238,6 +242,11 @@ struct awaitable {
     // use bind executor or inherit from caller
     if (!current_coro_handle_.promise().executor_) {
       current_coro_handle_.promise().executor_ = h.promise().executor_;
+    }
+    // inherit local storage from parent coroutine (lazily, just save parent reference)
+    if (h.promise().local_storage_) {
+      current_coro_handle_.promise().local_storage_ = std::make_shared<detail::coro_local_map>();
+      current_coro_handle_.promise().local_storage_->parent = h.promise().local_storage_;
     }
     current_coro_handle_.promise().parent_handle_ = h;
     return current_coro_handle_;
