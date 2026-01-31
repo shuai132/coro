@@ -29,6 +29,7 @@
     - [event](#event)
 - [协程本地存储](#协程本地存储)
 - [回调转协程](#回调转协程)
+- [ASIO 适配器](#asio-适配器)
 - [配置选项](#配置选项)
 - [构建测试](#构建测试)
 - [项目结构](#项目结构)
@@ -832,6 +833,160 @@ async<void> async_void_operation() {
         // 可以使用执行器进行调度
         exec->post_delayed_ns(std::move(callback), 1000000);  // 1ms 后执行
     });
+}
+```
+
+## ASIO 适配器
+
+该库提供了 `coro::async<T>` 和 `asio::awaitable<T>` 之间的互操作适配器，让你可以无缝混合使用 coro 和 ASIO 协程。
+
+### asio_executor
+
+`asio_executor` 将 `asio::io_context` 适配为 `coro::executor` 接口，使 coro 协程可以在 ASIO 事件循环上运行：
+
+```cpp
+#include "coro/adaptor/asio_adaptor.hpp"
+
+asio::io_context io_ctx;
+coro::asio_executor exec(io_ctx);
+
+// 在 ASIO 事件循环上启动 coro 协程
+spawn(exec, my_coro_task());
+
+// 运行 ASIO 事件循环
+io_ctx.run();
+```
+
+### await_asio
+
+`await_asio()` 允许 coro 协程 `co_await` ASIO 的可等待对象：
+
+```cpp
+#include "coro/adaptor/asio_adaptor.hpp"
+
+// ASIO 协程
+asio::awaitable<int> asio_fetch_data() {
+    auto executor = co_await asio::this_coro::executor;
+    asio::steady_timer timer(executor);
+    timer.expires_after(100ms);
+    co_await timer.async_wait(asio::use_awaitable);
+    co_return 42;
+}
+
+// coro 协程调用 ASIO 协程
+coro::async<void> coro_task() {
+    // 使用 await_asio 在 coro 中调用 ASIO 可等待对象
+    int result = co_await coro::await_asio(asio_fetch_data());
+    std::cout << "Got: " << result << std::endl;
+    
+    // 也支持 void 返回类型
+    co_await coro::await_asio(some_asio_void_task());
+}
+```
+
+### await_coro
+
+`await_coro()` 允许 ASIO 协程 `co_await` coro 的异步任务：
+
+```cpp
+#include "coro/adaptor/asio_adaptor.hpp"
+
+// coro 协程
+coro::async<int> coro_compute() {
+    co_await coro::sleep(100ms);
+    co_return 99;
+}
+
+// ASIO 协程调用 coro 协程
+asio::awaitable<void> asio_task() {
+    // 使用 await_coro 在 ASIO 中调用 coro 异步任务
+    int result = co_await coro::await_coro(coro_compute());
+    std::cout << "Got: " << result << std::endl;
+    
+    // 也支持 void 返回类型
+    co_await coro::await_coro(some_coro_void_task());
+}
+```
+
+### 嵌套调用
+
+你可以进行深层嵌套的跨框架调用：
+
+```cpp
+// coro -> asio -> coro
+coro::async<int> coro_task() {
+    // 调用 ASIO 协程，该协程内部又调用 coro 协程
+    int result = co_await coro::await_asio(asio_intermediate());
+    co_return result;
+}
+
+asio::awaitable<int> asio_intermediate() {
+    // 在 ASIO 中调用 coro 协程
+    int value = co_await coro::await_coro(another_coro_task());
+    co_return value * 2;
+}
+
+// asio -> coro -> asio  
+asio::awaitable<int> asio_task() {
+    int result = co_await coro::await_coro(coro_intermediate());
+    co_return result;
+}
+
+coro::async<int> coro_intermediate() {
+    int value = co_await coro::await_asio(another_asio_task());
+    co_return value + 1;
+}
+```
+
+### 异常处理
+
+异常可以正确地在框架边界之间传播：
+
+```cpp
+// 在 coro 中捕获 ASIO 抛出的异常
+coro::async<void> coro_catches_asio_exception() {
+    try {
+        co_await coro::await_asio(asio_throws());
+    } catch (const std::exception& e) {
+        std::cout << "捕获: " << e.what() << std::endl;
+    }
+}
+
+// 在 ASIO 中捕获 coro 抛出的异常
+asio::awaitable<void> asio_catches_coro_exception() {
+    try {
+        co_await coro::await_coro(coro_throws());
+    } catch (const std::exception& e) {
+        std::cout << "捕获: " << e.what() << std::endl;
+    }
+}
+```
+
+### 完整示例
+
+```cpp
+#include "coro/coro.hpp"
+#include "coro/adaptor/asio_adaptor.hpp"
+
+using namespace coro;
+
+async<void> main_task() {
+    // 自由混合 coro 和 ASIO 协程
+    co_await sleep(50ms);  // coro 定时器
+    co_await await_asio(asio_sleep(50ms));  // ASIO 定时器
+    
+    int result = co_await await_asio(asio_compute());
+    std::cout << "Result: " << result << std::endl;
+}
+
+int main() {
+    asio::io_context io_ctx;
+    asio_executor exec(io_ctx);
+    
+    spawn(exec, main_task());
+    
+    io_ctx.run();
+    return 0;
 }
 ```
 

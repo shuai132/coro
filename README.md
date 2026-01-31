@@ -29,6 +29,7 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
     - [event](#event)
 - [Coroutine-Local Storage](#coroutine-local-storage)
 - [Callback to Coroutine](#callback-to-coroutine)
+- [ASIO Adaptor](#asio-adaptor)
 - [Configuration Options](#configuration-options)
 - [Building Tests](#building-tests)
 - [Project Structure](#project-structure)
@@ -852,6 +853,162 @@ async<void> async_void_operation() {
 }
 ```
 
+## ASIO Adaptor
+
+The library provides an adaptor for interoperability between `coro::async<T>` and `asio::awaitable<T>`, allowing you to
+mix coro and ASIO coroutines seamlessly.
+
+### asio_executor
+
+`asio_executor` adapts `asio::io_context` to the `coro::executor` interface, enabling coro coroutines to run on an ASIO
+event loop:
+
+```cpp
+#include "coro/adaptor/asio_adaptor.hpp"
+
+asio::io_context io_ctx;
+coro::asio_executor exec(io_ctx);
+
+// Launch coro coroutines on ASIO event loop
+spawn(exec, my_coro_task());
+
+// Run the ASIO event loop
+io_ctx.run();
+```
+
+### await_asio
+
+`await_asio()` allows coro coroutines to `co_await` ASIO awaitables:
+
+```cpp
+#include "coro/adaptor/asio_adaptor.hpp"
+
+// ASIO coroutine
+asio::awaitable<int> asio_fetch_data() {
+    auto executor = co_await asio::this_coro::executor;
+    asio::steady_timer timer(executor);
+    timer.expires_after(100ms);
+    co_await timer.async_wait(asio::use_awaitable);
+    co_return 42;
+}
+
+// coro coroutine calling ASIO coroutine
+coro::async<void> coro_task() {
+    // Use await_asio to call ASIO awaitable from coro
+    int result = co_await coro::await_asio(asio_fetch_data());
+    std::cout << "Got: " << result << std::endl;
+    
+    // Also works with void return type
+    co_await coro::await_asio(some_asio_void_task());
+}
+```
+
+### await_coro
+
+`await_coro()` allows ASIO coroutines to `co_await` coro asyncs:
+
+```cpp
+#include "coro/adaptor/asio_adaptor.hpp"
+
+// coro coroutine
+coro::async<int> coro_compute() {
+    co_await coro::sleep(100ms);
+    co_return 99;
+}
+
+// ASIO coroutine calling coro coroutine
+asio::awaitable<void> asio_task() {
+    // Use await_coro to call coro async from ASIO
+    int result = co_await coro::await_coro(coro_compute());
+    std::cout << "Got: " << result << std::endl;
+    
+    // Also works with void return type
+    co_await coro::await_coro(some_coro_void_task());
+}
+```
+
+### Nested Calls
+
+You can have deeply nested cross-framework calls:
+
+```cpp
+// coro -> asio -> coro
+coro::async<int> coro_task() {
+    // Call ASIO coroutine which internally calls coro coroutine
+    int result = co_await coro::await_asio(asio_intermediate());
+    co_return result;
+}
+
+asio::awaitable<int> asio_intermediate() {
+    // Call coro coroutine from within ASIO
+    int value = co_await coro::await_coro(another_coro_task());
+    co_return value * 2;
+}
+
+// asio -> coro -> asio  
+asio::awaitable<int> asio_task() {
+    int result = co_await coro::await_coro(coro_intermediate());
+    co_return result;
+}
+
+coro::async<int> coro_intermediate() {
+    int value = co_await coro::await_asio(another_asio_task());
+    co_return value + 1;
+}
+```
+
+### Exception Handling
+
+Exceptions propagate correctly across framework boundaries:
+
+```cpp
+// Exception from ASIO caught in coro
+coro::async<void> coro_catches_asio_exception() {
+    try {
+        co_await coro::await_asio(asio_throws());
+    } catch (const std::exception& e) {
+        std::cout << "Caught: " << e.what() << std::endl;
+    }
+}
+
+// Exception from coro caught in ASIO
+asio::awaitable<void> asio_catches_coro_exception() {
+    try {
+        co_await coro::await_coro(coro_throws());
+    } catch (const std::exception& e) {
+        std::cout << "Caught: " << e.what() << std::endl;
+    }
+}
+```
+
+### Complete Example
+
+```cpp
+#include "coro/coro.hpp"
+#include "coro/adaptor/asio_adaptor.hpp"
+
+using namespace coro;
+
+async<void> main_task() {
+    // Mix coro and ASIO coroutines freely
+    co_await sleep(50ms);  // coro timer
+    co_await await_asio(asio_sleep(50ms));  // ASIO timer
+    
+    int result = co_await await_asio(asio_compute());
+    std::cout << "Result: " << result << std::endl;
+}
+
+int main() {
+    asio::io_context io_ctx;
+    asio_executor exec(io_ctx);
+    
+    spawn(exec, main_task());
+    
+    io_ctx.run();
+    return 0;
+}
+```
+
 ## Configuration Options
 
 ### Disable Exceptions
@@ -935,6 +1092,8 @@ coro/
 │       ├── mutex.hpp         # Mutex
 │       ├── semaphore.hpp     # Semaphore
 │       ├── wait_group.hpp    # Wait group
-│       └── when.hpp          # when_all/when_any
+│       ├── when.hpp          # when_all/when_any
+│       └── adaptor/
+│           └── asio_adaptor.hpp  # ASIO interoperability adaptor
 └── test/                     # Test files
 ```

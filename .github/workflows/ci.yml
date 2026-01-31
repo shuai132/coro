@@ -87,7 +87,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Init ASIO
+        run: git clone https://github.com/chriskohlhoff/asio.git -b asio-1-32-0 --depth=1
+
       - name: Configure ${{ matrix.build_type }} disable_exception:${{ matrix.disable_exception }} sanitize_address:${{ matrix.sanitize_address }} sanitize_thread:${{ matrix.sanitize_thread }}
+        env:
+          ASIO_PATH: asio/asio/include
         run: |
           cmake -S . -B build \
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
@@ -206,3 +211,9 @@ jobs:
         working-directory: build
         run: |
           ./coro_coro_local${{ matrix.env.BIN_SUFFIX }}
+
+      - name: Test asio_adaptor
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_asio_adaptor${{ matrix.env.BIN_SUFFIX }}
