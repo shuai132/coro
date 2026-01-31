@@ -9,11 +9,15 @@
 #include <utility>
 #include <variant>
 
-#include "coro_local_map.hpp"
 #include "executor.hpp"
+
+#ifdef CORO_ENABLE_LOCAL_STORAGE
+#include "coro_local_map.hpp"
+#endif
 
 /// options
 // #define CORO_DISABLE_EXCEPTION
+// #define CORO_ENABLE_LOCAL_STORAGE
 
 #ifndef CORO_DEBUG_LEAK_LOG
 #define CORO_DEBUG_LEAK_LOG(...) (void)(0)
@@ -179,8 +183,10 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
   executor* executor_ = nullptr;       // from bind_executor or inherit from caller
   awaitable<T>* awaitable_ = nullptr;  // have awaitable lived or detached
 
+#ifdef CORO_ENABLE_LOCAL_STORAGE
   // Local storage support (lazily created, inherits from parent via parent pointer in coro_local_map)
   std::shared_ptr<detail::coro_local_map> local_storage_;
+#endif
 };
 
 template <typename T>
@@ -243,11 +249,13 @@ struct awaitable {
     if (!current_coro_handle_.promise().executor_) {
       current_coro_handle_.promise().executor_ = h.promise().executor_;
     }
+#ifdef CORO_ENABLE_LOCAL_STORAGE
     // inherit local storage from parent coroutine (lazily, just save parent reference)
     if (h.promise().local_storage_) {
       current_coro_handle_.promise().local_storage_ = std::make_shared<detail::coro_local_map>();
       current_coro_handle_.promise().local_storage_->parent = h.promise().local_storage_;
     }
+#endif
     current_coro_handle_.promise().parent_handle_ = h;
     return current_coro_handle_;
   }

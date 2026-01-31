@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef CORO_ENABLE_LOCAL_STORAGE
+#error "coro_local.hpp requires CORO_ENABLE_LOCAL_STORAGE to be defined"
+#endif
+
 #include <coroutine>
 #include <memory>
 #include <optional>

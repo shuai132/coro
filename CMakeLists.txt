@@ -11,8 +11,18 @@ else ()
     add_compile_options(-Wall -Wunused-parameter)
 endif ()
 
+option(CORO_DISABLE_EXCEPTION "" OFF)
+option(CORO_ENABLE_LOCAL_STORAGE "" OFF)
+
 add_library(${PROJECT_NAME} INTERFACE)
 target_include_directories(${PROJECT_NAME} INTERFACE include)
+
+if (CORO_DISABLE_EXCEPTION)
+    add_definitions(-DCORO_DISABLE_EXCEPTION)
+endif ()
+if (CORO_ENABLE_LOCAL_STORAGE)
+    add_definitions(-CORO_ENABLE_LOCAL_STORAGE)
+endif ()
 
 # test
 option(CORO_BUILD_TEST "" OFF)
@@ -23,7 +33,6 @@ endif ()
 if (CORO_BUILD_TEST)
     option(CORO_ENABLE_SANITIZE_ADDRESS "" OFF)
     option(CORO_ENABLE_SANITIZE_THREAD "" OFF)
-    option(CORO_DISABLE_EXCEPTION "" OFF)
     option(CORO_TEST_RUNNER_VERY_SLOW "" OFF)
     # github actions runner of macOS is very slow
     if ($ENV{GITHUB_ACTIONS} AND $ENV{RUNNER_OS} STREQUAL "macOS")
@@ -51,7 +60,6 @@ if (CORO_BUILD_TEST)
             # GCC/Clang
             add_compile_options(-fno-exceptions)
         endif ()
-        add_definitions(-DCORO_DISABLE_EXCEPTION)
     endif ()
 
     include_directories(test/detail)
@@ -125,7 +133,8 @@ if (CORO_BUILD_TEST)
     add_executable(${TARGET_NAME} test/coro_multi_thread.cpp)
     target_compile_definitions(${TARGET_NAME} PRIVATE -DCORO_USE_SINGLE_THREAD)
 
-    # test coro_local
+    # test coro_local (requires CORO_ENABLE_LOCAL_STORAGE)
     set(TARGET_NAME ${PROJECT_NAME}_coro_local)
     add_executable(${TARGET_NAME} test/coro_local.cpp)
+    target_compile_definitions(${TARGET_NAME} PRIVATE -DCORO_ENABLE_LOCAL_STORAGE)
 endif ()

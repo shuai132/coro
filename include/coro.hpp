@@ -34,4 +34,6 @@
 #include "coro/semaphore.hpp"
 
 // coro_local
+#ifdef CORO_ENABLE_LOCAL_STORAGE
 #include "coro/coro_local.hpp"
+#endif
