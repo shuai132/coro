@@ -191,6 +191,7 @@ target_link_libraries(your_target coro)
 A completed task can be awaited again without restarting its body. Non-void results are moved out on each successful
 await, so later awaits observe their moved-from state; retain the extracted result when it is needed again. Stored
 exceptions are rethrown on each await. A task supports one active awaiter at a time.
+Launching an already completed task with `detach()` or `spawn()` releases its frame without restarting its body.
 
 ```cpp
 #include <iostream>

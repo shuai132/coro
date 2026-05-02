@@ -9,6 +9,7 @@
 #include "assert_def.h"
 #include "coro/coro.hpp"
 #include "coro/executor_loop.hpp"
+#include "coro/executor_poll.hpp"
 #include "coro/time.hpp"
 #include "coro/when.hpp"
 #include "log.h"
@@ -138,6 +139,69 @@ async<void> retry_completed_result(bool delayed) {
   ASSERT(state.live == 0);
 }
 #endif
+
+enum class completed_launch { detach, spawn, spawn_local, queued_detach, stopped_detach };
+
+template <typename T>
+async<T> owned_completed_task(int& runs, bool delayed, [[maybe_unused]] bool fail, [[maybe_unused]] std::shared_ptr<int> frame_token) {
+#ifndef CORO_DISABLE_EXCEPTION
+  if (fail) {
+    co_return co_await completed_failure<T>(runs, delayed);
+  }
+#endif
+  co_return co_await completed_task<T>(runs, delayed);
+}
+
+template <typename T>
+async<void> launch_completed_task(bool delayed, bool fail, completed_launch mode) {
+  auto frame_token = std::make_shared<int>(0);
+  int runs = 0;
+  auto task = owned_completed_task<T>(runs, delayed, fail, frame_token);
+#ifndef CORO_DISABLE_EXCEPTION
+  bool caught = false;
+  try {
+#endif
+    co_await task;
+#ifndef CORO_DISABLE_EXCEPTION
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "completed task failed");
+    caught = true;
+  }
+  ASSERT(caught == fail);
+#endif
+  ASSERT(task.await_ready());
+  ASSERT(frame_token.use_count() == 2);
+  auto* executor = co_await current_executor();
+  ASSERT(executor);
+  switch (mode) {
+    case completed_launch::detach:
+      task.detach(*executor);
+      break;
+    case completed_launch::spawn:
+      spawn(*executor, std::move(task));
+      break;
+    case completed_launch::spawn_local:
+      co_await spawn_local(std::move(task));
+      break;
+    case completed_launch::queued_detach:
+    case completed_launch::stopped_detach: {
+      executor_poll target;
+      if (mode == completed_launch::stopped_detach) {
+        target.stop();
+      }
+      task.bind_executor(target).detach(target);
+      if (mode == completed_launch::queued_detach) {
+        ASSERT(frame_token.use_count() == 2);
+        target.poll();
+      }
+      ASSERT(frame_token.use_count() == 1);
+      break;
+    }
+  }
+  ASSERT(!task.current_coro_handle_);
+  ASSERT(frame_token.use_count() == 1);
+  ASSERT(runs == 1);
+}
 
 struct move_only_value {
   explicit move_only_value(int v) : value(v) {}
@@ -310,6 +374,17 @@ async<void> consume_exception_ptr_value() {
 async<void> run_all_tests(int& unique_result, int& when_all_sum, int& mixed_result, int& when_any_result) {
   for (bool delayed : {false, true}) {
     co_await await_completed_tasks(delayed);
+    for (auto mode : {completed_launch::detach, completed_launch::spawn, completed_launch::spawn_local, completed_launch::queued_detach,
+                      completed_launch::stopped_detach}) {
+      co_await launch_completed_task<void>(delayed, false, mode);
+      co_await launch_completed_task<int>(delayed, false, mode);
+      co_await launch_completed_task<std::unique_ptr<int>>(delayed, false, mode);
+#ifndef CORO_DISABLE_EXCEPTION
+      co_await launch_completed_task<void>(delayed, true, mode);
+      co_await launch_completed_task<int>(delayed, true, mode);
+      co_await launch_completed_task<std::unique_ptr<int>>(delayed, true, mode);
+#endif
+    }
 #ifndef CORO_DISABLE_EXCEPTION
     co_await await_completed_failure<void>(delayed);
     co_await await_completed_failure<int>(delayed);

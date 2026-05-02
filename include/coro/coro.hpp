@@ -376,8 +376,12 @@ struct awaitable {
       auto handle = std::exchange(coro->current_coro_handle_, {});
       handle.promise().awaitable_ = nullptr;
       handle.promise().executor_ = exec_to_use;
-      handle.promise().started_ = true;
-      handle.resume();
+      if (handle.done()) {
+        handle.destroy();
+      } else {
+        handle.promise().started_ = true;
+        handle.resume();
+      }
       CORO_DEBUG_LIFECYCLE("awaitable: resume end: %p, h: %p", coro.get(), handle.address());
     });
   }
