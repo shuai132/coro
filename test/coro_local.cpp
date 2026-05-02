@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "coro.hpp"
@@ -20,6 +21,29 @@ using namespace coro;
 static coro_local<int> int_storage;
 static coro_local<std::string> string_storage;
 static coro_local<double> double_storage;
+
+async<void> check_distinct_local_keys(coro_local<int>& number, coro_local<std::string>& text) {
+  co_await number.set(42);
+  co_await text.set("independent");
+  ASSERT((co_await number.get()) == 42);
+  ASSERT((co_await text.get()) == "independent");
+  co_await number.erase();
+  ASSERT(!(co_await number.has()));
+  ASSERT(co_await text.has());
+  ASSERT((co_await text.get()) == "independent");
+}
+
+async<void> coro_local_key_identity_test() {
+  static std::tuple<coro_local<int>, coro_local<std::string>> tuple_keys;
+  co_await check_distinct_local_keys(std::get<0>(tuple_keys), std::get<1>(tuple_keys));
+
+  struct packed_keys {
+    [[no_unique_address]] coro_local<int> number;
+    [[no_unique_address]] coro_local<std::string> text;
+  };
+  static packed_keys packed;
+  co_await check_distinct_local_keys(packed.number, packed.text);
+}
 
 async<void> coro_local_any_child(coro_local<std::any>& storage) {
   auto inherited = co_await storage.get();
@@ -652,6 +676,7 @@ async<void> coro_local_exception_test() {
 #endif
 
 async<void> run_all_tests() {
+  co_await coro_local_key_identity_test();
   co_await coro_local_erased_type_test();
   co_await coro_local_lazy_default_test();
   co_await coro_local_basic_test();
