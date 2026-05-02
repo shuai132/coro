@@ -121,10 +121,10 @@ struct asio_awaitable_awaiter {
       if (ep) {
         state->exception = ep;
       } else {
-        state->result = std::move(value);
+        state->result.emplace(std::move(value));
       }
 #else
-      state->result = std::move(value);
+      state->result.emplace(std::move(value));
       (void)ep;
 #endif
       // Use asio::post to schedule the resume. Check stopped() again inside
@@ -257,7 +257,7 @@ template <typename T>
   aw.detach_with_callback(
       st->exec,
       [st, signal_timer](T value) {
-        st->result = std::move(value);
+        st->result.emplace(std::move(value));
         signal_timer->expires_at(asio::steady_timer::time_point::min());
       },
       [st, signal_timer]([[maybe_unused]] std::exception_ptr ep) {

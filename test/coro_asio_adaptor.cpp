@@ -298,12 +298,51 @@ void test_immediate_coro_completion(bool void_result, bool failure = false) {
   ASSERT(debug_coro_promise::debug_coro_leak.empty());
 }
 
+struct nonassignable_value {
+  int value;
+
+  explicit nonassignable_value(int v = 0) : value(v) {}
+  nonassignable_value(nonassignable_value&&) noexcept = default;
+  nonassignable_value(const nonassignable_value&) = delete;
+  nonassignable_value& operator=(nonassignable_value&&) = delete;
+  nonassignable_value& operator=(const nonassignable_value&) = delete;
+};
+
+async<nonassignable_value> make_coro_nonassignable_value(bool delayed) {
+  if (delayed) {
+    co_await sleep(1ms);
+  }
+  co_return nonassignable_value{42};
+}
+
+asio::awaitable<nonassignable_value> make_asio_nonassignable_value(bool delayed) {
+  if (delayed) {
+    co_await asio_sleep(1);
+  }
+  co_return nonassignable_value{53};
+}
+
+async<void> test_nonassignable_asio_values() {
+  for (bool delayed : {false, true}) {
+    auto value = co_await await_asio(make_asio_nonassignable_value(delayed));
+    ASSERT(value.value == 53);
+  }
+}
+
+asio::awaitable<void> test_nonassignable_coro_values() {
+  for (bool delayed : {false, true}) {
+    auto value = co_await await_coro(make_coro_nonassignable_value(delayed));
+    ASSERT(value.value == 42);
+  }
+}
+
 /// ============================================================================
 /// Main test runner
 /// ============================================================================
 
 async<void> run_all_tests() {
   LOG("=== Starting all tests ===");
+  co_await test_nonassignable_asio_values();
 
   // Test 1: coro calling asio
   {
@@ -378,6 +417,7 @@ int main() {
   asio::co_spawn(
       io_ctx,
       [&tests_completed]() -> asio::awaitable<void> {
+        co_await test_nonassignable_coro_values();
         LOG("--- Test A1: asio calling coro ---");
         TimeCount t;
         int result = co_await asio_calls_coro();
