@@ -100,6 +100,40 @@ async<void> consume_monostate_value() {
 }
 
 #ifndef CORO_DISABLE_EXCEPTION
+struct throwing_return_value {
+  int* live;
+
+  explicit throwing_return_value(int& count) : live(&count) {
+    ++*live;
+  }
+
+  throwing_return_value(const throwing_return_value&) = delete;
+  throwing_return_value(throwing_return_value&&) {
+    throw std::runtime_error("result construction failed");
+  }
+
+  ~throwing_return_value() {
+    --*live;
+  }
+};
+
+async<throwing_return_value> make_throwing_return_value(int& live) {
+  co_return throwing_return_value{live};
+}
+
+async<void> consume_throwing_return_value() {
+  int live = 0;
+  bool caught = false;
+  try {
+    co_await make_throwing_return_value(live);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "result construction failed");
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(live == 0);
+}
+
 async<std::exception_ptr> make_exception_ptr_value(bool failure) {
   if (failure) {
     throw std::runtime_error("task failure");
@@ -137,6 +171,7 @@ async<void> run_all_tests(int& unique_result, int& when_all_sum, int& mixed_resu
   co_await consume_monostate_value();
 #ifndef CORO_DISABLE_EXCEPTION
   co_await consume_exception_ptr_value();
+  co_await consume_throwing_return_value();
 #endif
 }
 
