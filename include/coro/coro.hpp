@@ -395,6 +395,7 @@ struct callback_awaiter_base {
   template <typename U>
   void set_result(U&& value) {
 #ifndef CORO_DISABLE_EXCEPTION
+    exception_ = nullptr;
     try {
 #endif
       result_.emplace(std::forward<U>(value));

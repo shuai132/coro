@@ -330,6 +330,7 @@ struct callback_storage_state {
   int live = 0;
   bool escaped = false;
   bool caught = false;
+  bool fail_storage = true;
 };
 
 struct throwing_storage_value {
@@ -343,7 +344,7 @@ struct throwing_storage_value {
   throwing_storage_value(const throwing_storage_value&) = delete;
   throwing_storage_value(throwing_storage_value&& other) : state(other.state), generation(other.generation + 1) {
     // The callback's argument moves once into its target, then into result storage.
-    if (generation == 2) {
+    if (generation == 2 && state->fail_storage) {
       throw std::runtime_error("callback result storage failed");
     }
     ++state->live;
@@ -404,6 +405,48 @@ void test_callback_storage_failure(bool asynchronous) {
   ASSERT(completed);
   ASSERT(state.caught);
   ASSERT(!state.escaped);
+}
+
+template <bool EXECUTOR_AWARE>
+async<void> await_reused_callback(executor& exec, bool asynchronous) {
+  callback_storage_state state;
+  auto registration = [&exec, &state, asynchronous](std::function<void(throwing_storage_value)> callback) {
+    auto invoke = [&state, callback = std::move(callback)] {
+      callback(throwing_storage_value{state});
+    };
+    if (asynchronous) {
+      exec.post(std::move(invoke));
+    } else {
+      invoke();
+    }
+  };
+  {
+    auto awaiter = [&] {
+      if constexpr (EXECUTOR_AWARE) {
+        return callback_awaiter<throwing_storage_value>([registration](executor* exec, std::function<void(throwing_storage_value)> callback) {
+          ASSERT(exec);
+          registration(std::move(callback));
+        });
+      } else {
+        return callback_awaiter<throwing_storage_value>(registration);
+      }
+    }();
+    for (bool fail : {true, false, true, false}) {
+      state.fail_storage = fail;
+      bool caught = false;
+      try {
+        auto value = co_await awaiter;
+        ASSERT(value.state == &state);
+      } catch (const std::runtime_error& error) {
+        ASSERT(std::string_view(error.what()) == "callback result storage failed");
+        caught = true;
+      }
+      ASSERT(caught == fail);
+    }
+  }
+  // Inline dispatch can resume us before the last callback argument is destroyed.
+  co_await sleep(0ns);
+  ASSERT(state.live == 0);
 }
 
 struct extraction_state {
@@ -472,6 +515,11 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
 #ifndef CORO_DISABLE_EXCEPTION
   co_await await_throwing_callback_result<false>();
   co_await await_throwing_callback_result<true>();
+  auto* exec = co_await current_executor();
+  for (bool asynchronous : {false, true}) {
+    co_await await_reused_callback<false>(*exec, asynchronous);
+    co_await await_reused_callback<true>(*exec, asynchronous);
+  }
 #endif
 }
 
