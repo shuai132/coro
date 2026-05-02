@@ -919,6 +919,9 @@ io_ctx.run();
 
 `await_asio()` allows coro coroutines to `co_await` ASIO awaitables:
 
+Stopping the `io_context` pauses queued continuations. After `restart()` and another `run()`, the awaiting coro task can continue.
+Keep the executor and the task's referenced data alive until the task finishes.
+
 ```cpp
 #include "coro/adaptor/asio_adaptor.hpp"
 

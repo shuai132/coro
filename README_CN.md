@@ -899,6 +899,9 @@ io_ctx.run();
 
 `await_asio()` 允许 coro 协程 `co_await` ASIO 的可等待对象：
 
+停止 `io_context` 会暂停已入队的后续执行；调用 `restart()` 并再次 `run()` 后，等待中的 coro 任务可以继续。
+执行器和任务引用的数据都必须存活到任务结束。
+
 ```cpp
 #include "coro/adaptor/asio_adaptor.hpp"
 

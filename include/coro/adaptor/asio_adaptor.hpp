@@ -126,30 +126,19 @@ struct asio_awaitable_awaiter {
 
     auto* asio_exec = dynamic_cast<asio_executor*>(exec);
     assert(asio_exec && "asio_executor required for await_asio");
-    auto* io_ctx = &asio_exec->get_io_context();
-
     auto state = state_;  // Copy shared_ptr for the lambda
 
     // Spawn the asio awaitable and resume when complete
     asio::co_spawn(asio_exec->get_asio_executor(), store_result(std::move(asio_awaitable_), state),
-                   [state, handle, io_ctx, exec]([[maybe_unused]] std::exception_ptr ep) {
-                     // If io_context is stopped, don't resume the coroutine as it may have been
-                     // destroyed or its captured references may be invalid
-                     if (io_ctx->stopped()) {
-                       return;
-                     }
+                   [state, handle, exec]([[maybe_unused]] std::exception_ptr ep) {
 #ifndef CORO_DISABLE_EXCEPTION
                      if (ep) {
                        state->exception = ep;
                      }
 #endif
-                     // Post through the coroutine's executor to preserve its strand. Check stopped() again inside
-                     // the posted handler since io_context may be stopped between now and
-                     // when the handler executes.
-                     exec->post([handle, io_ctx]() {
-                       if (!io_ctx->stopped()) {
-                         handle.resume();
-                       }
+                     // Preserve the executor's strand and retain completion across io_context stop/restart.
+                     exec->post([handle]() {
+                       handle.resume();
                      });
                    });
   }
@@ -194,36 +183,20 @@ struct asio_awaitable_awaiter<void> {
 
     auto* asio_exec = dynamic_cast<asio_executor*>(exec);
     assert(asio_exec && "asio_executor required for await_asio");
-    auto* io_ctx = &asio_exec->get_io_context();
-
 #ifndef CORO_DISABLE_EXCEPTION
     auto state = state_;  // Copy shared_ptr for the lambda
 
-    asio::co_spawn(asio_exec->get_asio_executor(), std::move(asio_awaitable_), [state, handle, io_ctx, exec](std::exception_ptr ep) {
-      // If io_context is stopped, don't resume the coroutine as it may have been
-      // destroyed or its captured references may be invalid
-      if (io_ctx->stopped()) {
-        return;
-      }
+    asio::co_spawn(asio_exec->get_asio_executor(), std::move(asio_awaitable_), [state, handle, exec](std::exception_ptr ep) {
       state->exception = ep;
-      // Post through the coroutine's executor to preserve its strand. Check stopped() again inside
-      // the posted handler since io_context may be stopped between now and
-      // when the handler executes.
-      exec->post([handle, io_ctx]() {
-        if (!io_ctx->stopped()) {
-          handle.resume();
-        }
+      // Preserve the executor's strand and retain completion across io_context stop/restart.
+      exec->post([handle]() {
+        handle.resume();
       });
     });
 #else
-    asio::co_spawn(asio_exec->get_asio_executor(), std::move(asio_awaitable_), [handle, io_ctx, exec](std::exception_ptr) {
-      if (io_ctx->stopped()) {
-        return;
-      }
-      exec->post([handle, io_ctx]() {
-        if (!io_ctx->stopped()) {
-          handle.resume();
-        }
+    asio::co_spawn(asio_exec->get_asio_executor(), std::move(asio_awaitable_), [handle, exec](std::exception_ptr) {
+      exec->post([handle]() {
+        handle.resume();
       });
     });
 #endif

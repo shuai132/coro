@@ -4,6 +4,8 @@
 #define CORO_DEBUG_PROMISE_LEAK
 #include <atomic>
 #include <limits>
+#include <stdexcept>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -15,6 +17,7 @@
 #include "TimeCount.hpp"
 #include "assert_def.h"
 #include "log.h"
+#include "utils.hpp"
 
 using namespace coro;
 
@@ -617,6 +620,50 @@ void test_cancelled_await_coro() {
 /// Main test runner
 /// ============================================================================
 
+template <typename T>
+asio::awaitable<T> asio_stops_before_completion(asio::io_context& context, bool fail) {
+  co_await asio::post(asio::use_awaitable);
+  context.stop();
+  if (fail) {
+    throw std::runtime_error("completion after stop");
+  }
+  if constexpr (!std::is_void_v<T>) {
+    co_return 42;
+  }
+}
+
+template <typename T>
+async<void> await_asio_across_restart(asio::io_context& context, bool fail, bool& completed, bool& caught) {
+  try {
+    if constexpr (std::is_void_v<T>) {
+      co_await await_asio(asio_stops_before_completion<T>(context, fail));
+    } else {
+      ASSERT(co_await await_asio(asio_stops_before_completion<T>(context, fail)) == 42);
+    }
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "completion after stop");
+    caught = true;
+  }
+  completed = true;
+}
+
+template <typename T>
+void test_await_asio_survives_restart(bool fail) {
+  asio::io_context context;
+  asio_executor executor(context);
+  bool completed = false;
+  bool caught = false;
+  spawn(executor, await_asio_across_restart<T>(context, fail, completed, caught));
+  context.run();
+  ASSERT(context.stopped());
+  ASSERT(!completed);
+  context.restart();
+  context.run();
+  ASSERT(completed);
+  ASSERT(caught == fail);
+  check_coro_leak();
+}
+
 async<void> run_all_tests() {
   LOG("=== Starting all tests ===");
   co_await test_nonassignable_asio_values();
@@ -660,6 +707,10 @@ async<void> run_all_tests() {
 
 int main() {
 #ifndef CORO_DISABLE_EXCEPTION
+  test_await_asio_survives_restart<int>(false);
+  test_await_asio_survives_restart<void>(false);
+  test_await_asio_survives_restart<int>(true);
+  test_await_asio_survives_restart<void>(true);
   test_cancelled_await_coro<void>();
   test_cancelled_await_coro<int>();
 #endif
