@@ -155,6 +155,8 @@ target_link_libraries(your_target coro)
 
 ### 基本用法
 
+`async<T>` 的 `co_return` 同时支持表达式和列表初始化，包括只能移动的聚合返回值。
+
 ```cpp
 #include "coro/coro.hpp"
 #include "coro/time.hpp"

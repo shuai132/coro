@@ -171,6 +171,8 @@ target_link_libraries(your_target coro)
 
 ### Basic Usage
 
+`async<T>` supports both expressions and braced initialization in `co_return`, including move-only aggregate results.
+
 ```cpp
 #include "coro/coro.hpp"
 #include "coro/time.hpp"

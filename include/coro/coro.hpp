@@ -94,7 +94,7 @@ namespace coro {
 
 template <typename T>
 struct awaitable_promise_value {
-  template <typename R>
+  template <typename R = T>
   void return_value(R&& val) noexcept(std::is_nothrow_constructible_v<T, R&&>) {
 #ifndef CORO_DISABLE_EXCEPTION
     value_.template emplace<2>(std::forward<R>(val));

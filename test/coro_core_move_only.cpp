@@ -34,6 +34,26 @@ async<move_only_value> make_move_only_value(int value) {
   co_return move_only_value{value};
 }
 
+struct aggregate_result {
+  std::unique_ptr<int> value;
+  int tag;
+};
+
+async<aggregate_result> make_braced_result() {
+  co_return {std::make_unique<int>(42), 7};
+}
+
+async<int> make_braced_zero() {
+  co_return {};
+}
+
+async<void> consume_braced_results() {
+  auto result = co_await make_braced_result();
+  ASSERT(result.value && *result.value == 42);
+  ASSERT(result.tag == 7);
+  ASSERT((co_await make_braced_zero()) == 0);
+}
+
 async<void> noop_task() {
   co_return;
 }
@@ -163,6 +183,7 @@ async<void> consume_exception_ptr_value() {
 #endif
 
 async<void> run_all_tests(int& unique_result, int& when_all_sum, int& mixed_result, int& when_any_result) {
+  co_await consume_braced_results();
   co_await consume_unique_value(unique_result);
   co_await consume_when_all_move_only_values(when_all_sum);
   co_await consume_when_all_mixed_move_only_value(mixed_result);
