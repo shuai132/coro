@@ -54,8 +54,7 @@ class executor_loop : public executor_base {
           } else {
             auto next_wakeup = delayed_task_queue_.top().execute_at;
             condition_.wait_until(lock, next_wakeup, [this, next_wakeup] {
-              return stop_.load(std::memory_order_acquire) || !task_queue_.empty() ||
-                     (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at < next_wakeup);
+              return !task_queue_.empty() || (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at < next_wakeup);
             });
           }
 

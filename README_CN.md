@@ -249,6 +249,8 @@ executor_loop executor;
 executor.run_loop();
 ```
 
+调用 `stop()` 后，`run_loop()` 会执行完已入队的任务（包括定时任务）再返回。
+
 ### executor_poll
 
 非阻塞轮询模式，适合集成到现有事件循环：

@@ -6,6 +6,7 @@
 // #define CORO_DEBUG_LIFECYCLE LOG
 
 #include <atomic>
+#include <ctime>
 #include <future>
 #include <limits>
 #include <thread>
@@ -222,8 +223,33 @@ void test_stop_wakes_idle_loop() {
   }
 }
 
+void test_stopped_loop_waits_for_timer() {
+  executor_loop executor;
+  bool called = false;
+  auto started = std::chrono::steady_clock::now();
+#ifndef _WIN32
+  // MSVC's std::clock measures elapsed wall time instead of process CPU time.
+  auto cpu_started = std::clock();
+#endif
+  executor.post_delayed_ns(
+      [&called] {
+        called = true;
+      },
+      200000000);
+  executor.stop();
+  executor.run_loop();
+  auto elapsed = std::chrono::steady_clock::now() - started;
+  ASSERT(called);
+  ASSERT(elapsed >= 100ms);
+#ifndef _WIN32
+  auto cpu_elapsed = std::chrono::duration<double>(static_cast<double>(std::clock() - cpu_started) / CLOCKS_PER_SEC);
+  ASSERT(cpu_elapsed < elapsed / 2);
+#endif
+}
+
 int main() {
   LOG("init");
+  test_stopped_loop_waits_for_timer();
   test_stop_wakes_idle_loop();
   test_large_delayed_post();
   test_delayed_post_wakes_loop(false);

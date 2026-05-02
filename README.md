@@ -265,6 +265,8 @@ executor_loop executor;
 executor.run_loop();
 ```
 
+After `stop()`, `run_loop()` finishes already queued tasks, including timers, before returning.
+
 ### executor_poll
 
 Non-blocking polling mode, suitable for integration with existing event loops:
