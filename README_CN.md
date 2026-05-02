@@ -1111,6 +1111,8 @@ add_definitions(-DCORO_DISABLE_EXCEPTION)
 
 ### 调试协程泄漏
 
+日志钩子在调用线程上执行，可能被并发调用，请使用线程安全的日志函数。泄漏数量是记录对应事件时的快照。
+
 泄漏追踪会保留编译器请求的分配对齐。Clang 编译过度对齐的协程状态时，可能需要启用 `-fcoro-aligned-allocation`。
 
 ```cpp

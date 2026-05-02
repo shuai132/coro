@@ -1,12 +1,13 @@
 #define CORO_DEBUG_PROMISE_LEAK
-#ifndef CORO_DISABLE_EXCEPTION
-void test_leak_log(const char*, ...);
 #define CORO_DEBUG_LEAK_LOG test_leak_log
+void test_leak_log(const char*, ...);
+#ifndef CORO_DISABLE_EXCEPTION
 void test_lifecycle_log(const char*, ...);
 #define CORO_DEBUG_LIFECYCLE test_lifecycle_log
 #endif
 
 #include <cstdint>
+#include <future>
 #include <new>
 #include <stdexcept>
 #include <string_view>
@@ -28,7 +29,7 @@ async<int> lazy_value() {
 }
 
 #ifndef CORO_DISABLE_EXCEPTION
-bool fail_leak_log = false;
+thread_local bool fail_leak_log = false;
 thread_local bool fail_initial_log = false;
 thread_local bool fail_detach_log = false;
 
@@ -43,12 +44,47 @@ void test_lifecycle_log(const char* format, ...) {
   }
 }
 
+#endif
+
+thread_local bool reenter_leak_log = false;
+thread_local int reentered_leak_logs = 0;
+
 void test_leak_log(const char*, ...) {
+#ifndef CORO_DISABLE_EXCEPTION
   if (std::exchange(fail_leak_log, false)) {
     throw std::runtime_error("leak logger failed");
   }
+#endif
+  if (std::exchange(reenter_leak_log, false)) {
+    auto nested = lazy_value();
+    ++reentered_leak_logs;
+  }
 }
 
+void test_reentrant_leak_log() {
+  for (int phase = 0; phase < 3; ++phase) {
+    auto completed = std::async(std::launch::async, [phase] {
+      reentered_leak_logs = 0;
+      reenter_leak_log = phase == 0;
+      {
+        auto task = lazy_value();
+        if (phase == 1) {
+          reenter_leak_log = true;
+          debug_coro_promise::dump();
+        }
+        if (phase == 2) {
+          reenter_leak_log = true;
+        }
+      }
+      ASSERT(reentered_leak_logs == 1);
+    });
+    ASSERT(completed.wait_for(5s) == std::future_status::ready);
+    completed.get();
+    check_coro_leak();
+  }
+}
+
+#ifndef CORO_DISABLE_EXCEPTION
 void test_debug_log_failure() {
   fail_leak_log = true;
   bool caught = false;
@@ -501,6 +537,7 @@ void test_aligned_promise() {
 #endif
 
 int main() {
+  test_reentrant_leak_log();
 #ifndef CORO_DISABLE_EXCEPTION
   test_rejected_child_cleanup<int>();
   test_rejected_child_cleanup<void>();

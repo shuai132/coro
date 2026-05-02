@@ -1135,6 +1135,8 @@ add_definitions(-DCORO_DISABLE_EXCEPTION)
 
 ### Debug Coroutine Leaks
 
+Logging hooks run on the calling thread and may be invoked concurrently; use a thread-safe logger. Leak counts are snapshots taken when each event is recorded.
+
 Leak tracking preserves aligned allocations requested by the compiler. Clang builds with over-aligned coroutine state may require `-fcoro-aligned-allocation`.
 
 ```cpp

@@ -34,6 +34,7 @@
 
 /// compiler check and debug config
 #if defined(CORO_DEBUG_PROMISE_LEAK)
+#include <cstddef>
 #include <cstdio>
 #include <mutex>
 #include <unordered_set>
@@ -42,19 +43,29 @@ struct debug_coro_promise {
   inline static std::mutex debug_coro_leak_mutex;
 
   static void dump() {
-    std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
-    CORO_DEBUG_LEAK_LOG("debug: debug_coro_leak.size: %zu", debug_coro_leak.size());
+    [[maybe_unused]] std::size_t count;
+    {
+      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
+      count = debug_coro_leak.size();
+    }
+    CORO_DEBUG_LEAK_LOG("debug: debug_coro_leak.size: %zu", count);
   }
 
   debug_coro_promise() {
-    std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
-    debug_coro_leak.insert(this);
+    [[maybe_unused]] std::size_t count;
+    {
+      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
+      debug_coro_leak.insert(this);
+      count = debug_coro_leak.size();
+    }
+    // User logging may create another coroutine; never call it while holding the tracking lock.
 #ifndef CORO_DISABLE_EXCEPTION
     try {
 #endif
-      CORO_DEBUG_LEAK_LOG("new promise: %p, num: %zu", this, debug_coro_leak.size());
+      CORO_DEBUG_LEAK_LOG("new promise: %p, num: %zu", this, count);
 #ifndef CORO_DISABLE_EXCEPTION
     } catch (...) {
+      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
       debug_coro_leak.erase(this);
       throw;
     }
@@ -62,9 +73,13 @@ struct debug_coro_promise {
   }
 
   ~debug_coro_promise() {
-    std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
-    debug_coro_leak.erase(this);
-    CORO_DEBUG_LEAK_LOG("free promise: %p, num: %zu", this, debug_coro_leak.size());
+    [[maybe_unused]] std::size_t count;
+    {
+      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
+      debug_coro_leak.erase(this);
+      count = debug_coro_leak.size();
+    }
+    CORO_DEBUG_LEAK_LOG("free promise: %p, num: %zu", this, count);
   }
 };
 #else
