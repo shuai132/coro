@@ -248,6 +248,8 @@ async<void> example() {
 
 Two executor implementations are provided:
 
+The built-in executors and `asio_executor` saturate unrepresentable `post_delayed_ns()` deadlines at the steady clock's maximum time point.
+
 ### executor_loop
 
 Condition variable based event loop, suitable for main thread:

@@ -9,6 +9,7 @@
 #include <thread>
 #include <utility>
 
+#include "coro/detail/deadline.hpp"
 #include "executor.hpp"
 
 namespace coro {
@@ -93,7 +94,7 @@ class executor_base : public coro::executor {
       return;
     }
     std::lock_guard<std::mutex> lock(queue_mutex_);
-    auto execute_at = std::chrono::steady_clock::now() + std::chrono::nanoseconds(delay_ns);
+    auto execute_at = detail::delayed_deadline(delay_ns);
     delayed_task_queue_.push({execute_at, std::move(fn)});
   }
 

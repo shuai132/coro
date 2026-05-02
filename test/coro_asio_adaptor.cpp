@@ -3,6 +3,7 @@
 
 #define CORO_DEBUG_PROMISE_LEAK
 #include <atomic>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -419,6 +420,21 @@ void test_multithreaded_await_coro() {
   ASSERT(debug_coro_promise::debug_coro_leak.empty());
 }
 
+void test_large_asio_delayed_post() {
+  for (uint64_t delay : {std::numeric_limits<uint64_t>::max(), static_cast<uint64_t>(std::chrono::nanoseconds::max().count())}) {
+    asio::io_context context;
+    asio_executor exec(context);
+    bool called = false;
+    exec.post_delayed_ns(
+        [&called] {
+          called = true;
+        },
+        delay);
+    context.run_for(1ms);
+    ASSERT(!called);
+  }
+}
+
 /// ============================================================================
 /// Main test runner
 /// ============================================================================
@@ -465,6 +481,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_large_asio_delayed_post();
   LOG("=== coro-asio adaptor test ===");
   test_multithreaded_await_coro();
   test_immediate_coro_completion(false);

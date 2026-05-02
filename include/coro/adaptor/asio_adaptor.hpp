@@ -31,6 +31,7 @@
 
 #include "../coro.hpp"
 #include "../executor.hpp"
+#include "coro/detail/deadline.hpp"
 
 namespace coro {
 
@@ -50,7 +51,7 @@ class asio_executor : public executor {
 
   void post_delayed_ns(std::function<void()> fn, uint64_t delay_ns) override {
     auto timer = std::make_shared<asio::steady_timer>(io_context_);
-    timer->expires_after(std::chrono::nanoseconds(delay_ns));
+    timer->expires_at(detail::delayed_deadline(delay_ns));
     timer->async_wait([timer, fn = std::move(fn)](const asio::error_code& ec) mutable {
       timer = nullptr;
       if (!ec) {

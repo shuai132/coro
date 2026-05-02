@@ -6,6 +6,7 @@
 // #define CORO_DEBUG_LIFECYCLE LOG
 
 #include <future>
+#include <limits>
 
 #include "TimeCount.hpp"
 #include "assert_def.h"
@@ -175,8 +176,23 @@ void test_delayed_post_wakes_loop(bool existing_timer) {
   ASSERT(completed_on_time);
 }
 
+void test_large_delayed_post() {
+  for (uint64_t delay : {std::numeric_limits<uint64_t>::max(), static_cast<uint64_t>(std::chrono::nanoseconds::max().count())}) {
+    executor_poll executor;
+    bool called = false;
+    executor.post_delayed_ns(
+        [&called] {
+          called = true;
+        },
+        delay);
+    executor.poll();
+    ASSERT(!called);
+  }
+}
+
 int main() {
   LOG("init");
+  test_large_delayed_post();
   test_delayed_post_wakes_loop(false);
   test_delayed_post_wakes_loop(true);
 #ifdef CORO_EXECUTOR_LOOP

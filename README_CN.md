@@ -232,6 +232,8 @@ async<void> example() {
 
 目前提供两种执行器实现：
 
+内建执行器和 `asio_executor` 会将 `post_delayed_ns()` 无法表示的截止时间饱和到单调时钟的最大时间点。
+
 ### executor_loop
 
 基于条件变量的事件循环，适合作为主线程运行：
