@@ -1159,6 +1159,79 @@ debug_coro_promise::dump();
 #include "coro/coro.hpp"
 ```
 
+### Async Stacks in GDB / LLDB
+
+Enable optional metadata when building your application (off by default):
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCORO_DEBUG_ASYNC_STACK=ON
+cmake --build build -j
+```
+
+For builds outside CMake, define `CORO_DEBUG_ASYNC_STACK` before including any coro headers
+and compile with debug information (`-g`, or `/Zi` on MSVC). Use the **same macro setting in
+all translation units**: this option changes the promise layout. CMake propagates it through
+the `coro` interface target. It does not require `CORO_DEBUG_PROMISE_LEAK`.
+
+Use a debugger with Python 3 scripting enabled. Load the script, stop the process, then list
+frames and select an ID or frame address:
+
+```text
+(gdb) source tools/debugger/coro_debug.py
+(gdb) coro-list
+(gdb) coro-bt id:4
+(gdb) coro-bt 0x12345678
+
+(lldb) command script import tools/debugger/coro_debug.py
+(lldb) coro-list
+(lldb) coro-bt id:4
+```
+
+Example output (addresses and IDs vary):
+
+```text
+#0 id:4 frame=0x12345678 [live] async<int> debug_leaf() at test/coro_debug.cpp:28
+#1 id:3 frame=0x12345000 [live] async<int> debug_middle() at test/coro_debug.cpp:33
+#2 id:2 frame=0x12344000 [live] async<void> debug_root(int &) at test/coro_debug.cpp:37
+```
+
+The script follows `co_await` relationships, including internal `when_all` / `when_any`
+wrappers, across thread switches. Each promise has an intrusive diagnostic record with a
+unique lifetime ID. Records are removed when the frame is destroyed; reused addresses cannot
+silently become different parents. A `when_any` loser can outlive its parent: the script reports
+that the parent is no longer live. Ordinary `spawn` / `detach` tasks start independent chains;
+there is no implicit link to the code that launched them. External promises end the chain
+with an explicit metadata-unavailable message.
+
+These are **logical async stacks**, complementary to native `bt`. Locations identify coroutine
+functions, not the current instruction or every suspension point. `[live]` means the frame has
+not reached final suspend; it does not distinguish running, suspended, and not yet started.
+`[completed]` frames remain listed until destroyed, with their parent link cleared.
+
+Both commands read memory without calling functions in the debugged process, acquiring its
+locks, or assuming a compiler's coroutine frame ABI. Stop **all threads** before using them.
+They also work with a core containing the registry, frame metadata, and referenced strings,
+plus matching debug symbols. LLDB can read omitted source strings from the matching binary
+when a compact core leaves out read-only image pages. A regular Breakpad minidump may omit
+the required frame memory; this is not a
+Breakpad stackwalker extension. Interrupted registry updates, corrupt links, missing memory,
+and traversal limits are reported rather than followed indefinitely (4096 records, 256 frames).
+
+When enabled, metadata adds per-promise storage and a global mutex acquisition for registration,
+parent changes, completion, and destruction; it performs no extra heap allocation per record.
+When disabled, neither the record nor its synchronization is compiled in. Optimized builds
+still need matching debug information; validate your compiler/debugger combination before
+relying on it for production dumps.
+
+To run the regression fixture and debugger checks:
+
+```bash
+./build/coro_debug
+python3 test/debugger_test.py
+python3 test/debugger_smoke.py gdb build/coro_debug
+python3 test/debugger_smoke.py lldb build/coro_debug --core
+```
+
 ## Building Tests
 
 ```bash
@@ -1187,6 +1260,7 @@ make
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF                  | Enable AddressSanitizer   |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF                  | Enable ThreadSanitizer    |
 | `CORO_DISABLE_EXCEPTION`       | OFF                  | Disable exception support |
+| `CORO_DEBUG_ASYNC_STACK`       | OFF                  | Enable async debugger metadata |
 
 `CORO_TEST_RUNNER_VERY_SLOW` is automatically enabled on macOS GitHub Actions runners.
 

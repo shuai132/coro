@@ -171,6 +171,19 @@ jobs:
         run: |
           ./coro_debug${{ matrix.env.BIN_SUFFIX }}
 
+      - name: Test debugger scripts with GDB
+        if: matrix.toolchain == 'linux-gcc' && matrix.build_type == 'Debug' && matrix.disable_exception == 'OFF' && matrix.sanitize_address == 'OFF' && matrix.sanitize_thread == 'OFF'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdb
+          python3 test/debugger_test.py
+          python3 test/debugger_smoke.py gdb build/coro_debug --core
+
+      - name: Test debugger scripts with LLDB
+        if: matrix.toolchain == 'macos-clang' && matrix.build_type == 'Debug' && matrix.disable_exception == 'OFF' && matrix.sanitize_address == 'OFF' && matrix.sanitize_thread == 'OFF'
+        run: |
+          python3 test/debugger_smoke.py lldb build/coro_debug --core
+
       - name: Test core_callback
         if: always()
         working-directory: build

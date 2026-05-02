@@ -1135,6 +1135,70 @@ debug_coro_promise::dump();
 #include "coro/coro.hpp"
 ```
 
+### GDB / LLDB 异步调用链
+
+构建应用时启用可选诊断信息（默认关闭）：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCORO_DEBUG_ASYNC_STACK=ON
+cmake --build build -j
+```
+
+不使用 CMake 时，在包含任何 coro 头文件之前定义 `CORO_DEBUG_ASYNC_STACK`，并启用调试信息
+（`-g`，MSVC 使用 `/Zi`）。**所有翻译单元必须保持宏配置一致**，因为该选项会改变 promise 布局。
+CMake 会通过 `coro` 接口目标传播宏。此功能不依赖 `CORO_DEBUG_PROMISE_LEAK`。
+
+调试器需要启用 Python 3 脚本支持。加载脚本、暂停进程，然后列出协程，按 ID 或协程帧地址查看调用链：
+
+```text
+(gdb) source tools/debugger/coro_debug.py
+(gdb) coro-list
+(gdb) coro-bt id:4
+(gdb) coro-bt 0x12345678
+
+(lldb) command script import tools/debugger/coro_debug.py
+(lldb) coro-list
+(lldb) coro-bt id:4
+```
+
+输出示例（地址和 ID 会变化）：
+
+```text
+#0 id:4 frame=0x12345678 [live] async<int> debug_leaf() at test/coro_debug.cpp:28
+#1 id:3 frame=0x12345000 [live] async<int> debug_middle() at test/coro_debug.cpp:33
+#2 id:2 frame=0x12344000 [live] async<void> debug_root(int &) at test/coro_debug.cpp:37
+```
+
+脚本跟踪 `co_await` 父子关系，包括 `when_all` / `when_any` 的内部包装协程，支持跨线程恢复。
+每个 promise 内含侵入式诊断记录和生命周期内唯一的 ID，协程帧销毁时移除记录，防止地址复用导致
+错误关联。`when_any` 的落后分支可能比父协程活得更久，此时脚本会明确报告父协程已不存在。
+普通 `spawn` / `detach` 启动独立调用链，不会自动关联启动它的代码；遇到外部 promise 时，
+脚本会提示缺少诊断信息并终止追踪。
+
+这是对原生 `bt` 的补充，展示的是**逻辑异步调用链**。源码位置标识协程函数，并非当前指令或每个
+挂起点。`[live]` 表示尚未到达最终挂起点，不区分正在运行、挂起和从未启动；已完成但尚未销毁的
+帧显示为 `[completed]`，其父链接已经清除。
+
+两个命令只读取内存，不调用被调试进程中的函数、不获取其锁，也不依赖编译器的协程帧 ABI。
+使用前需要**暂停全部线程**。对于包含注册表、协程诊断记录和引用字符串的 core dump，只要提供
+匹配的调试符号，也可使用这些命令。精简 core 缺少只读映像页时，LLDB 脚本会尝试从匹配二进制
+读取源码字符串。普通 Breakpad minidump 可能缺少必要的协程帧内存，本功能并非
+Breakpad 栈展开器扩展。注册表更新中断、链表损坏、内存缺失和遍历超限时会明确报错或停止，
+遍历上限为 4096 条记录和 256 层调用链。
+
+启用后，每个 promise 增加诊断字段，注册、关联父协程、完成和销毁时需要获取一个全局互斥锁；
+每条记录不额外分配堆内存。关闭时不编译这些字段和同步操作。优化构建仍需保留匹配的调试信息，
+用于线上 dump 前应验证实际使用的编译器和调试器组合。
+
+运行回归用例和调试器验证：
+
+```bash
+./build/coro_debug
+python3 test/debugger_test.py
+python3 test/debugger_smoke.py gdb build/coro_debug
+python3 test/debugger_smoke.py lldb build/coro_debug --core
+```
+
 ## 构建测试
 
 ```bash
@@ -1163,6 +1227,7 @@ make
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF         | 启用 AddressSanitizer |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF         | 启用 ThreadSanitizer  |
 | `CORO_DISABLE_EXCEPTION`       | OFF         | 禁用异常支持              |
+| `CORO_DEBUG_ASYNC_STACK`       | OFF         | 启用异步调用链诊断信息 |
 
 macOS GitHub Actions runner 会自动启用 `CORO_TEST_RUNNER_VERY_SLOW`。
 
