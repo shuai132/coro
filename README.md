@@ -358,6 +358,9 @@ async<void> example() {
 }
 ```
 
+`when_any()` requires at least one awaitable. It returns when the first task completes and does not cancel the remaining
+tasks; slower tasks continue running on their executors.
+
 ## Mutex
 
 Coroutine-safe mutex:

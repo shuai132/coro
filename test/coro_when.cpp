@@ -3,6 +3,8 @@
 // #define CORO_DISABLE_EXCEPTION
 
 #include <atomic>
+#include <tuple>
+#include <type_traits>
 
 #include "TimeCount.hpp"
 #include "assert_def.h"
@@ -204,6 +206,16 @@ async<void> test_when_all_immediate_completion() {
   ASSERT(marker == 1);
 
   LOG("when_all immediate completion test: PASSED");
+}
+
+async<void> test_when_all_empty_completion() {
+  LOG("=== Testing when_all with no tasks ===");
+
+  auto results = co_await when_all();
+  static_assert(std::is_same_v<decltype(results), std::tuple<>>);
+  ASSERT(std::tuple_size_v<decltype(results)> == 0);
+
+  LOG("when_all empty completion test: PASSED");
 }
 
 async<void> test_when_any_immediate_completion() {
@@ -480,6 +492,7 @@ async<void> run_all_tests() {
   co_await test_when_all_mixed_types2();
   co_await test_when_any_mixed_types();
   co_await test_when_all_immediate_completion();
+  co_await test_when_all_empty_completion();
   co_await test_when_any_immediate_completion();
   co_await test_when_any_keeps_losers_running();
   LOG("=== ALL TESTS PASSED ===");

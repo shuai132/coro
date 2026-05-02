@@ -342,6 +342,9 @@ async<void> example() {
 }
 ```
 
+`when_any()` 至少需要一个 awaitable。它会在第一个任务完成时返回，但不会取消其他任务；较慢的任务会继续在各自
+executor 上运行。
+
 ## Mutex
 
 协程安全的互斥锁：

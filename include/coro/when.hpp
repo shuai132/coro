@@ -86,7 +86,7 @@ struct when_all_state {
     }
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
     if (count == total_count) {
-      if (parent_handle && parent_exec) {
+      if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
       }
@@ -100,7 +100,7 @@ struct when_all_state {
     std::get<Index>(results).emplace(std::forward<T>(value));
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
     if (count == total_count) {
-      if (parent_handle && parent_exec) {
+      if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
       }
@@ -111,7 +111,7 @@ struct when_all_state {
     std::unique_lock<std::mutex> lock(mtx);
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
     if (count == total_count) {
-      if (parent_handle && parent_exec) {
+      if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
       }
@@ -420,6 +420,7 @@ awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_im
   // Launch all tasks
   auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw& aw) {
     auto* exec = aw.get_executor() ? aw.get_executor() : parent_exec;
+    assert(exec && "when_all requires an executor unless every child awaitable is already bound to one");
     when_all_task<I>(std::move(aw), state).bind_executor(*exec).detach(*exec);
   };
   (launch_task.template operator()<Is>(state->parent_exec, awaitables), ...);
@@ -466,7 +467,7 @@ struct when_any_state_impl {
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       std::unique_lock<std::mutex> lock(mtx);
       exception = ex;
-      if (parent_handle && parent_exec) {
+      if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
       }
@@ -481,7 +482,7 @@ struct when_any_state_impl {
       std::unique_lock<std::mutex> lock(mtx);
       completed_index = Index;
       result.template emplace<Index + 1>(std::forward<T>(value));
-      if (parent_handle && parent_exec) {
+      if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
       }
@@ -496,7 +497,7 @@ struct when_any_state_impl {
       completed_index = Index;
       // Store void_placeholder for void tasks
       result.template emplace<Index + 1>(void_placeholder{});
-      if (parent_handle && parent_exec) {
+      if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
       }
@@ -522,7 +523,7 @@ struct when_any_state_impl<true, Ts...> {
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       std::unique_lock<std::mutex> lock(mtx);
       exception = ex;
-      if (parent_handle && parent_exec) {
+      if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
       }
@@ -536,7 +537,7 @@ struct when_any_state_impl<true, Ts...> {
     if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       std::unique_lock<std::mutex> lock(mtx);
       completed_index = Index;
-      if (parent_handle && parent_exec) {
+      if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
       }
@@ -692,6 +693,7 @@ awaitable<when_any_result<awaitable_result_t<Awaitables>...>> when_any_impl(std:
   // Launch all tasks
   auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw& aw) {
     auto* exec = aw.get_executor() ? aw.get_executor() : parent_exec;
+    assert(exec && "when_any requires an executor unless every child awaitable is already bound to one");
     when_any_task<I>(std::move(aw), state).bind_executor(*exec).detach(*exec);
   };
   (launch_task.template operator()<Is>(state->parent_exec, awaitables), ...);
@@ -705,6 +707,7 @@ awaitable<when_any_result<awaitable_result_t<Awaitables>...>> when_any_impl(std:
 // when_any: returns as soon as any awaitable completes
 template <typename... Awaitables>
 auto when_any(Awaitables&&... awaitables) {
+  static_assert(sizeof...(Awaitables) > 0, "when_any requires at least one awaitable");
   return detail::when_any_impl<std::decay_t<Awaitables>...>(std::index_sequence_for<std::decay_t<Awaitables>...>{},
                                                             std::forward<Awaitables>(awaitables)...);
 }
