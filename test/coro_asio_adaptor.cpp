@@ -701,6 +701,61 @@ void test_asio_result_lifetime(bool delayed, bool fail) {
   check_coro_leak();
 }
 
+struct asio_lifetime_error : std::exception {
+  asio_result_lifetime_state* state;
+
+  explicit asio_lifetime_error(asio_result_lifetime_state& value_state) : state(&value_state) {
+    ++state->live;
+  }
+  asio_lifetime_error(const asio_lifetime_error& other) noexcept : state(other.state) {
+    ++state->live;
+  }
+  ~asio_lifetime_error() override {
+    --state->live;
+  }
+};
+
+template <typename T>
+asio::awaitable<T> throw_asio_lifetime_error(asio_result_lifetime_state& state, bool delayed) {
+  if (delayed) {
+    co_await asio::post(asio::use_awaitable);
+  }
+  throw asio_lifetime_error{state};
+  if constexpr (!std::is_void_v<T>) {
+    co_return 42;
+  }
+}
+
+template <typename T>
+async<void> await_asio_exception_lifetime(asio_result_lifetime_state& state, bool delayed) {
+  try {
+    co_await await_asio(throw_asio_lifetime_error<T>(state, delayed));
+  } catch (const asio_lifetime_error& error) {
+    ASSERT(error.state == &state);
+    state.caught = true;
+  }
+  state.retained_after_await = state.live.load();
+  state.parent_completed.store(true);
+}
+
+template <typename T>
+void test_asio_exception_lifetime(bool delayed) {
+  asio::io_context context;
+  asio_result_lifetime_state state;
+  retaining_post_executor executor(context, state, false);
+  spawn(executor, await_asio_exception_lifetime<T>(state, delayed));
+  std::thread worker([&context] {
+    context.run_for(3s);
+  });
+  context.run_for(3s);
+  worker.join();
+  ASSERT(state.parent_completed.load());
+  ASSERT(state.caught);
+  ASSERT(state.live.load() == 0);
+  ASSERT(state.retained_after_await == 0);
+  check_coro_leak();
+}
+
 struct coro_result_lifetime_state {
   std::atomic<int> live{0};
   std::atomic<bool> parent_completed{false};
@@ -870,6 +925,8 @@ int main() {
     for (bool fail : {false, true}) {
       test_asio_result_lifetime(delayed, fail);
     }
+    test_asio_exception_lifetime<int>(delayed);
+    test_asio_exception_lifetime<void>(delayed);
   }
   for (bool delayed : {false, true}) {
     for (int fail_at_move = 0; fail_at_move <= 8; ++fail_at_move) {

@@ -139,7 +139,16 @@ struct asio_awaitable_awaiter {
   explicit asio_awaitable_awaiter(asio::awaitable<T> aw) : asio_awaitable_(std::move(aw)), state_(std::make_shared<shared_state>()) {}
 
   static asio::awaitable<void> store_result(asio::awaitable<T> task, std::shared_ptr<shared_state> state) {
-    state->result.emplace(co_await std::move(task));
+#ifndef CORO_DISABLE_EXCEPTION
+    try {
+#endif
+      state->result.emplace(co_await std::move(task));
+#ifndef CORO_DISABLE_EXCEPTION
+    } catch (...) {
+      // co_spawn otherwise keeps its own exception copy while invoking completion.
+      state->exception = std::current_exception();
+    }
+#endif
   }
 
   bool await_ready() const noexcept {
@@ -160,7 +169,7 @@ struct asio_awaitable_awaiter {
                    [state, handle, exec]([[maybe_unused]] std::exception_ptr ep) {
 #ifndef CORO_DISABLE_EXCEPTION
                      if (ep) {
-                       state->exception = ep;
+                       state->exception = std::move(ep);
                      }
 #endif
                      // Preserve the executor's strand and retain completion across io_context stop/restart.
@@ -179,8 +188,8 @@ struct asio_awaitable_awaiter {
       }
     } cleanup{state_->result};
 #ifndef CORO_DISABLE_EXCEPTION
-    if (state_->exception) {
-      std::rethrow_exception(state_->exception);
+    if (auto error = std::exchange(state_->exception, {})) {
+      std::rethrow_exception(error);
     }
 #endif
     return std::move(state_->result.value());
@@ -202,6 +211,15 @@ struct asio_awaitable_awaiter<void> {
   std::shared_ptr<shared_state> state_;
 
   explicit asio_awaitable_awaiter(asio::awaitable<void> aw) : asio_awaitable_(std::move(aw)), state_(std::make_shared<shared_state>()) {}
+
+  static asio::awaitable<void> store_exception(asio::awaitable<void> task, std::shared_ptr<shared_state> state) {
+    try {
+      co_await std::move(task);
+    } catch (...) {
+      // End the catch before co_spawn invokes completion on another worker.
+      state->exception = std::current_exception();
+    }
+  }
 #else
   explicit asio_awaitable_awaiter(asio::awaitable<void> aw) : asio_awaitable_(std::move(aw)) {}
 #endif
@@ -220,8 +238,10 @@ struct asio_awaitable_awaiter<void> {
 #ifndef CORO_DISABLE_EXCEPTION
     auto state = state_;  // Copy shared_ptr for the lambda
 
-    asio::co_spawn(asio_exec->get_asio_executor(), std::move(asio_awaitable_), [state, handle, exec](std::exception_ptr ep) {
-      state->exception = ep;
+    asio::co_spawn(asio_exec->get_asio_executor(), store_exception(std::move(asio_awaitable_), state), [state, handle, exec](std::exception_ptr ep) {
+      if (ep) {
+        state->exception = std::move(ep);
+      }
       // Preserve the executor's strand and retain completion across io_context stop/restart.
       exec->post([handle]() {
         handle.resume();
@@ -238,8 +258,8 @@ struct asio_awaitable_awaiter<void> {
 
   void await_resume() {
 #ifndef CORO_DISABLE_EXCEPTION
-    if (state_->exception) {
-      std::rethrow_exception(state_->exception);
+    if (auto error = std::exchange(state_->exception, {})) {
+      std::rethrow_exception(error);
     }
 #endif
   }
