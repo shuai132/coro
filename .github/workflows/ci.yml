@@ -65,6 +65,26 @@ jobs:
           cmake --build build --target coro_debug -j
           ./build/coro_debug
 
+  libcxx14-debug:
+    name: libc++ 14 async debugger metadata
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        disable_exception: [OFF, ON]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Clang and libc++ 14
+        run: sudo apt-get update && sudo apt-get install -y clang-14 libc++-14-dev libc++abi-14-dev
+      - name: Configure async debugger metadata
+        env:
+          CXX: clang++-14
+          CXXFLAGS: -stdlib=libc++
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCORO_DEBUG_ASYNC_STACK=ON -DCORO_DISABLE_EXCEPTION=${{ matrix.disable_exception }}
+      - name: Build and test async debugger metadata
+        run: |
+          cmake --build build --target coro_debug -j
+          ./build/coro_debug
+
   build-and-test:
 
     name: ${{ matrix.toolchain }} ${{ matrix.build_type }} disable_exception:${{ matrix.disable_exception }} sanitize_address:${{ matrix.sanitize_address }} sanitize_thread:${{ matrix.sanitize_thread }}

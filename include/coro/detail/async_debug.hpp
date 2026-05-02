@@ -4,14 +4,14 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
-#if !defined(__GNUC__) || defined(__clang__) || __GNUC__ >= 14
+#if __has_include(<source_location>)
 #include <source_location>
 #endif
 
 namespace coro::detail {
 
-#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 14
-// Older GCC cannot evaluate a consteval default argument in get_return_object().
+#if !defined(__cpp_lib_source_location) || (defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 14)
+// Some coroutine-capable libraries lack source_location; older GCC also rejects its consteval default argument.
 struct async_debug_location {
   const char* function_;
   const char* file_;
