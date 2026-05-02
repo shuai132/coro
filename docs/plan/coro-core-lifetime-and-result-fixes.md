@@ -55,3 +55,26 @@
 - `./build/coro_core_move_only`
 - `./build/coro_task`
 - Run the full existing test set when the local toolchain is healthy.
+
+## Progress
+
+- Added regression coverage:
+  - `test/coro_core_lifetime.cpp`
+  - `test/coro_core_callback.cpp`
+  - `test/coro_core_move_only.cpp`
+- Confirmed pre-fix failures:
+  - `coro_core_lifetime` failed with one leaked lazy coroutine frame.
+  - `coro_core_callback` failed by observing callback awaiter destruction during an active synchronous callback.
+  - `coro_core_move_only` failed to compile because `std::variant<std::exception_ptr, T> value_{nullptr}` does not support `T = std::unique_ptr<int>`.
+- Fixed in `include/coro/coro.hpp`:
+  - Added started-state tracking for coroutine frames.
+  - Destroyed unstarted frames from `awaitable` destruction and move assignment.
+  - Switched non-void result retrieval to move values out of promise storage.
+  - Replaced the exception-enabled result variant initial state with `std::monostate`.
+  - Changed `callback_awaiter` completion scheduling from inline-capable `dispatch()` to `post()`.
+  - Removed the exception-handler overload from `with_callback()` and `detach_with_callback()` when `CORO_DISABLE_EXCEPTION` is defined.
+- Verified with the local CLT toolchain:
+  - Full exception-enabled build passed.
+  - Full exception-enabled test suite passed.
+  - `CORO_DISABLE_EXCEPTION=ON` build passed.
+  - No-exception `coro_core_lifetime`, `coro_core_callback`, `coro_core_move_only`, and `coro_task` passed.
