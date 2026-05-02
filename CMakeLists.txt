@@ -17,9 +17,13 @@ option(CORO_ENABLE_LOCAL_STORAGE "Enable coroutine local storage" OFF)
 add_library(${PROJECT_NAME} INTERFACE)
 target_include_directories(${PROJECT_NAME} INTERFACE include)
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_20)
-if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 11)
-    # GCC 10 does not enable coroutines with -std=c++20 alone.
-    target_compile_options(${PROJECT_NAME} INTERFACE "$<$<COMPILE_LANGUAGE:CXX>:-fcoroutines>")
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # Symmetric coroutine transfers otherwise accumulate native stack in GCC Debug builds.
+    target_compile_options(${PROJECT_NAME} INTERFACE "$<$<COMPILE_LANGUAGE:CXX>:-foptimize-sibling-calls>")
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 11)
+        # GCC 10 does not enable coroutines with -std=c++20 alone.
+        target_compile_options(${PROJECT_NAME} INTERFACE "$<$<COMPILE_LANGUAGE:CXX>:-fcoroutines>")
+    endif ()
 endif ()
 
 if (CORO_DISABLE_EXCEPTION)
