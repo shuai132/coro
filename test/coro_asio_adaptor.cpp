@@ -701,6 +701,84 @@ void test_asio_result_lifetime(bool delayed, bool fail) {
   check_coro_leak();
 }
 
+struct coro_result_lifetime_state {
+  std::atomic<int> live{0};
+  std::atomic<bool> parent_completed{false};
+  std::thread::id producer_thread;
+  bool delayed = false;
+  int fail_at_move = 0;
+  int moves = 0;
+  bool move_failed = false;
+  bool caught = false;
+  int retained_after_await = -1;
+};
+
+struct coro_lifetime_value {
+  coro_result_lifetime_state* state;
+
+  explicit coro_lifetime_value(coro_result_lifetime_state& value_state) : state(&value_state) {
+    ++state->live;
+  }
+  coro_lifetime_value(const coro_lifetime_value&) = delete;
+  coro_lifetime_value(coro_lifetime_value&& other) : state(other.state) {
+    if (++state->moves == state->fail_at_move) {
+      state->move_failed = true;
+      throw std::runtime_error("coro result move failed");
+    }
+    ++state->live;
+  }
+  ~coro_lifetime_value() {
+    if (state->delayed && state->fail_at_move == 0 && std::this_thread::get_id() == state->producer_thread && state->live.load() > 2) {
+      // Keep extra producer-side temporaries alive while the other worker receives the result.
+      auto deadline = std::chrono::steady_clock::now() + 2s;
+      while (!state->parent_completed.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+      }
+    }
+    --state->live;
+  }
+};
+
+async<coro_lifetime_value> make_coro_lifetime_value(coro_result_lifetime_state& state) {
+  if (state.delayed) {
+    co_await sleep(0ns);
+  }
+  state.producer_thread = std::this_thread::get_id();
+  co_return coro_lifetime_value{state};
+}
+
+asio::awaitable<void> await_coro_result_lifetime(coro_result_lifetime_state& state) {
+  try {
+    auto result = co_await await_coro(make_coro_lifetime_value(state));
+    ASSERT(result.state == &state);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "coro result move failed");
+    state.caught = true;
+  }
+  state.retained_after_await = state.live.load();
+  state.parent_completed.store(true);
+}
+
+void test_coro_result_lifetime(bool delayed, int fail_at_move) {
+  asio::io_context context;
+  coro_result_lifetime_state state;
+  state.delayed = delayed;
+  state.fail_at_move = fail_at_move;
+  asio::co_spawn(context, await_coro_result_lifetime(state), [](std::exception_ptr error) {
+    ASSERT(!error);
+  });
+  std::thread worker([&context] {
+    context.run_for(5s);
+  });
+  context.run_for(5s);
+  worker.join();
+  ASSERT(state.parent_completed.load());
+  ASSERT(state.caught == state.move_failed);
+  ASSERT(state.live.load() == 0);
+  ASSERT(state.retained_after_await == 0);
+  check_coro_leak();
+}
+
 template <typename T>
 asio::awaitable<T> asio_stops_before_completion(asio::io_context& context, bool fail) {
   co_await asio::post(asio::use_awaitable);
@@ -791,6 +869,11 @@ int main() {
   for (bool delayed : {false, true}) {
     for (bool fail : {false, true}) {
       test_asio_result_lifetime(delayed, fail);
+    }
+  }
+  for (bool delayed : {false, true}) {
+    for (int fail_at_move = 0; fail_at_move <= 8; ++fail_at_move) {
+      test_coro_result_lifetime(delayed, fail_at_move);
     }
   }
   test_await_asio_survives_restart<int>(false);
