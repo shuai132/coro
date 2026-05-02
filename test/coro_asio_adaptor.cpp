@@ -249,6 +249,55 @@ async<void> test_concurrent() {
   ASSERT(counter == 3);
 }
 
+async<int> immediate_coro_value([[maybe_unused]] bool failure) {
+#ifndef CORO_DISABLE_EXCEPTION
+  if (failure) {
+    throw std::runtime_error("immediate coro failure");
+  }
+#endif
+  co_return 42;
+}
+
+async<void> immediate_coro_void([[maybe_unused]] bool failure) {
+#ifndef CORO_DISABLE_EXCEPTION
+  if (failure) {
+    throw std::runtime_error("immediate coro failure");
+  }
+#endif
+  co_return;
+}
+
+asio::awaitable<void> await_immediate_coro(bool void_result, bool failure, bool& completed) {
+#ifndef CORO_DISABLE_EXCEPTION
+  try {
+#endif
+    if (void_result) {
+      co_await await_coro(immediate_coro_void(failure));
+    } else {
+      int result = co_await await_coro(immediate_coro_value(failure));
+      ASSERT(result == 42);
+    }
+    ASSERT(!failure);
+#ifndef CORO_DISABLE_EXCEPTION
+  } catch (const std::runtime_error& error) {
+    ASSERT(failure);
+    ASSERT(std::string_view(error.what()) == "immediate coro failure");
+  }
+#endif
+  completed = true;
+}
+
+void test_immediate_coro_completion(bool void_result, bool failure = false) {
+  asio::io_context context;
+  bool completed = false;
+  asio::co_spawn(context, await_immediate_coro(void_result, failure, completed), [](std::exception_ptr exception) {
+    ASSERT(!exception);
+  });
+  context.run_for(100ms);
+  ASSERT(completed);
+  ASSERT(debug_coro_promise::debug_coro_leak.empty());
+}
+
 /// ============================================================================
 /// Main test runner
 /// ============================================================================
@@ -295,6 +344,12 @@ async<void> run_all_tests() {
 
 int main() {
   LOG("=== coro-asio adaptor test ===");
+  test_immediate_coro_completion(false);
+  test_immediate_coro_completion(true);
+#ifndef CORO_DISABLE_EXCEPTION
+  test_immediate_coro_completion(false, true);
+  test_immediate_coro_completion(true, true);
+#endif
 
   asio::io_context io_ctx;
 

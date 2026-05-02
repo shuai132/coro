@@ -258,16 +258,17 @@ template <typename T>
       st->exec,
       [st, signal_timer](T value) {
         st->result = std::move(value);
-        signal_timer->cancel();
+        signal_timer->expires_at(asio::steady_timer::time_point::min());
       },
       [st, signal_timer]([[maybe_unused]] std::exception_ptr ep) {
 #ifndef CORO_DISABLE_EXCEPTION
         st->exception = ep;
 #endif
-        signal_timer->cancel();
+        signal_timer->expires_at(asio::steady_timer::time_point::min());
       });
 
-  // Wait for the signal (timer cancel)
+  // Expiry persists even if completion happened before async_wait was registered.
+  // Wait for the completion signal
   asio::error_code ec;
   co_await signal_timer->async_wait(asio::redirect_error(asio::use_awaitable, ec));
 
@@ -302,14 +303,15 @@ template <>
   aw.detach_with_callback(
       st->exec,
       [signal_timer]() {
-        signal_timer->cancel();
+        signal_timer->expires_at(asio::steady_timer::time_point::min());
       },
       [st, signal_timer](const std::exception_ptr& ep) {
         st->exception = ep;
-        signal_timer->cancel();
+        signal_timer->expires_at(asio::steady_timer::time_point::min());
       });
 
-  // Wait for the signal (timer cancel)
+  // Expiry persists even if completion happened before async_wait was registered.
+  // Wait for the completion signal
   asio::error_code ec;
   co_await signal_timer->async_wait(asio::redirect_error(asio::use_awaitable, ec));
 
@@ -327,13 +329,14 @@ template <>
   aw.detach_with_callback(
       st->exec,
       [signal_timer]() {
-        signal_timer->cancel();
+        signal_timer->expires_at(asio::steady_timer::time_point::min());
       },
       [signal_timer](std::exception_ptr) {
-        signal_timer->cancel();
+        signal_timer->expires_at(asio::steady_timer::time_point::min());
       });
 
-  // Wait for the signal (timer cancel)
+  // Expiry persists even if completion happened before async_wait was registered.
+  // Wait for the completion signal
   asio::error_code ec;
   co_await signal_timer->async_wait(asio::redirect_error(asio::use_awaitable, ec));
 #endif
