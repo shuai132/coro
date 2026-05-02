@@ -89,10 +89,7 @@ class executor_loop : public executor_base {
   }
 
   void stop() override {
-    {
-      std::lock_guard<std::mutex> lock(queue_mutex_);
-      executor_base::stop();
-    }
+    executor_base::stop();
     condition_.notify_one();
   }
 };

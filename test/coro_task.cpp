@@ -9,7 +9,9 @@
 #include <ctime>
 #include <future>
 #include <limits>
+#include <memory>
 #include <thread>
+#include <vector>
 
 #include "TimeCount.hpp"
 #include "assert_def.h"
@@ -247,8 +249,54 @@ void test_stopped_loop_waits_for_timer() {
 #endif
 }
 
+void test_post_racing_with_stop(bool delayed) {
+  for (int iteration = 0; iteration < 64; ++iteration) {
+    executor_loop executor;
+    auto token = std::make_shared<int>(42);
+    std::weak_ptr<int> retained = token;
+    std::atomic<int> ready{0};
+    std::atomic<bool> go{false};
+    std::thread worker([&executor] {
+      executor.run_loop();
+    });
+    std::vector<std::thread> producers;
+    for (int producer = 0; producer < 4; ++producer) {
+      producers.emplace_back([&] {
+        ready.fetch_add(1, std::memory_order_release);
+        while (!go.load(std::memory_order_acquire)) {
+          std::this_thread::yield();
+        }
+        for (int task = 0; task < 64; ++task) {
+          auto callback = [token] {
+            ASSERT(*token == 42);
+          };
+          if (delayed) {
+            executor.post_delayed_ns(std::move(callback), 0);
+          } else {
+            executor.post(std::move(callback));
+          }
+        }
+      });
+    }
+    while (ready.load(std::memory_order_acquire) != 4) {
+      std::this_thread::yield();
+    }
+    go.store(true, std::memory_order_release);
+    std::this_thread::yield();
+    executor.stop();
+    worker.join();
+    for (auto& producer : producers) {
+      producer.join();
+    }
+    token.reset();
+    ASSERT(retained.expired());
+  }
+}
+
 int main() {
   LOG("init");
+  test_post_racing_with_stop(false);
+  test_post_racing_with_stop(true);
   test_stopped_loop_waits_for_timer();
   test_stop_wakes_idle_loop();
   test_large_delayed_post();

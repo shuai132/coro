@@ -82,23 +82,24 @@ class executor_base : public coro::executor {
   }
 
   void post(std::function<void()> fn) override {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
     if (stop_.load(std::memory_order_acquire)) {
       return;
     }
-    std::lock_guard<std::mutex> lock(queue_mutex_);
     task_queue_.emplace(std::move(fn));
   }
 
   void post_delayed_ns(std::function<void()> fn, const uint64_t delay_ns) override {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
     if (stop_.load(std::memory_order_acquire)) {
       return;
     }
-    std::lock_guard<std::mutex> lock(queue_mutex_);
     auto execute_at = detail::delayed_deadline(delay_ns);
     delayed_task_queue_.push({execute_at, std::move(fn)});
   }
 
   void stop() override {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
     stop_.store(true, std::memory_order_release);
   }
 
