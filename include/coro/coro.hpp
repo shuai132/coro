@@ -411,28 +411,18 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
   bool await_suspend(std::coroutine_handle<Promise> handle) {
     auto executor = handle.promise().executor_;
     assert(executor && "executor must be set before using callback_awaiter");
-    await_suspend_running_.store(true, std::memory_order_release);
-    completed_inline_.store(false, std::memory_order_release);
+    phase_.store(phase::registering, std::memory_order_relaxed);
     switch (callback_function_.index()) {
       case 0: {
         auto& func = std::get<0>(callback_function_);
         if constexpr (std::is_void_v<T>) {
           func([handle, this, executor]() {
-            if (await_suspend_running_.load(std::memory_order_acquire)) {
-              completed_inline_.store(true, std::memory_order_release);
-              return;
-            }
-            detail::resume_via(executor, handle);
+            complete(handle, executor);
           });
         } else {
           func([handle, this, executor](T value) {
-            if (await_suspend_running_.load(std::memory_order_acquire)) {
-              this->set_result(std::move(value));
-              completed_inline_.store(true, std::memory_order_release);
-              return;
-            }
             this->set_result(std::move(value));
-            detail::resume_via(executor, handle);
+            complete(handle, executor);
           });
         }
       } break;
@@ -440,32 +430,31 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
         auto& func = std::get<1>(callback_function_);
         if constexpr (std::is_void_v<T>) {
           func(executor, [handle, this, executor]() {
-            if (await_suspend_running_.load(std::memory_order_acquire)) {
-              completed_inline_.store(true, std::memory_order_release);
-              return;
-            }
-            detail::resume_via(executor, handle);
+            complete(handle, executor);
           });
         } else {
           func(executor, [handle, this, executor](T value) {
-            if (await_suspend_running_.load(std::memory_order_acquire)) {
-              this->set_result(std::move(value));
-              completed_inline_.store(true, std::memory_order_release);
-              return;
-            }
             this->set_result(std::move(value));
-            detail::resume_via(executor, handle);
+            complete(handle, executor);
           });
         }
       } break;
     }
-    await_suspend_running_.store(false, std::memory_order_release);
-    return !completed_inline_.load(std::memory_order_acquire);
+    auto expected = phase::registering;
+    return phase_.compare_exchange_strong(expected, phase::suspended, std::memory_order_acq_rel);
   }
 
  private:
-  std::atomic<bool> await_suspend_running_{false};
-  std::atomic<bool> completed_inline_{false};
+  enum class phase { registering, suspended, completed };
+  std::atomic<phase> phase_{phase::registering};
+
+  void complete(std::coroutine_handle<> handle, executor* exec) {
+    // Exactly one side owns resumption: await_suspend for inline completion,
+    // or the callback once suspension has been committed.
+    if (phase_.exchange(phase::completed, std::memory_order_acq_rel) == phase::suspended) {
+      detail::resume_via(exec, handle);
+    }
+  }
 };
 
 /// current_executor_awaiter

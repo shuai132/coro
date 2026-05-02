@@ -1,15 +1,84 @@
 #define CORO_DEBUG_PROMISE_LEAK
 
+#include <atomic>
 #include <functional>
 #include <memory>
+#include <thread>
 
 #include "assert_def.h"
 #include "coro/coro.hpp"
 #include "coro/executor_loop.hpp"
+#include "coro/executor_poll.hpp"
 #include "log.h"
 #include "utils.hpp"
 
 using namespace coro;
+
+struct callback_handoff_state {
+  std::atomic<bool> moving_result{false};
+  std::atomic<bool> release_result{false};
+  std::thread worker;
+  bool completed = false;
+};
+
+struct handoff_value {
+  callback_handoff_state* state;
+  int generation = 0;
+
+  explicit handoff_value(callback_handoff_state& value_state) : state(&value_state) {}
+  handoff_value(const handoff_value&) = delete;
+
+  handoff_value(handoff_value&& other) noexcept : state(other.state), generation(other.generation + 1) {
+    // The first move passes std::function's argument to its target; the second
+    // stores the callback result, after the callback has observed registration.
+    if (generation == 2) {
+      state->moving_result.store(true, std::memory_order_release);
+      while (!state->release_result.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+    }
+  }
+};
+
+template <bool EXECUTOR_AWARE>
+async<void> await_callback_during_handoff(callback_handoff_state& state) {
+  auto registration = [&state](std::function<void(handoff_value)> callback) {
+    state.worker = std::thread([&state, callback = std::move(callback)] {
+      callback(handoff_value{state});
+    });
+    while (!state.moving_result.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+  };
+  auto awaiter = [&] {
+    if constexpr (EXECUTOR_AWARE) {
+      return callback_awaiter<handoff_value>([registration](executor* exec, std::function<void(handoff_value)> callback) {
+        ASSERT(exec);
+        registration(std::move(callback));
+      });
+    } else {
+      return callback_awaiter<handoff_value>(registration);
+    }
+  }();
+  auto value = co_await std::move(awaiter);
+  ASSERT(value.state == &state);
+  state.completed = true;
+}
+
+template <bool EXECUTOR_AWARE>
+void test_callback_completion_during_handoff() {
+  executor_poll executor;
+  callback_handoff_state state;
+  spawn(executor, await_callback_during_handoff<EXECUTOR_AWARE>(state));
+  executor.poll();
+  ASSERT(state.moving_result.load(std::memory_order_acquire));
+  ASSERT(!state.completed);
+  state.release_result.store(true, std::memory_order_release);
+  state.worker.join();
+  executor.poll();
+  ASSERT(state.completed);
+  check_coro_leak();
+}
 
 struct callback_state {
   int call_depth = 0;
@@ -51,6 +120,18 @@ struct non_default_move_only_value {
 async<void> await_synchronous_void_callback(int& completed_count) {
   co_await callback_awaiter<void>([](std::function<void()> callback) {
     callback();
+  });
+  ++completed_count;
+}
+
+async<void> await_executor_aware_void_callbacks(int& completed_count) {
+  co_await callback_awaiter<void>([](executor* exec, std::function<void()> callback) {
+    ASSERT(exec);
+    callback();
+  });
+  ++completed_count;
+  co_await callback_awaiter<void>([](executor* exec, std::function<void()> callback) {
+    exec->post(std::move(callback));
   });
   ++completed_count;
 }
@@ -98,6 +179,7 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
                                bool& async_callback_started, int& move_only_result, int& non_default_result) {
   co_await await_synchronous_callback(state);
   co_await await_synchronous_void_callback(void_completed_count);
+  co_await await_executor_aware_void_callbacks(void_completed_count);
   co_await await_executor_aware_callback(observed_exec);
   co_await await_asynchronous_value_callback(async_result, async_callback_started);
   co_await await_move_only_callback_value(move_only_result);
@@ -105,6 +187,8 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
 }
 
 int main() {
+  test_callback_completion_during_handoff<false>();
+  test_callback_completion_during_handoff<true>();
   executor_loop loop;
   auto state = std::make_shared<callback_state>();
   int void_completed_count = 0;
@@ -121,7 +205,7 @@ int main() {
   loop.run_loop();
 
   ASSERT(state->destructor_during_call == 0);
-  ASSERT(void_completed_count == 1);
+  ASSERT(void_completed_count == 3);
   ASSERT(observed_exec == &loop);
   ASSERT(async_callback_started);
   ASSERT(async_result == 19);
