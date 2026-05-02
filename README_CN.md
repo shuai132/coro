@@ -292,6 +292,8 @@ async<void> timer_example() {
 }
 ```
 
+`sleep(duration)` 和直接 `co_await duration` 会将非正时长作为零延迟任务提交给执行器。
+
 ## 并发操作
 
 ### when_all

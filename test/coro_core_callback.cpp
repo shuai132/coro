@@ -11,6 +11,7 @@
 #include "coro/coro.hpp"
 #include "coro/executor_loop.hpp"
 #include "coro/executor_poll.hpp"
+#include "coro/time.hpp"
 #include "log.h"
 #include "utils.hpp"
 
@@ -79,6 +80,42 @@ void test_callback_completion_during_handoff() {
   state.worker.join();
   executor.poll();
   ASSERT(state.completed);
+  check_coro_leak();
+}
+
+struct recording_timer_executor : executor_poll {
+  uint64_t last_delay = 0;
+
+  void post_delayed_ns(std::function<void()> callback, uint64_t delay_ns) override {
+    last_delay = delay_ns;
+    post(std::move(callback));
+  }
+};
+
+async<void> await_sleep_durations(recording_timer_executor& exec, bool& completed) {
+  co_await sleep(-1ms);
+  ASSERT(exec.last_delay == 0);
+  co_await std::chrono::seconds::min();
+  ASSERT(exec.last_delay == 0);
+  co_await sleep(0ns);
+  ASSERT(exec.last_delay == 0);
+  co_await sleep(1ms);
+  ASSERT(exec.last_delay == 1000000);
+  co_await sleep(std::chrono::duration<double, std::milli>{1.5});
+  ASSERT(exec.last_delay == 1500000);
+  co_await delay(2);
+  ASSERT(exec.last_delay == 2000000);
+  completed = true;
+}
+
+void test_sleep_duration_conversion() {
+  recording_timer_executor exec;
+  bool completed = false;
+  spawn(exec, await_sleep_durations(exec, completed));
+  for (int turn = 0; turn < 16 && !completed; ++turn) {
+    exec.poll();
+  }
+  ASSERT(completed);
   check_coro_leak();
 }
 
@@ -248,6 +285,7 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
 }
 
 int main() {
+  test_sleep_duration_conversion();
   test_callback_completion_during_handoff<false>();
   test_callback_completion_during_handoff<true>();
   executor_loop loop;

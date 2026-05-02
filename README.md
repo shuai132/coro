@@ -308,6 +308,8 @@ async<void> timer_example() {
 }
 ```
 
+`sleep(duration)` and direct `co_await duration` submit non-positive durations to the executor as zero-delay operations.
+
 ## Concurrency Operations
 
 ### when_all
