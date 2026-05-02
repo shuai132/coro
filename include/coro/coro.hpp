@@ -49,7 +49,16 @@ struct debug_coro_promise {
   debug_coro_promise() {
     std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
     debug_coro_leak.insert(this);
-    CORO_DEBUG_LEAK_LOG("new promise: %p, num: %zu", this, debug_coro_leak.size());
+#ifndef CORO_DISABLE_EXCEPTION
+    try {
+#endif
+      CORO_DEBUG_LEAK_LOG("new promise: %p, num: %zu", this, debug_coro_leak.size());
+#ifndef CORO_DISABLE_EXCEPTION
+    } catch (...) {
+      debug_coro_leak.erase(this);
+      throw;
+    }
+#endif
   }
 
   ~debug_coro_promise() {

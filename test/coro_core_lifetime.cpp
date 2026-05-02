@@ -1,7 +1,14 @@
 #define CORO_DEBUG_PROMISE_LEAK
+#ifndef CORO_DISABLE_EXCEPTION
+void test_leak_log(const char*, ...);
+#define CORO_DEBUG_LEAK_LOG test_leak_log
+#endif
 
 #include <cstdint>
 #include <new>
+#include <stdexcept>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "assert_def.h"
@@ -14,6 +21,33 @@ using namespace coro;
 async<int> lazy_value() {
   co_return 42;
 }
+
+#ifndef CORO_DISABLE_EXCEPTION
+bool fail_leak_log = false;
+
+void test_leak_log(const char*, ...) {
+  if (std::exchange(fail_leak_log, false)) {
+    throw std::runtime_error("leak logger failed");
+  }
+}
+
+void test_debug_log_failure() {
+  fail_leak_log = true;
+  bool caught = false;
+  try {
+    auto task = lazy_value();
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "leak logger failed");
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(debug_coro_promise::debug_coro_leak.empty());
+  auto task = lazy_value();
+  task.current_coro_handle_.resume();
+  ASSERT(task.current_coro_handle_.done());
+  ASSERT(task.await_resume() == 42);
+}
+#endif
 
 async<void> child_without_executor(int& value) {
   value = 42;
@@ -58,6 +92,9 @@ void test_aligned_promise() {
 #endif
 
 int main() {
+#ifndef CORO_DISABLE_EXCEPTION
+  test_debug_log_failure();
+#endif
   test_alignment_argument();
 #ifdef CORO_TEST_ALIGNED_COROUTINE_ALLOCATION
   test_aligned_promise();
