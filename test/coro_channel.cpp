@@ -3,6 +3,7 @@
 // #define CORO_DISABLE_EXCEPTION
 #include <array>
 #include <memory>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -56,6 +57,94 @@ async<void> test_buffered_receive_reservation() {
   ASSERT(second_value == 2);
   ASSERT(ch.empty());
 }
+
+#ifndef CORO_DISABLE_EXCEPTION
+struct transfer_state {
+  int fail_value = -1;
+  int live = 0;
+};
+
+struct throwing_channel_value {
+  transfer_state* state;
+  int value;
+
+  throwing_channel_value(transfer_state& transfer, int v) : state(&transfer), value(v) {
+    ++state->live;
+  }
+
+  throwing_channel_value(const throwing_channel_value&) = delete;
+  throwing_channel_value(throwing_channel_value&& other) : state(other.state), value(other.value) {
+    if (state->fail_value == value) {
+      throw std::runtime_error("channel transfer failed");
+    }
+    ++state->live;
+  }
+
+  ~throwing_channel_value() {
+    --state->live;
+  }
+};
+
+template <typename CHANNEL>
+async<void> transfer_receiver(CHANNEL& ch, bool& completed) {
+  auto value = co_await ch.recv();
+  ASSERT(!value);
+  completed = true;
+}
+
+template <typename CHANNEL>
+async<void> transfer_sender(CHANNEL& ch, transfer_state& state, int value, bool& completed) {
+  bool delivered = co_await ch.send(throwing_channel_value{state, value});
+  ASSERT(!delivered);
+  completed = true;
+}
+
+template <typename CHANNEL>
+async<void> test_failed_send_keeps_receiver() {
+  transfer_state state;
+  CHANNEL ch;
+  bool receiver_completed = false;
+  co_await spawn_local(transfer_receiver(ch, receiver_completed));
+  {
+    auto sending = ch.send(throwing_channel_value{state, 42});
+    state.fail_value = 42;
+    bool caught = false;
+    try {
+      co_await sending;
+    } catch (const std::runtime_error&) {
+      caught = true;
+    }
+    state.fail_value = -1;
+    ASSERT(caught);
+    ch.close();
+    ASSERT(receiver_completed);
+  }
+  ASSERT(state.live == 0);
+}
+
+template <typename CHANNEL>
+async<void> test_failed_receive_keeps_sender(bool buffered) {
+  transfer_state state;
+  CHANNEL ch(buffered ? 1 : 0);
+  if (buffered) {
+    co_await ch.send(throwing_channel_value{state, 1});
+  }
+  bool sender_completed = false;
+  co_await spawn_local(transfer_sender(ch, state, 42, sender_completed));
+  state.fail_value = 42;
+  bool caught = false;
+  try {
+    co_await ch.recv();
+  } catch (const std::runtime_error&) {
+    caught = true;
+  }
+  state.fail_value = -1;
+  ASSERT(caught);
+  ch.close();
+  ASSERT(sender_completed);
+  ASSERT(state.live == 0);
+}
+#endif
 
 // Test basic unbuffered channel
 async<void> test_unbuffered_channel() {
@@ -575,6 +664,14 @@ async<void> test_multiple_producers_consumers() {
 async<void> run_all_tests() {
   co_await test_buffered_receive_reservation<channel_mt<int>>();
   co_await test_buffered_receive_reservation<channel_st<int>>();
+#ifndef CORO_DISABLE_EXCEPTION
+  co_await test_failed_send_keeps_receiver<channel_mt<throwing_channel_value>>();
+  co_await test_failed_send_keeps_receiver<channel_st<throwing_channel_value>>();
+  co_await test_failed_receive_keeps_sender<channel_mt<throwing_channel_value>>(false);
+  co_await test_failed_receive_keeps_sender<channel_st<throwing_channel_value>>(false);
+  co_await test_failed_receive_keeps_sender<channel_mt<throwing_channel_value>>(true);
+  co_await test_failed_receive_keeps_sender<channel_st<throwing_channel_value>>(true);
+#endif
   co_await test_unbuffered_channel();
   LOG("Unbuffered channel test passed");
 

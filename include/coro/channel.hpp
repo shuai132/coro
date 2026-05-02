@@ -73,14 +73,14 @@ struct channel {
       // Check if there's a waiting receiver for direct transfer
       if (state_->recv_queue_head_ != nullptr) {
         auto* recv_awaiter = state_->recv_queue_head_;
+        // Keep the waiter queued if constructing its result throws.
+        recv_awaiter->pending_value_.emplace(std::move(value_));
         state_->recv_queue_head_ = recv_awaiter->next_;
         if (state_->recv_queue_head_ == nullptr) {
           state_->recv_queue_tail_ = nullptr;
         }
         recv_awaiter->next_ = nullptr;
 
-        // Store the value in the receiver's pending value slot
-        recv_awaiter->pending_value_.emplace(std::move(value_));
         delivered_ = true;
 
         // Resume receiver immediately with the value
@@ -214,12 +214,12 @@ struct channel {
         // After reading from buffer, check if there are waiting senders to move to buffer
         if (state_->send_queue_head_ != nullptr && state_->buffer_.size() < state_->capacity_) {
           auto* sender_awaiter = state_->send_queue_head_;
+          state_->buffer_.push(std::move(sender_awaiter->value_));
           state_->send_queue_head_ = sender_awaiter->next_;
           if (state_->send_queue_head_ == nullptr) {
             state_->send_queue_tail_ = nullptr;
           }
           sender_awaiter->next_ = nullptr;
-          state_->buffer_.push(std::move(sender_awaiter->value_));
           sender_awaiter->delivered_ = true;
 
           // Resume the sender since its value is now in the buffer
@@ -240,13 +240,12 @@ struct channel {
       // Check if there's a waiting sender for direct transfer
       if (state_->send_queue_head_ != nullptr) {
         auto* send_awaiter = state_->send_queue_head_;
+        pending_value_.emplace(std::move(send_awaiter->value_));
         state_->send_queue_head_ = send_awaiter->next_;
         if (state_->send_queue_head_ == nullptr) {
           state_->send_queue_tail_ = nullptr;
         }
         send_awaiter->next_ = nullptr;
-        // Store the value in our local pending value
-        pending_value_.emplace(std::move(send_awaiter->value_));
         send_awaiter->delivered_ = true;
 
         // Resume sender immediately so it can continue
