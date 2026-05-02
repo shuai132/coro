@@ -138,6 +138,50 @@ void test_child_frame_cleanup() {
   }
 }
 
+template <typename T>
+void test_callback_child_frame_cleanup() {
+  for (bool delayed : {false, true}) {
+    for (bool fail : {false, true}) {
+#ifdef CORO_DISABLE_EXCEPTION
+      if (fail) {
+        continue;
+      }
+#endif
+      executor_poll executor;
+      int live = 0;
+      bool completed = false;
+      auto completion = [&](auto... values) {
+        ASSERT(!fail);
+        ASSERT(live == 0);
+        ((ASSERT(values == 42)), ...);
+        completed = true;
+      };
+      auto task = child_with_frame_parameter<T>(frame_parameter{live}, delayed, fail);
+#ifndef CORO_DISABLE_EXCEPTION
+      task.detach_with_callback(executor, completion, [&](std::exception_ptr error) {
+        ASSERT(fail);
+        ASSERT(live == 0);
+        bool caught = false;
+        try {
+          std::rethrow_exception(error);
+        } catch (const std::runtime_error& failure) {
+          ASSERT(std::string_view(failure.what()) == "child frame failure");
+          caught = true;
+        }
+        ASSERT(caught);
+        completed = true;
+      });
+#else
+      task.detach_with_callback(executor, completion);
+#endif
+      while (!completed) {
+        executor.poll();
+      }
+      check_coro_leak();
+    }
+  }
+}
+
 struct tracked_result {
   int* live;
 
@@ -339,6 +383,8 @@ void test_aligned_promise() {
 #endif
 
 int main() {
+  test_callback_child_frame_cleanup<int>();
+  test_callback_child_frame_cleanup<void>();
   test_child_frame_cleanup<false, int>();
   test_child_frame_cleanup<false, void>();
   test_child_frame_cleanup<true, int>();

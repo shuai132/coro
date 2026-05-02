@@ -319,10 +319,11 @@ struct awaitable {
     auto coro = [](awaitable<T> lazy, auto completion_handler, [[maybe_unused]] auto exception_handler) mutable -> awaitable<void> {
       try {
         if constexpr (std::is_void_v<T>) {
-          co_await std::move(lazy);
+          co_await awaitable<T>{std::move(lazy)};
           completion_handler();
         } else {
-          completion_handler(co_await std::move(lazy));
+          auto result = co_await awaitable<T>{std::move(lazy)};
+          completion_handler(std::move(result));
         }
       } catch (...) {
         if (exception_handler) exception_handler(std::current_exception());
@@ -341,10 +342,11 @@ struct awaitable {
   auto with_callback(Function completion_handler) {
     auto coro = [](awaitable<T> lazy, auto completion_handler) mutable -> awaitable<void> {
       if constexpr (std::is_void_v<T>) {
-        co_await std::move(lazy);
+        co_await awaitable<T>{std::move(lazy)};
         completion_handler();
       } else {
-        completion_handler(co_await std::move(lazy));
+        auto result = co_await awaitable<T>{std::move(lazy)};
+        completion_handler(std::move(result));
       }
     }(std::move(*this), std::move(completion_handler));
     return coro;
