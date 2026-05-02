@@ -226,32 +226,36 @@ async<void> test_concurrent() {
 
   std::atomic<int> counter{0};
 
-  // Spawn multiple coro coroutines that call asio
-  auto* exec = co_await current_executor();
+  // Await every child before releasing the counter they share.
   LOG("test_concurrent: counter = %d", counter.load());
-
-  spawn(*exec, [](std::atomic<int>& cnt) -> async<void> {
-    co_await await_asio(asio_sleep(50));
+  auto child = [](std::atomic<int>& cnt, int milliseconds, int index) -> async<void> {
+    co_await await_asio(asio_sleep(milliseconds));
     cnt++;
-    LOG("test_concurrent: task 1, counter = %d", cnt.load());
-  }(counter));
+    LOG("test_concurrent: task %d, counter = %d", index, cnt.load());
+  };
+  co_await when_all(child(counter, 50, 1), child(counter, 60, 2), child(counter, 70, 3));
 
-  spawn(*exec, [](std::atomic<int>& cnt) -> async<void> {
-    co_await await_asio(asio_sleep(60));
-    cnt++;
-    LOG("test_concurrent: task 2, counter = %d", cnt.load());
-  }(counter));
-
-  spawn(*exec, [](std::atomic<int>& cnt) -> async<void> {
-    co_await await_asio(asio_sleep(70));
-    cnt++;
-    LOG("test_concurrent: task 3, counter = %d", cnt.load());
-  }(counter));
-
-  // Wait for all to complete
-  co_await sleep(200ms);
   LOG("test_concurrent: done, counter = %d", counter.load());
   ASSERT(counter == 3);
+}
+
+void test_concurrent_with_stalled_loop() {
+  asio::io_context context;
+  asio_executor exec(context);
+  bool completed = false;
+  test_concurrent().detach_with_callback(exec, [&] {
+    completed = true;
+  });
+  asio::steady_timer stall(context);
+  stall.expires_after(10ms);
+  stall.async_wait([](asio::error_code error) {
+    ASSERT(!error);
+    // Let all timers expire before the adaptor's posted completions can run.
+    std::this_thread::sleep_for(250ms);
+  });
+  context.run();
+  ASSERT(completed);
+  check_coro_leak();
 }
 
 async<int> immediate_coro_value([[maybe_unused]] bool failure) {
@@ -920,6 +924,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_concurrent_with_stalled_loop();
 #ifndef CORO_DISABLE_EXCEPTION
   for (bool delayed : {false, true}) {
     for (bool fail : {false, true}) {
