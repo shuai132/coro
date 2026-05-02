@@ -259,16 +259,9 @@ struct when_all_awaiter<State, std::tuple<ResultTypes...>> {
   }
 };
 
-// Helper trait to check if a type is a std::tuple
-template <typename T>
-struct is_tuple : std::false_type {};
-
-template <typename... Ts>
-struct is_tuple<std::tuple<Ts...>> : std::true_type {};
-
-// Awaiter for waiting all tasks to complete (single value, not a tuple)
+// Awaiter for waiting all tasks to complete (one non-void child result)
 template <typename State, typename ResultType>
-struct when_all_awaiter<State, ResultType, std::enable_if_t<!is_tuple<ResultType>::value, void>> {
+struct when_all_single_awaiter {
   std::shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
@@ -426,8 +419,8 @@ awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_im
   (launch_task.template operator()<Is>(state->parent_exec, awaitables), ...);
 
   // Wait for all to complete
-  if constexpr (std::is_void_v<result_tuple>) {
-    co_await when_all_void_awaiter<state_type>{state};
+  if constexpr (std::tuple_size_v<filter_void_t<awaitable_result_t<Awaitables>...>> == 1) {
+    co_return co_await when_all_single_awaiter<state_type, result_tuple>{state};
   } else {
     co_return co_await when_all_awaiter<state_type, result_tuple>{state};
   }

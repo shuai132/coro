@@ -1,6 +1,7 @@
 #define CORO_DEBUG_PROMISE_LEAK
 
 #include <memory>
+#include <tuple>
 
 #include "assert_def.h"
 #include "coro/coro.hpp"
@@ -51,6 +52,31 @@ async<void> consume_when_all_mixed_move_only_value(int& result) {
   result = value.value;
 }
 
+async<std::tuple<move_only_value, int>> make_tuple_value(int value) {
+  co_return std::tuple<move_only_value, int>{move_only_value{value}, 2};
+}
+
+async<std::tuple<>> make_empty_tuple() {
+  co_return std::tuple<>{};
+}
+
+async<void> consume_when_all_tuple_values() {
+  auto single = co_await when_all(make_tuple_value(40));
+  static_assert(std::is_same_v<decltype(single), std::tuple<move_only_value, int>>);
+  ASSERT(std::get<0>(single).value == 40);
+  ASSERT(std::get<1>(single) == 2);
+
+  auto mixed = co_await when_all(noop_task(), make_tuple_value(53), noop_task());
+  ASSERT(std::get<0>(mixed).value == 53);
+  ASSERT(std::get<1>(mixed) == 2);
+
+  auto empty = co_await when_all(noop_task(), make_empty_tuple());
+  static_assert(std::is_same_v<decltype(empty), std::tuple<>>);
+  auto multiple = co_await when_all(make_tuple_value(61), make_move_only_value(7));
+  ASSERT(std::get<0>(std::get<0>(multiple)).value == 61);
+  ASSERT(std::get<1>(multiple).value == 7);
+}
+
 async<void> consume_when_any_unique_value(int& result) {
   auto any_result = co_await when_any(make_unique_value(77));
   ASSERT(any_result.index == 0);
@@ -64,6 +90,7 @@ async<void> run_all_tests(int& unique_result, int& when_all_sum, int& mixed_resu
   co_await consume_when_all_move_only_values(when_all_sum);
   co_await consume_when_all_mixed_move_only_value(mixed_result);
   co_await consume_when_any_unique_value(when_any_result);
+  co_await consume_when_all_tuple_values();
 }
 
 int main() {
