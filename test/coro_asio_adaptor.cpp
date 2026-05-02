@@ -4,6 +4,7 @@
 #define CORO_DEBUG_PROMISE_LEAK
 #include <atomic>
 #include <thread>
+#include <vector>
 
 // coro
 #include "coro.hpp"
@@ -336,6 +337,73 @@ asio::awaitable<void> test_nonassignable_coro_values() {
   }
 }
 
+async<int> coro_threaded_value([[maybe_unused]] bool fail = false) {
+  co_await sleep(0ns);
+#ifndef CORO_DISABLE_EXCEPTION
+  if (fail) {
+    throw std::runtime_error("threaded value failure");
+  }
+#endif
+  co_return 42;
+}
+
+async<void> coro_threaded_void([[maybe_unused]] bool fail = false) {
+  co_await sleep(0ns);
+#ifndef CORO_DISABLE_EXCEPTION
+  if (fail) {
+    throw std::runtime_error("threaded void failure");
+  }
+#endif
+}
+
+asio::awaitable<void> await_threaded_coro(std::atomic<int>& completed) {
+  for (int iteration = 0; iteration < 128; ++iteration) {
+    int value = co_await await_coro(coro_threaded_value());
+    ASSERT(value == 42);
+    co_await await_coro(coro_threaded_void());
+#ifndef CORO_DISABLE_EXCEPTION
+    bool value_failed = false;
+    try {
+      co_await await_coro(coro_threaded_value(true));
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == "threaded value failure");
+      value_failed = true;
+    }
+    ASSERT(value_failed);
+    bool void_failed = false;
+    try {
+      co_await await_coro(coro_threaded_void(true));
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == "threaded void failure");
+      void_failed = true;
+    }
+    ASSERT(void_failed);
+#endif
+  }
+  completed.fetch_add(1, std::memory_order_relaxed);
+}
+
+void test_multithreaded_await_coro() {
+  asio::io_context context;
+  std::atomic<int> completed{0};
+  for (int task = 0; task < 16; ++task) {
+    asio::co_spawn(context, await_threaded_coro(completed), [](std::exception_ptr exception) {
+      ASSERT(!exception);
+    });
+  }
+  std::vector<std::thread> workers;
+  for (int worker = 0; worker < 4; ++worker) {
+    workers.emplace_back([&context] {
+      context.run_for(5s);
+    });
+  }
+  for (auto& worker : workers) {
+    worker.join();
+  }
+  ASSERT(completed.load(std::memory_order_relaxed) == 16);
+  ASSERT(debug_coro_promise::debug_coro_leak.empty());
+}
+
 /// ============================================================================
 /// Main test runner
 /// ============================================================================
@@ -383,6 +451,7 @@ async<void> run_all_tests() {
 
 int main() {
   LOG("=== coro-asio adaptor test ===");
+  test_multithreaded_await_coro();
   test_immediate_coro_completion(false);
   test_immediate_coro_completion(true);
 #ifndef CORO_DISABLE_EXCEPTION

@@ -24,6 +24,7 @@
 #include <coroutine>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -78,6 +79,19 @@ inline asio::io_context* get_io_context_from_executor(executor* exec) {
     return &asio_exec->get_io_context();
   }
   return nullptr;
+}
+
+// use_awaitable initiates lazily, so the lock must cover async_wait's actual
+// initiation rather than only the creation of its returned awaitable.
+template <typename State>
+auto wait_coro_signal(std::shared_ptr<State> state, std::shared_ptr<asio::steady_timer> timer, asio::error_code& error) {
+  auto token = asio::redirect_error(asio::use_awaitable, error);
+  return asio::async_initiate<decltype(token), void(asio::error_code)>(
+      [state = std::move(state), timer = std::move(timer)](auto handler) {
+        std::lock_guard<std::mutex> lock(state->signal_mutex_);
+        timer->async_wait(std::move(handler));
+      },
+      token);
 }
 
 /// Awaiter for awaiting asio::awaitable<T> inside coro::async<T>
@@ -242,6 +256,7 @@ template <typename T>
   // Also stores asio_executor to keep it alive during coro execution
   struct state {
     asio_executor exec;
+    std::mutex signal_mutex_;
     std::optional<T> result;
 #ifndef CORO_DISABLE_EXCEPTION
     std::exception_ptr exception;
@@ -257,10 +272,12 @@ template <typename T>
   aw.detach_with_callback(
       st->exec,
       [st, signal_timer](T value) {
+        std::lock_guard<std::mutex> lock(st->signal_mutex_);
         st->result.emplace(std::move(value));
         signal_timer->expires_at(asio::steady_timer::time_point::min());
       },
       [st, signal_timer]([[maybe_unused]] std::exception_ptr ep) {
+        std::lock_guard<std::mutex> lock(st->signal_mutex_);
 #ifndef CORO_DISABLE_EXCEPTION
         st->exception = ep;
 #endif
@@ -270,7 +287,8 @@ template <typename T>
   // Expiry persists even if completion happened before async_wait was registered.
   // Wait for the completion signal
   asio::error_code ec;
-  co_await signal_timer->async_wait(asio::redirect_error(asio::use_awaitable, ec));
+  co_await detail::wait_coro_signal(st, signal_timer, ec);
+  std::lock_guard<std::mutex> lock(st->signal_mutex_);
 
 #ifndef CORO_DISABLE_EXCEPTION
   if (st->exception) {
@@ -295,6 +313,7 @@ template <>
   // Also stores asio_executor to keep it alive during coro execution
   struct state {
     asio_executor exec;
+    std::mutex signal_mutex_;
     std::exception_ptr exception;
     explicit state(asio::io_context& ctx) : exec(ctx) {}
   };
@@ -302,10 +321,12 @@ template <>
 
   aw.detach_with_callback(
       st->exec,
-      [signal_timer]() {
+      [st, signal_timer]() {
+        std::lock_guard<std::mutex> lock(st->signal_mutex_);
         signal_timer->expires_at(asio::steady_timer::time_point::min());
       },
       [st, signal_timer](const std::exception_ptr& ep) {
+        std::lock_guard<std::mutex> lock(st->signal_mutex_);
         st->exception = ep;
         signal_timer->expires_at(asio::steady_timer::time_point::min());
       });
@@ -313,7 +334,8 @@ template <>
   // Expiry persists even if completion happened before async_wait was registered.
   // Wait for the completion signal
   asio::error_code ec;
-  co_await signal_timer->async_wait(asio::redirect_error(asio::use_awaitable, ec));
+  co_await detail::wait_coro_signal(st, signal_timer, ec);
+  std::lock_guard<std::mutex> lock(st->signal_mutex_);
 
   if (st->exception) {
     std::rethrow_exception(st->exception);
@@ -322,23 +344,27 @@ template <>
   // Without exceptions, asio_executor can be stored in shared state
   struct state {
     asio_executor exec;
+    std::mutex signal_mutex_;
     explicit state(asio::io_context& ctx) : exec(ctx) {}
   };
   auto st = std::make_shared<state>(io_ctx);
 
   aw.detach_with_callback(
       st->exec,
-      [signal_timer]() {
+      [st, signal_timer]() {
+        std::lock_guard<std::mutex> lock(st->signal_mutex_);
         signal_timer->expires_at(asio::steady_timer::time_point::min());
       },
-      [signal_timer](std::exception_ptr) {
+      [st, signal_timer](std::exception_ptr) {
+        std::lock_guard<std::mutex> lock(st->signal_mutex_);
         signal_timer->expires_at(asio::steady_timer::time_point::min());
       });
 
   // Expiry persists even if completion happened before async_wait was registered.
   // Wait for the completion signal
   asio::error_code ec;
-  co_await signal_timer->async_wait(asio::redirect_error(asio::use_awaitable, ec));
+  co_await detail::wait_coro_signal(st, signal_timer, ec);
+  std::lock_guard<std::mutex> lock(st->signal_mutex_);
 #endif
 }
 
