@@ -100,7 +100,11 @@ class GdbBackend:
             raise RuntimeError("stop all threads before reading async stacks")
 
     def global_value(self, name):
-        return self.gdb.parse_and_eval(REGISTRY + name)
+        # Expression parsing depends on the selected frame's language (which can be C).
+        symbol = self.gdb.lookup_global_symbol(REGISTRY + name)
+        if symbol is None:
+            raise RuntimeError("unavailable async metadata: " + REGISTRY + name)
+        return symbol.value()
 
     def global_int(self, name):
         return int(self.global_value(name))

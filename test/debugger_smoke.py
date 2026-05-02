@@ -52,9 +52,13 @@ else:
     load = 'command script import "%s"' % script
     stop = "breakpoint set -n coro_debug_checkpoint"
     save = "process save-core"
+stack_commands = ["coro-list", "coro-bt id:4"]
+if options.kind == "gdb":
+    # A stop in C code must not prevent lookup of the C++ registry symbols.
+    stack_commands = ["set language c", *stack_commands, "set language auto", *stack_commands]
 with tempfile.TemporaryDirectory(prefix="coro-debug-") as directory:
     core = Path(directory) / "fixture.core"
-    commands = [load, stop, "run", "coro-list", "coro-bt id:4"]
+    commands = [load, stop, "run", *stack_commands]
     if options.core:
         commands.append(("%s %s" if options.kind == "gdb" else '%s "%s"') % (save, core))
     commands.append("continue")
@@ -64,5 +68,5 @@ with tempfile.TemporaryDirectory(prefix="coro-debug-") as directory:
     if expected_exit not in output:
         raise SystemExit("fixture did not exit normally")
     if options.core:
-        check_chain(run_commands([load, "coro-list", "coro-bt id:4"], core))
+        check_chain(run_commands([load, *stack_commands], core))
 print("Debugger async stack smoke test passed.")
