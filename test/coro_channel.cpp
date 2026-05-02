@@ -384,6 +384,57 @@ async<void> test_reused_receive_after_refill_failure(bool close_before_retry) {
   ch.close();
   ASSERT(!(co_await receiving));
 }
+
+template <typename CHANNEL>
+async<void> test_failed_refill_preserves_sender_order(size_t capacity, bool close_before_receive) {
+  transfer_state state;
+  CHANNEL ch(capacity);
+  for (size_t i = 0; i < capacity; ++i) {
+    ASSERT(co_await ch.send(throwing_channel_value{state, static_cast<int>(i)}));
+  }
+  auto sender = [](CHANNEL& ch, transfer_state& state, int value, bool expected, bool& completed) -> async<void> {
+    ASSERT((co_await ch.send(throwing_channel_value{state, value})) == expected);
+    completed = true;
+  };
+  bool first_completed = false;
+  bool second_completed = false;
+  co_await spawn_local(sender(ch, state, 42, !close_before_receive, first_completed));
+  ASSERT(!first_completed);
+  state.fail_value = 42;
+  bool caught = false;
+  try {
+    co_await ch.recv();
+  } catch (const std::runtime_error&) {
+    caught = true;
+  }
+  ASSERT(caught);
+  state.fail_value = -1;
+  ASSERT(ch.size() == capacity - 1);
+
+  // A failed refill leaves a free slot, but a new sender must not bypass an older waiter.
+  co_await spawn_local(sender(ch, state, 43, !close_before_receive, second_completed));
+  ASSERT(!first_completed);
+  ASSERT(!second_completed);
+  ASSERT(ch.size() == capacity - 1);
+  if (close_before_receive) {
+    ch.close();
+  }
+  for (size_t i = 1; i < capacity; ++i) {
+    auto value = co_await ch.recv();
+    ASSERT(value && value->value == static_cast<int>(i));
+  }
+  if (!close_before_receive) {
+    for (int expected : {42, 43}) {
+      auto value = co_await ch.recv();
+      ASSERT(value && value->value == expected);
+    }
+    ch.close();
+  }
+  ASSERT(first_completed);
+  ASSERT(second_completed);
+  ASSERT(!(co_await ch.recv()));
+  ASSERT(state.live == 0);
+}
 #endif
 
 // Test basic unbuffered channel
@@ -922,6 +973,12 @@ async<void> run_all_tests() {
   for (bool close_before_retry : {false, true}) {
     co_await test_reused_receive_after_refill_failure<channel_mt<throwing_channel_value>>(close_before_retry);
     co_await test_reused_receive_after_refill_failure<channel_st<throwing_channel_value>>(close_before_retry);
+  }
+  for (size_t capacity : {1, 2}) {
+    for (bool close_before_receive : {false, true}) {
+      co_await test_failed_refill_preserves_sender_order<channel_mt<throwing_channel_value>>(capacity, close_before_receive);
+      co_await test_failed_refill_preserves_sender_order<channel_st<throwing_channel_value>>(capacity, close_before_receive);
+    }
   }
 #endif
   co_await test_unbuffered_channel();

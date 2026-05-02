@@ -107,8 +107,8 @@ struct channel {
         return false;
       }
 
-      // Check if buffer has space
-      if (state_->capacity_ > 0 && state_->buffer_->size() < state_->capacity_) {
+      // A failed receive refill may leave space while older senders are still queued.
+      if (state_->capacity_ > 0 && state_->send_queue_head_ == nullptr && state_->buffer_->size() < state_->capacity_) {
         // Put data in buffer, sender can proceed immediately
         state_->buffer_->push(std::move(value_));
         delivered_ = true;
