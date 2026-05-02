@@ -207,6 +207,7 @@ L_O_G_FUNCTION void L_O_G_VOID(const char *fmt, ...) {
 #ifndef L_O_G_NS_MUTEX
 #define L_O_G_NS_MUTEX L_O_G_NS_MUTEX
 #include <mutex>
+#include <new>
 // 1. struct instead of namespace, ensure single instance
 struct L_O_G_NS_MUTEX {
 static std::mutex& mutex() {

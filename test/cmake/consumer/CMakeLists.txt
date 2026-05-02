@@ -17,6 +17,9 @@ endif ()
 target_link_libraries(consumer PRIVATE coro)
 target_include_directories(consumer PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../detail")
 
+add_library(log_header_consumer OBJECT log.cpp)
+target_include_directories(log_header_consumer PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../detail")
+
 enable_testing()
 add_test(NAME consumer_run COMMAND consumer)
 
