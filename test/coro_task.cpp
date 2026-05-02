@@ -554,6 +554,23 @@ async<T> shared_loop_child(executor& expected_executor, [[maybe_unused]] std::sh
 }
 
 template <typename T>
+async<T> nested_shared_loop_child(executor& current, executor& other, std::shared_ptr<int> frame_token, int depth, bool delayed, bool fail) {
+  ASSERT(co_await current_executor() == &current);
+  if (depth == 0) {
+    co_return co_await shared_loop_child<T>(current, frame_token, delayed, fail);
+  }
+  if constexpr (std::is_void_v<T>) {
+    co_await nested_shared_loop_child<T>(other, current, frame_token, depth - 1, delayed, fail).bind_executor(other);
+  } else {
+    ASSERT((co_await nested_shared_loop_child<T>(other, current, frame_token, depth - 1, delayed, fail).bind_executor(other)) == 42);
+  }
+  ASSERT(co_await current_executor() == &current);
+  if constexpr (!std::is_void_v<T>) {
+    co_return 42;
+  }
+}
+
+template <typename T>
 async<void> await_shared_loop_children(executor* parent_executor, executor& child_executor, bool delayed, bool fail) {
   auto frame_token = std::make_shared<int>(0);
   for (int iteration = 0; iteration < 32; ++iteration) {
@@ -565,6 +582,27 @@ async<void> await_shared_loop_children(executor* parent_executor, executor& chil
         co_await shared_loop_child<T>(child_executor, frame_token, delayed, fail).bind_executor(child_executor);
       } else {
         ASSERT((co_await shared_loop_child<T>(child_executor, frame_token, delayed, fail).bind_executor(child_executor)) == 42);
+      }
+#ifndef CORO_DISABLE_EXCEPTION
+    } catch (const std::runtime_error&) {
+      caught = true;
+    }
+#endif
+    ASSERT(caught == fail);
+    ASSERT(frame_token.use_count() == 1);
+    ASSERT(co_await current_executor() == parent_executor);
+  }
+  if (parent_executor) {
+    bool caught = false;
+#ifndef CORO_DISABLE_EXCEPTION
+    try {
+#endif
+      if constexpr (std::is_void_v<T>) {
+        co_await nested_shared_loop_child<T>(child_executor, *parent_executor, frame_token, 64, delayed, fail).bind_executor(child_executor);
+      } else {
+        ASSERT(
+            (co_await nested_shared_loop_child<T>(child_executor, *parent_executor, frame_token, 64, delayed, fail).bind_executor(child_executor)) ==
+            42);
       }
 #ifndef CORO_DISABLE_EXCEPTION
     } catch (const std::runtime_error&) {

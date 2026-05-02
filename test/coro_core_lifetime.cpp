@@ -414,6 +414,9 @@ struct rejecting_executor : executor_poll {
   void dispatch(std::function<void()>) override {
     throw std::bad_alloc();
   }
+  void post(std::function<void()>) override {
+    throw std::bad_alloc();
+  }
 };
 
 template <typename T>

@@ -340,7 +340,8 @@ struct awaitable {
     current_coro_handle_.promise().parent_executor_ = h.promise().executor_;
     auto* child_exec = current_coro_handle_.promise().executor_;
     if (child_exec && child_exec != h.promise().executor_) {
-      child_exec->dispatch([handle = current_coro_handle_]() {
+      // Distinct executors may share a thread; queue nested starts to keep the native stack bounded.
+      child_exec->post([handle = current_coro_handle_]() {
         handle.promise().started_ = true;
         handle.resume();
       });
