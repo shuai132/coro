@@ -1,11 +1,21 @@
 /// config debug
 #define CORO_DEBUG_PROMISE_LEAK
+#include <thread>
+
 #include "coro.hpp"
 #include "detail/assert_def.h"
 #include "detail/log.h"
 #include "detail/utils.hpp"
 
 using namespace coro;
+
+async<void> wait_for_latch_waiters(const int& completed, int expected) {
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (completed != expected && std::chrono::steady_clock::now() < deadline) {
+    co_await sleep(1ms);
+  }
+  ASSERT(completed == expected);
+}
 
 // Test basic latch functionality
 async<void> latch_basic_test() {
@@ -42,12 +52,14 @@ async<void> latch_multiple_waiters_test() {
   co_await spawn_local(waiter());
   co_await spawn_local(waiter());
 
-  // Count down after short delay
-  co_await sleep(10ms);
+  ASSERT(completed == 0);
+  auto* exec = co_await current_executor();
+  exec->post([] {
+    // Exercise queued wakeups when the executor is busy longer than the old readiness delay.
+    std::this_thread::sleep_for(20ms);
+  });
   ltc.count_down(3);
-  co_await sleep(10ms);
-
-  ASSERT(completed == 3);
+  co_await wait_for_latch_waiters(completed, 3);
   LOG("Multiple waiters test: OK");
   co_return;
 }
@@ -68,8 +80,7 @@ async<void> latch_arrive_and_wait_test() {
   co_await spawn_local(worker());
   co_await spawn_local(worker());
 
-  co_await sleep(50ms);
-  ASSERT(completed == 3);
+  co_await wait_for_latch_waiters(completed, 3);
   LOG("Arrive and wait test: OK");
   co_return;
 }
