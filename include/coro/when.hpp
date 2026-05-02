@@ -101,8 +101,9 @@ struct when_all_state {
     bool expected = false;
     std::unique_lock<std::mutex> lock(mtx);
     if (exception_set.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-      exception = ex;
+      exception = std::move(ex);
     }
+    ex = nullptr;
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
     if (count == total_count) {
       if (parent_handle) {
@@ -144,6 +145,7 @@ struct when_all_state {
 template <size_t Index, typename T, typename State>
 awaitable<void> when_all_task(awaitable<T> task, std::shared_ptr<State> state) {
 #ifndef CORO_DISABLE_EXCEPTION
+  std::exception_ptr failure;
   try {
 #endif
     if constexpr (std::is_void_v<T>) {
@@ -156,7 +158,11 @@ awaitable<void> when_all_task(awaitable<T> task, std::shared_ptr<State> state) {
     }
 #ifndef CORO_DISABLE_EXCEPTION
   } catch (...) {
-    state->set_exception(std::current_exception());
+    failure = std::current_exception();
+  }
+  // End the catch before publishing, so it cannot retain the exception after the parent returns.
+  if (failure) {
+    state->set_exception(std::exchange(failure, {}));
   }
 #endif
 }
@@ -202,8 +208,8 @@ struct when_all_awaiter<State, std::tuple<>> {
   std::tuple<> await_resume() {
     typename State::result_cleanup cleanup{state_.get()};
 #ifndef CORO_DISABLE_EXCEPTION
-    if (state_->exception) {
-      std::rethrow_exception(state_->exception);
+    if (auto error = std::exchange(state_->exception, {})) {
+      std::rethrow_exception(error);
     }
 #endif
     return std::tuple<>{};
@@ -274,8 +280,8 @@ struct when_all_awaiter<State, std::tuple<ResultTypes...>> {
   std::tuple<ResultTypes...> await_resume() {
     typename State::result_cleanup cleanup{state_.get()};
 #ifndef CORO_DISABLE_EXCEPTION
-    if (state_->exception) {
-      std::rethrow_exception(state_->exception);
+    if (auto error = std::exchange(state_->exception, {})) {
+      std::rethrow_exception(error);
     }
 #endif
     using storage_tuple = decltype(state_->results);
@@ -301,8 +307,8 @@ struct when_all_single_awaiter {
   ResultType await_resume() {
     typename State::result_cleanup cleanup{state_.get()};
 #ifndef CORO_DISABLE_EXCEPTION
-    if (state_->exception) {
-      std::rethrow_exception(state_->exception);
+    if (auto error = std::exchange(state_->exception, {})) {
+      std::rethrow_exception(error);
     }
 #endif
     // For single value, we need to extract the first (and only) non-void value
@@ -418,8 +424,8 @@ struct when_all_void_awaiter {
 
   void await_resume() {
 #ifndef CORO_DISABLE_EXCEPTION
-    if (state_->exception) {
-      std::rethrow_exception(state_->exception);
+    if (auto error = std::exchange(state_->exception, {})) {
+      std::rethrow_exception(error);
     }
 #endif
   }
@@ -492,7 +498,8 @@ struct when_any_state_impl {
   void set_exception(std::exception_ptr ex) {
     std::unique_lock<std::mutex> lock(mtx);
     if (!completed.load(std::memory_order_relaxed)) {
-      exception = ex;
+      exception = std::move(ex);
+      ex = nullptr;
       // Publish completion only after the result or exception is fully initialized.
       completed.store(true, std::memory_order_release);
       if (parent_handle) {
@@ -553,7 +560,8 @@ struct when_any_state_impl<true, Ts...> {
   void set_exception(std::exception_ptr ex) {
     std::unique_lock<std::mutex> lock(mtx);
     if (!completed.load(std::memory_order_relaxed)) {
-      exception = ex;
+      exception = std::move(ex);
+      ex = nullptr;
       // Publish completion only after the result or exception is fully initialized.
       completed.store(true, std::memory_order_release);
       if (parent_handle) {
@@ -586,6 +594,7 @@ struct when_any_state : when_any_state_impl<all_void<Ts...>::value, Ts...> {};
 template <size_t Index, typename T, typename State>
 awaitable<void> when_any_task(awaitable<T> task, std::shared_ptr<State> state) {
 #ifndef CORO_DISABLE_EXCEPTION
+  std::exception_ptr failure;
   try {
 #endif
     if constexpr (std::is_void_v<T>) {
@@ -598,7 +607,11 @@ awaitable<void> when_any_task(awaitable<T> task, std::shared_ptr<State> state) {
     }
 #ifndef CORO_DISABLE_EXCEPTION
   } catch (...) {
-    state->set_exception(std::current_exception());
+    failure = std::current_exception();
+  }
+  // End the catch before publishing, so it cannot retain the exception after the parent returns.
+  if (failure) {
+    state->set_exception(std::exchange(failure, {}));
   }
 #endif
 }
@@ -675,8 +688,8 @@ struct when_any_awaiter_impl {
   ResultType await_resume() {
     typename State::result_cleanup cleanup{state_.get()};
 #ifndef CORO_DISABLE_EXCEPTION
-    if (state_->exception) {
-      std::rethrow_exception(state_->exception);
+    if (auto error = std::exchange(state_->exception, {})) {
+      std::rethrow_exception(error);
     }
 #endif
     return ResultType{state_->completed_index, std::move(state_->result)};
@@ -700,8 +713,8 @@ struct when_any_awaiter_impl<State, ResultType, true> {
 
   ResultType await_resume() {
 #ifndef CORO_DISABLE_EXCEPTION
-    if (state_->exception) {
-      std::rethrow_exception(state_->exception);
+    if (auto error = std::exchange(state_->exception, {})) {
+      std::rethrow_exception(error);
     }
 #endif
     return ResultType{state_->completed_index};

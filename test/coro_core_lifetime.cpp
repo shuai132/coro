@@ -226,6 +226,89 @@ void test_combined_result_cleanup() {
   }
 }
 
+#ifndef CORO_DISABLE_EXCEPTION
+struct tracked_failure : std::exception {
+  int* live;
+
+  explicit tracked_failure(int& count) : live(&count) {
+    ++*live;
+  }
+  tracked_failure(const tracked_failure& other) : live(other.live) {
+    ++*live;
+  }
+  ~tracked_failure() override {
+    --*live;
+  }
+};
+
+template <typename T>
+async<T> child_with_tracked_failure(int& live, bool delayed) {
+  if (delayed) {
+    co_await sleep(0ns);
+  }
+  throw tracked_failure{live};
+  if constexpr (!std::is_void_v<T>) {
+    co_return 42;
+  }
+}
+
+template <bool ANY, typename T>
+async<void> await_exception_cleanup(bool delayed, bool& completed) {
+  int live = 0;
+  bool caught = false;
+  try {
+    if constexpr (ANY) {
+      co_await when_any(child_with_tracked_failure<T>(live, delayed));
+    } else {
+      co_await when_all(child_with_tracked_failure<T>(live, delayed));
+    }
+  } catch (const tracked_failure& error) {
+    ASSERT(error.live == &live);
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(live == 0);
+  caught = false;
+  if constexpr (ANY) {
+    std::function<void()> release;
+    bool loser_completed = false;
+    try {
+      co_await when_any(child_with_tracked_failure<T>(live, delayed), gated_loser(release, loser_completed));
+    } catch (const tracked_failure&) {
+      caught = true;
+    }
+    ASSERT(caught);
+    ASSERT(live == 0);
+    ASSERT(release);
+    ASSERT(!loser_completed);
+    release();
+    ASSERT(loser_completed);
+  } else {
+    try {
+      co_await when_all(child_with_tracked_failure<T>(live, false), child_with_tracked_failure<T>(live, delayed));
+    } catch (const tracked_failure&) {
+      caught = true;
+    }
+    ASSERT(caught);
+    ASSERT(live == 0);
+  }
+  completed = true;
+}
+
+template <bool ANY, typename T>
+void test_combined_exception_cleanup() {
+  for (bool delayed : {false, true}) {
+    executor_poll executor;
+    bool completed = false;
+    spawn(executor, await_exception_cleanup<ANY, T>(delayed, completed));
+    while (!completed) {
+      executor.poll();
+    }
+    check_coro_leak();
+  }
+}
+#endif
+
 void test_alignment_argument() {
   auto task = alignment_argument(std::align_val_t{0});
   task.current_coro_handle_.resume();
@@ -262,6 +345,12 @@ int main() {
   test_child_frame_cleanup<true, void>();
   test_combined_result_cleanup<false>();
   test_combined_result_cleanup<true>();
+#ifndef CORO_DISABLE_EXCEPTION
+  test_combined_exception_cleanup<false, int>();
+  test_combined_exception_cleanup<false, void>();
+  test_combined_exception_cleanup<true, int>();
+  test_combined_exception_cleanup<true, void>();
+#endif
 #ifndef CORO_DISABLE_EXCEPTION
   test_debug_log_failure();
 #endif
