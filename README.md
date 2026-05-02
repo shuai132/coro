@@ -883,10 +883,12 @@ async<void> concurrent_example() {
 
 Use `callback_awaiter` to convert callback-style APIs to coroutines:
 
+The awaiting coroutine must have a bound or inherited executor. The two overloads differ in whether the registration function receives that executor.
+
 With exceptions enabled, failures while storing or extracting the callback result are rethrown at `co_await`.
 
 ```cpp
-// Basic usage (without executor)
+// Registration without an executor parameter
 async<int> async_operation() {
     int result = co_await callback_awaiter<int>([](auto callback) {
         // Async operation, call callback when done
@@ -898,7 +900,7 @@ async<int> async_operation() {
     co_return result;
 }
 
-// Version with executor
+// Registration with an executor parameter
 async<void> async_void_operation() {
     co_await callback_awaiter<void>([](executor* exec, auto callback) {
         // Can use executor for scheduling

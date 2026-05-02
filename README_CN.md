@@ -865,10 +865,12 @@ async<void> concurrent_example() {
 
 使用 `callback_awaiter` 将回调式 API 转换为协程：
 
+等待它的协程必须已绑定或继承执行器。两个重载的区别是注册函数是否接收该执行器参数。
+
 启用异常时，存储或取出回调结果期间发生的异常会在 `co_await` 处重新抛出。
 
 ```cpp
-// 基本用法（无执行器）
+// 注册函数不接收执行器参数
 async<int> async_operation() {
     int result = co_await callback_awaiter<int>([](auto callback) {
         // 异步操作，完成后调用 callback
@@ -880,7 +882,7 @@ async<int> async_operation() {
     co_return result;
 }
 
-// 需要执行器的版本
+// 注册函数接收执行器参数
 async<void> async_void_operation() {
     co_await callback_awaiter<void>([](executor* exec, auto callback) {
         // 可以使用执行器进行调度
