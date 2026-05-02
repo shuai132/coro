@@ -620,6 +620,87 @@ void test_cancelled_await_coro() {
 /// Main test runner
 /// ============================================================================
 
+struct asio_result_lifetime_state {
+  std::atomic<int> live{0};
+  std::atomic<bool> fail_move{false};
+  std::atomic<bool> parent_completed{false};
+  int retained_after_await = -1;
+  bool caught = false;
+};
+
+struct asio_lifetime_value {
+  asio_result_lifetime_state* state;
+
+  explicit asio_lifetime_value(asio_result_lifetime_state& value_state) : state(&value_state) {
+    ++state->live;
+  }
+  asio_lifetime_value(const asio_lifetime_value&) = delete;
+  asio_lifetime_value(asio_lifetime_value&& other) : state(other.state) {
+    if (state->fail_move.load()) {
+      throw std::runtime_error("ASIO result extraction failed");
+    }
+    ++state->live;
+  }
+  ~asio_lifetime_value() {
+    --state->live;
+  }
+};
+
+struct retaining_post_executor : asio_executor {
+  asio_result_lifetime_state& state;
+  bool fail_extraction;
+
+  retaining_post_executor(asio::io_context& context, asio_result_lifetime_state& value_state, bool fail)
+      : asio_executor(context), state(value_state), fail_extraction(fail) {}
+
+  void post(std::function<void()> fn) override {
+    state.fail_move.store(fail_extraction);
+    asio_executor::post(std::move(fn));
+    // Keep the completion callback alive while another worker resumes the parent.
+    auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (!state.parent_completed.load() && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::yield();
+    }
+    ASSERT(state.parent_completed.load());
+  }
+};
+
+asio::awaitable<asio_lifetime_value> make_asio_lifetime_value(asio_result_lifetime_state& state, bool delayed) {
+  if (delayed) {
+    co_await asio::post(asio::use_awaitable);
+  }
+  co_return asio_lifetime_value{state};
+}
+
+async<void> await_asio_result_lifetime(asio_result_lifetime_state& state, bool delayed) {
+  try {
+    auto result = co_await await_asio(make_asio_lifetime_value(state, delayed));
+    ASSERT(result.state == &state);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "ASIO result extraction failed");
+    state.caught = true;
+  }
+  state.retained_after_await = state.live.load();
+  state.parent_completed.store(true);
+}
+
+void test_asio_result_lifetime(bool delayed, bool fail) {
+  asio::io_context context;
+  asio_result_lifetime_state state;
+  retaining_post_executor executor(context, state, fail);
+  spawn(executor, await_asio_result_lifetime(state, delayed));
+  std::thread worker([&context] {
+    context.run_for(3s);
+  });
+  context.run_for(3s);
+  worker.join();
+  ASSERT(state.parent_completed.load());
+  ASSERT(state.caught == fail);
+  ASSERT(state.live.load() == 0);
+  ASSERT(state.retained_after_await == 0);
+  check_coro_leak();
+}
+
 template <typename T>
 asio::awaitable<T> asio_stops_before_completion(asio::io_context& context, bool fail) {
   co_await asio::post(asio::use_awaitable);
@@ -707,6 +788,11 @@ async<void> run_all_tests() {
 
 int main() {
 #ifndef CORO_DISABLE_EXCEPTION
+  for (bool delayed : {false, true}) {
+    for (bool fail : {false, true}) {
+      test_asio_result_lifetime(delayed, fail);
+    }
+  }
   test_await_asio_survives_restart<int>(false);
   test_await_asio_survives_restart<void>(false);
   test_await_asio_survives_restart<int>(true);

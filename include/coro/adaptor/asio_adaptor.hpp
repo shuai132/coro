@@ -144,6 +144,13 @@ struct asio_awaitable_awaiter {
   }
 
   T await_resume() {
+    // The completion callback can retain state after another worker resumes us.
+    struct result_cleanup {
+      std::optional<T>& result_;
+      ~result_cleanup() {
+        result_.reset();
+      }
+    } cleanup{state_->result};
 #ifndef CORO_DISABLE_EXCEPTION
     if (state_->exception) {
       std::rethrow_exception(state_->exception);
