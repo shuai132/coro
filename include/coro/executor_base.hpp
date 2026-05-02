@@ -98,12 +98,14 @@ class executor_base : public coro::executor {
   }
 
   void post_delayed_ns(std::function<void()> fn, const uint64_t delay_ns) override {
+    // If queue allocation fails, release the callback only after unlocking.
+    DelayedTask task{{}, std::move(fn)};
     std::lock_guard<std::mutex> lock(queue_mutex_);
     if (stop_.load(std::memory_order_acquire)) {
       return;
     }
-    auto execute_at = detail::delayed_deadline(delay_ns);
-    delayed_task_queue_.push({execute_at, std::move(fn)});
+    task.execute_at = detail::delayed_deadline(delay_ns);
+    delayed_task_queue_.push(std::move(task));
   }
 
   void stop() override {

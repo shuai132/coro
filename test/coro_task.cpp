@@ -5,15 +5,19 @@
 // #define CORO_DEBUG_LEAK_LOG LOG
 // #define CORO_DEBUG_LIFECYCLE LOG
 
+#include <array>
 #include <atomic>
+#include <cstdlib>
 #include <ctime>
 #include <functional>
 #include <future>
 #include <limits>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "TimeCount.hpp"
@@ -33,6 +37,81 @@
 #endif
 
 using namespace coro;
+
+#ifndef CORO_DISABLE_EXCEPTION
+// Fault injection is confined to the thread performing the timer insertion.
+thread_local bool fail_next_task_allocation = false;
+
+void* operator new(std::size_t size) {
+  if (std::exchange(fail_next_task_allocation, false)) {
+    throw std::bad_alloc();
+  }
+  if (auto* memory = std::malloc(size ? size : 1)) {
+    return memory;
+  }
+  throw std::bad_alloc();
+}
+
+void operator delete(void* memory) noexcept {
+  std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t) noexcept {
+  std::free(memory);
+}
+
+struct post_on_timer_cleanup {
+  executor& exec_;
+  bool& called_;
+
+  post_on_timer_cleanup(executor& exec, bool& called) : exec_(exec), called_(called) {}
+
+  ~post_on_timer_cleanup() {
+    exec_.post([&called = called_] {
+      called = true;
+    });
+  }
+};
+
+template <typename EXECUTOR>
+void test_failed_timer_cleanup_reenters_executor() {
+  EXECUTOR exec;
+  bool cleanup_called = false;
+  auto resource = std::make_shared<post_on_timer_cleanup>(exec, cleanup_called);
+  // Force heap storage: some std::function implementations retain small targets after a move.
+  std::function<void()> callback = [resource = std::move(resource), padding = std::array<char, 128>{}] {
+    (void)padding;
+    ASSERT(false);
+  };
+  bool allocation_failed = false;
+  std::atomic<bool> finished{false};
+  std::thread worker([&] {
+    fail_next_task_allocation = true;
+    try {
+      exec.post_delayed_ns(std::move(callback), 0);
+    } catch (const std::bad_alloc&) {
+      allocation_failed = true;
+    }
+    finished.store(true, std::memory_order_release);
+  });
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  ASSERT(finished.load(std::memory_order_acquire));
+  worker.join();
+  ASSERT(allocation_failed);
+  if constexpr (std::is_same_v<EXECUTOR, executor_poll>) {
+    exec.poll();
+  } else {
+    exec.post([&exec] {
+      exec.stop();
+    });
+    exec.run_loop();
+  }
+  ASSERT(cleanup_called);
+}
+#endif
 
 async<int> coro_fun() {
   {
@@ -573,6 +652,10 @@ void test_time_count_duration() {
 }
 
 int main() {
+#ifndef CORO_DISABLE_EXCEPTION
+  test_failed_timer_cleanup_reenters_executor<executor_poll>();
+  test_failed_timer_cleanup_reenters_executor<executor_loop>();
+#endif
   test_time_count_duration();
   test_bound_children_with_unbound_parent<int>();
   test_bound_children_with_unbound_parent<void>();
