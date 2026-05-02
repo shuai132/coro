@@ -3,8 +3,10 @@
 // #define CORO_DISABLE_EXCEPTION
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <functional>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -18,6 +20,56 @@
 #include "utils.hpp"
 
 using namespace coro;
+
+thread_local size_t* channel_allocation_bytes = nullptr;
+
+void* operator new(std::size_t size) {
+  if (auto* memory = std::malloc(size ? size : 1)) {
+    if (channel_allocation_bytes) {
+      *channel_allocation_bytes += size;
+    }
+    return memory;
+  }
+#ifndef CORO_DISABLE_EXCEPTION
+  throw std::bad_alloc();
+#else
+  std::abort();
+#endif
+}
+
+void operator delete(void* memory) noexcept {
+  std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t) noexcept {
+  std::free(memory);
+}
+
+template <typename CHANNEL>
+size_t empty_channel_allocation_bytes() {
+  size_t bytes = 0;
+  channel_allocation_bytes = &bytes;
+  struct allocation_watch_cleanup {
+    ~allocation_watch_cleanup() {
+      channel_allocation_bytes = nullptr;
+    }
+  } cleanup;
+  {
+    CHANNEL ch;
+    ASSERT(ch.empty());
+    ASSERT(!ch.full());
+    ASSERT(ch.size() == 0);
+  }
+  return bytes;
+}
+
+template <template <typename> typename CHANNEL>
+void test_unbuffered_channel_does_not_allocate_message_storage() {
+  auto small_bytes = empty_channel_allocation_bytes<CHANNEL<int>>();
+  auto large_bytes = empty_channel_allocation_bytes<CHANNEL<std::array<char, 8192>>>();
+  // An unbuffered channel should allocate metadata, not storage for queued message values.
+  ASSERT(small_bytes == large_bytes);
+}
 
 template <typename CHANNEL>
 async<void> reused_queued_sender(CHANNEL& ch, bool& completed) {
@@ -907,6 +959,8 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_unbuffered_channel_does_not_allocate_message_storage<channel_mt>();
+  test_unbuffered_channel_does_not_allocate_message_storage<channel_st>();
   test_receive_result_reentrancy<channel_mt<reentrant_channel_value>>();
   test_receive_result_reentrancy<channel_st<reentrant_channel_value>>();
   LOG("Channel test init");

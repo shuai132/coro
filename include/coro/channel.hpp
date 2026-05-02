@@ -27,11 +27,19 @@ struct channel {
 
  private:
   struct state {
-    explicit state(size_t capacity) : capacity_(capacity) {}
+    explicit state(size_t capacity) : capacity_(capacity) {
+      if (capacity_ > 0) {
+        buffer_.emplace();
+      }
+    }
+
+    bool buffer_empty() const {
+      return !buffer_ || buffer_->empty();
+    }
 
     size_t capacity_;
     mutable MUTEX mutex_;
-    std::queue<T> buffer_;                       // For buffered channels
+    std::optional<std::queue<T>> buffer_;        // Only buffered channels need message storage.
     send_awaitable* send_queue_head_ = nullptr;  // Head of waiting senders linked list
     send_awaitable* send_queue_tail_ = nullptr;  // Tail of waiting senders linked list
     recv_awaitable* recv_queue_head_ = nullptr;  // Head of waiting receivers linked list
@@ -100,9 +108,9 @@ struct channel {
       }
 
       // Check if buffer has space
-      if (state_->capacity_ > 0 && state_->buffer_.size() < state_->capacity_) {
+      if (state_->capacity_ > 0 && state_->buffer_->size() < state_->capacity_) {
         // Put data in buffer, sender can proceed immediately
-        state_->buffer_.push(std::move(value_));
+        state_->buffer_->push(std::move(value_));
         delivered_ = true;
         return false;  // Don't suspend
       }
@@ -220,7 +228,7 @@ struct channel {
       pending_value_.reset();
       // Check if channel is closed and no data available without suspending
       std::lock_guard<MUTEX> lock(state_->mutex_);
-      return state_->closed_.load(std::memory_order_acquire) && state_->buffer_.empty();
+      return state_->closed_.load(std::memory_order_acquire) && state_->buffer_empty();
     }
 
     template <typename Promise>
@@ -228,14 +236,14 @@ struct channel {
       std::unique_lock<MUTEX> lock(state_->mutex_);
 
       // Check buffer
-      if (!state_->buffer_.empty()) {
-        pending_value_.emplace(std::move(state_->buffer_.front()));
-        state_->buffer_.pop();
+      if (!state_->buffer_empty()) {
+        pending_value_.emplace(std::move(state_->buffer_->front()));
+        state_->buffer_->pop();
 
         // After reading from buffer, check if there are waiting senders to move to buffer
-        if (state_->send_queue_head_ != nullptr && state_->buffer_.size() < state_->capacity_) {
+        if (state_->send_queue_head_ != nullptr && state_->buffer_->size() < state_->capacity_) {
           auto* sender_awaiter = state_->send_queue_head_;
-          state_->buffer_.push(std::move(sender_awaiter->value_));
+          state_->buffer_->push(std::move(sender_awaiter->value_));
           state_->send_queue_head_ = sender_awaiter->next_;
           if (state_->send_queue_head_ == nullptr) {
             state_->send_queue_tail_ = nullptr;
@@ -377,17 +385,17 @@ struct channel {
 
   bool empty() const {
     std::lock_guard<MUTEX> lock(state_->mutex_);
-    return state_->buffer_.empty();
+    return state_->buffer_empty();
   }
 
   bool full() const {
     std::lock_guard<MUTEX> lock(state_->mutex_);
-    return state_->capacity_ > 0 && state_->buffer_.size() >= state_->capacity_;
+    return state_->capacity_ > 0 && state_->buffer_->size() >= state_->capacity_;
   }
 
   size_t size() const {
     std::lock_guard<MUTEX> lock(state_->mutex_);
-    return state_->buffer_.size();
+    return state_->buffer_ ? state_->buffer_->size() : 0;
   }
 
   size_t capacity() const {
