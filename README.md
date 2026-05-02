@@ -1118,6 +1118,8 @@ int main() {
 
 ## Configuration Options
 
+Define configuration and debug macros before including any coro header, with the same definitions in every translation unit that uses the library. Prefer a shared configuration header or target-wide build definitions. Mixing settings such as `CORO_DISABLE_EXCEPTION` can change promise layouts and violates the one-definition rule, even if a debug build appears to work.
+
 ### Disable Exceptions
 
 Define `CORO_DISABLE_EXCEPTION` macro to disable exception support and reduce overhead:
