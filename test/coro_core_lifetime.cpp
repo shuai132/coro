@@ -271,6 +271,38 @@ void test_combined_result_cleanup() {
 }
 
 #ifndef CORO_DISABLE_EXCEPTION
+struct rejecting_executor : executor_poll {
+  void dispatch(std::function<void()>) override {
+    throw std::bad_alloc();
+  }
+};
+
+template <typename T>
+async<void> await_rejected_child(executor& child_executor, bool& completed) {
+  int live = 0;
+  bool caught = false;
+  try {
+    co_await child_with_frame_parameter<T>(frame_parameter{live}, true, false).bind_executor(child_executor);
+  } catch (const std::bad_alloc&) {
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(live == 0);
+  completed = true;
+}
+
+template <typename T>
+void test_rejected_child_cleanup() {
+  executor_poll parent_executor;
+  rejecting_executor child_executor;
+  bool completed = false;
+  spawn(parent_executor, await_rejected_child<T>(child_executor, completed));
+  while (!completed) {
+    parent_executor.poll();
+  }
+  check_coro_leak();
+}
+
 struct tracked_failure : std::exception {
   int* live;
 
@@ -383,6 +415,10 @@ void test_aligned_promise() {
 #endif
 
 int main() {
+#ifndef CORO_DISABLE_EXCEPTION
+  test_rejected_child_cleanup<int>();
+  test_rejected_child_cleanup<void>();
+#endif
   test_callback_child_frame_cleanup<int>();
   test_callback_child_frame_cleanup<void>();
   test_child_frame_cleanup<false, int>();

@@ -277,12 +277,15 @@ struct awaitable {
 #endif
     current_coro_handle_.promise().parent_handle_ = h;
     current_coro_handle_.promise().parent_executor_ = h.promise().executor_;
-    current_coro_handle_.promise().started_ = true;
     auto* child_exec = current_coro_handle_.promise().executor_;
     if (child_exec && child_exec != h.promise().executor_) {
-      detail::resume_via(child_exec, current_coro_handle_);
+      child_exec->dispatch([handle = current_coro_handle_]() {
+        handle.promise().started_ = true;
+        handle.resume();
+      });
       return std::noop_coroutine();
     }
+    current_coro_handle_.promise().started_ = true;
     return current_coro_handle_;
   }
 
