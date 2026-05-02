@@ -439,6 +439,10 @@ awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_im
   co_await when_all_init_state_awaiter<state_type>{state};
 
   // Launch all tasks
+#ifndef CORO_DISABLE_EXCEPTION
+  size_t launched_count = 0;
+  std::exception_ptr launch_failure;
+#endif
   auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw& aw) {
     auto* exec = aw.get_executor() ? aw.get_executor() : parent_exec;
     assert(exec && "when_all requires an executor unless every child awaitable is already bound to one");
@@ -447,8 +451,27 @@ awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_im
     task.current_coro_handle_.promise().debug_node_.set_parent(state->debug_parent_id_);
 #endif
     task.bind_executor(*exec).detach(*exec);
+#ifndef CORO_DISABLE_EXCEPTION
+    ++launched_count;
+#endif
   };
-  (launch_task.template operator()<Is>(state->parent_exec, awaitables), ...);
+#ifndef CORO_DISABLE_EXCEPTION
+  try {
+#endif
+    (launch_task.template operator()<Is>(state->parent_exec, awaitables), ...);
+#ifndef CORO_DISABLE_EXCEPTION
+  } catch (...) {
+    launch_failure = std::current_exception();
+  }
+  if (launch_failure) {
+    {
+      std::lock_guard<std::mutex> lock(state->mtx);
+      // Count the failed launch as an error, then wait for the children already started.
+      state->total_count = launched_count + 1;
+    }
+    state->set_exception(std::exchange(launch_failure, {}));
+  }
+#endif
 
   // Wait for all to complete
   if constexpr (std::tuple_size_v<filter_void_t<awaitable_result_t<Awaitables>...>> == 1) {

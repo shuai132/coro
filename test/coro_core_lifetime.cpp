@@ -6,16 +6,20 @@ void test_lifecycle_log(const char*, ...);
 #define CORO_DEBUG_LIFECYCLE test_lifecycle_log
 #endif
 
+#include <atomic>
 #include <cstdint>
 #include <future>
 #include <new>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
 #include "assert_def.h"
 #include "coro/coro.hpp"
+#include "coro/event.hpp"
+#include "coro/executor_loop.hpp"
 #include "coro/executor_poll.hpp"
 #include "coro/time.hpp"
 #include "coro/when.hpp"
@@ -213,7 +217,10 @@ void test_detach_log_failure() {
 #endif
 
 template <typename T>
-async<T> child_with_frame_parameter([[maybe_unused]] frame_parameter parameter, bool delayed, [[maybe_unused]] bool fail) {
+async<T> child_with_frame_parameter([[maybe_unused]] frame_parameter parameter, bool delayed, [[maybe_unused]] bool fail, bool* started = nullptr) {
+  if (started) {
+    *started = true;
+  }
   if (delayed) {
     co_await sleep(0ns);
   }
@@ -435,6 +442,96 @@ void test_rejected_child_cleanup() {
   check_coro_leak();
 }
 
+template <typename T>
+async<void> await_partial_launch_cleanup(executor& parent_executor, executor& child_executor, int rejected_index, bool delayed, bool& completed) {
+  int live = 0;
+  bool started[3]{};
+  auto first = child_with_frame_parameter<T>(frame_parameter{live}, delayed, false, &started[0])
+                   .bind_executor(rejected_index == 0 ? child_executor : parent_executor);
+  auto second = child_with_frame_parameter<T>(frame_parameter{live}, delayed, false, &started[1])
+                    .bind_executor(rejected_index == 1 ? child_executor : parent_executor);
+  auto third = child_with_frame_parameter<T>(frame_parameter{live}, delayed, false, &started[2])
+                   .bind_executor(rejected_index == 2 ? child_executor : parent_executor);
+  bool caught = false;
+  try {
+    co_await when_all(std::move(first), std::move(second), std::move(third));
+  } catch (const std::bad_alloc&) {
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(live == 0);
+  for (int index = 0; index < 3; ++index) {
+    ASSERT(started[index] == (index < rejected_index));
+  }
+  completed = true;
+}
+
+template <typename T>
+void test_partial_launch_cleanup() {
+  for (bool delayed : {false, true}) {
+    for (int rejected_index = 0; rejected_index < 3; ++rejected_index) {
+      executor_poll parent_executor;
+      rejecting_executor child_executor;
+      bool completed = false;
+      spawn(parent_executor, await_partial_launch_cleanup<T>(parent_executor, child_executor, rejected_index, delayed, completed));
+      while (!completed) {
+        parent_executor.poll();
+      }
+      check_coro_leak();
+    }
+  }
+}
+
+struct releasing_rejecting_executor : rejecting_executor {
+  event& gate_;
+
+  explicit releasing_rejecting_executor(event& gate) : gate_(gate) {}
+
+  void dispatch(std::function<void()> task) override {
+    gate_.set();
+    rejecting_executor::dispatch(std::move(task));
+  }
+};
+
+async<void> gated_launch_child(event& gate, std::atomic<bool>& child_completed) {
+  co_await gate;
+  child_completed.store(true, std::memory_order_release);
+}
+
+async<void> await_partial_launch_across_threads(executor& child_executor, executor& rejecting, event& gate, std::atomic<bool>& child_completed,
+                                                bool& completed) {
+  bool caught = false;
+  try {
+    co_await when_all(gated_launch_child(gate, child_completed).bind_executor(child_executor), lazy_value().bind_executor(rejecting), lazy_value());
+  } catch (const std::bad_alloc&) {
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(child_completed.load(std::memory_order_acquire));
+  completed = true;
+}
+
+void test_partial_launch_across_threads() {
+  for (int iteration = 0; iteration < 128; ++iteration) {
+    event gate;
+    executor_poll parent_executor;
+    executor_loop child_executor;
+    releasing_rejecting_executor rejecting(gate);
+    std::atomic<bool> child_completed{false};
+    bool completed = false;
+    std::thread worker([&child_executor] {
+      child_executor.run_loop();
+    });
+    spawn(parent_executor, await_partial_launch_across_threads(child_executor, rejecting, gate, child_completed, completed));
+    while (!completed) {
+      parent_executor.poll();
+    }
+    child_executor.stop();
+    worker.join();
+    check_coro_leak();
+  }
+}
+
 struct tracked_failure : std::exception {
   int* live;
 
@@ -457,6 +554,49 @@ async<T> child_with_tracked_failure(int& live, bool delayed) {
   throw tracked_failure{live};
   if constexpr (!std::is_void_v<T>) {
     co_return 42;
+  }
+}
+
+async<void> await_partial_launch_error_cleanup(executor& rejecting, bool delayed, bool& completed) {
+  int live = 0;
+  bool caught = false;
+  try {
+    // Exercise the single non-void result path with a move-only, non-default-constructible value.
+    co_await when_all(child_with_tracked_result(live, delayed), lazy_value().bind_executor(rejecting));
+  } catch (const std::bad_alloc&) {
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(live == 0);
+
+  caught = false;
+  try {
+    co_await when_all(child_with_tracked_failure<void>(live, delayed), lazy_value().bind_executor(rejecting));
+  } catch (const std::bad_alloc&) {
+    // The launch error is recorded before a suspended child can fail.
+    ASSERT(delayed);
+    caught = true;
+  } catch (const tracked_failure& error) {
+    // An immediate child error must not be replaced by the later launch failure.
+    ASSERT(!delayed);
+    ASSERT(error.live == &live);
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(live == 0);
+  completed = true;
+}
+
+void test_partial_launch_error_cleanup() {
+  for (bool delayed : {false, true}) {
+    executor_poll parent_executor;
+    rejecting_executor rejecting;
+    bool completed = false;
+    spawn(parent_executor, await_partial_launch_error_cleanup(rejecting, delayed, completed));
+    while (!completed) {
+      parent_executor.poll();
+    }
+    check_coro_leak();
   }
 }
 
@@ -551,6 +691,10 @@ int main() {
 #ifndef CORO_DISABLE_EXCEPTION
   test_rejected_child_cleanup<int>();
   test_rejected_child_cleanup<void>();
+  test_partial_launch_cleanup<int>();
+  test_partial_launch_cleanup<void>();
+  test_partial_launch_across_threads();
+  test_partial_launch_error_cleanup();
 #endif
   test_callback_child_frame_cleanup<int>();
   test_callback_child_frame_cleanup<void>();

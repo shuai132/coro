@@ -344,6 +344,9 @@ async<void> timer_example() {
 
 Wait for all tasks to complete:
 
+With exceptions enabled, `when_all()` waits for all launched children before rethrowing the first recorded error.
+If launching a child fails, subsequent children are not started.
+
 ```cpp
 #include "coro/when.hpp"
 

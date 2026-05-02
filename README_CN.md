@@ -325,6 +325,9 @@ async<void> timer_example() {
 
 等待所有任务完成：
 
+启用异常时，`when_all()` 会等待所有已启动的子任务结束，再抛出最先记录的错误。
+如果某个子任务启动失败，后续子任务不会启动。
+
 ```cpp
 #include "coro/when.hpp"
 
