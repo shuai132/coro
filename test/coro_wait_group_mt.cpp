@@ -75,9 +75,12 @@ async<void> wait_group_multiple_waiters_mt_test(executor& exec1, executor& exec2
   wait_group wg;
 
   std::atomic<int> waiter_completed{0};
+  wait_group waiters_done;
+  waiters_done.add(4);
 
   // Waiter tasks on different threads
-  auto waiter_task = [&wg, &waiter_completed](int id, executor& expected_exec, std::thread::id expected_tid) -> async<void> {
+  auto waiter_task = [](wait_group& wg, wait_group& waiters_done, std::atomic<int>& waiter_completed, int id, executor& expected_exec,
+                        std::thread::id expected_tid) -> async<void> {
     LOG("Waiter %d: waiting on thread...", id);
     ASSERT(std::this_thread::get_id() == expected_tid);
     ASSERT(co_await current_executor() == &expected_exec);
@@ -87,17 +90,20 @@ async<void> wait_group_multiple_waiters_mt_test(executor& exec1, executor& exec2
     ASSERT(std::this_thread::get_id() == expected_tid);
     ASSERT(co_await current_executor() == &expected_exec);
     LOG("Waiter %d: wait completed!", id);
+    // Completion may require more work after the group reaches zero.
+    co_await sleep(100ms);
     waiter_completed.fetch_add(1, std::memory_order_release);
+    waiters_done.done();
   };
 
   // Add some work
   wg.add(4);
 
   // Spawn multiple waiters on different threads
-  auto waiter1 = waiter_task(1, exec1, exec1_tid).bind_executor(exec1);
-  auto waiter2 = waiter_task(2, exec2, exec2_tid).bind_executor(exec2);
-  auto waiter3 = waiter_task(3, exec1, exec1_tid).bind_executor(exec1);
-  auto waiter4 = waiter_task(4, exec2, exec2_tid).bind_executor(exec2);
+  auto waiter1 = waiter_task(wg, waiters_done, waiter_completed, 1, exec1, exec1_tid).bind_executor(exec1);
+  auto waiter2 = waiter_task(wg, waiters_done, waiter_completed, 2, exec2, exec2_tid).bind_executor(exec2);
+  auto waiter3 = waiter_task(wg, waiters_done, waiter_completed, 3, exec1, exec1_tid).bind_executor(exec1);
+  auto waiter4 = waiter_task(wg, waiters_done, waiter_completed, 4, exec2, exec2_tid).bind_executor(exec2);
 
   spawn(exec1, std::move(waiter1));
   spawn(exec2, std::move(waiter2));
@@ -116,8 +122,8 @@ async<void> wait_group_multiple_waiters_mt_test(executor& exec1, executor& exec2
 
   co_await when_all(std::move(worker1), std::move(worker2), std::move(worker3), std::move(worker4));
 
-  // Give time for all waiters to wake up
-  co_await sleep(50ms);
+  // Reaching zero schedules the waiters; wait for their work to finish too.
+  co_await waiters_done.wait();
 
   int completed = waiter_completed.load(std::memory_order_acquire);
   LOG("Main: %d waiters completed (expected 4)", completed);
