@@ -1254,6 +1254,11 @@ make
 ./coro_wait_group
 ```
 
+To enable the ASIO adaptor test, configure with the `ASIO_PATH` environment variable pointing to the
+include directory containing `asio.hpp`. The build directory remembers this path for subsequent
+reconfiguration. Set `ASIO_PATH` to a new path when configuring to change it, or explicitly set it to
+an empty value to disable the ASIO test. Disabling exceptions still selects the placeholder test.
+
 ### CMake Options
 
 | Option                         | Default              | Description               |
