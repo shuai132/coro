@@ -2,6 +2,8 @@
 #define CORO_DEBUG_PROMISE_LEAK
 #include "coro/coro_local.hpp"
 
+#include <any>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -18,6 +20,51 @@ using namespace coro;
 static coro_local<int> int_storage;
 static coro_local<std::string> string_storage;
 static coro_local<double> double_storage;
+
+async<void> coro_local_any_child(coro_local<std::any>& storage) {
+  auto inherited = co_await storage.get();
+  auto* value = std::any_cast<int>(&inherited);
+  ASSERT(value && *value == 42);
+  co_await storage.set(std::any{std::string("child")});
+  auto child = co_await storage.get_optional();
+  ASSERT(child);
+  auto* text = std::any_cast<std::string>(&*child);
+  ASSERT(text && *text == "child");
+}
+
+async<void> coro_local_erased_type_test() {
+  static coro_local<std::any> storage;
+  ASSERT(!(co_await storage.has()));
+  co_await storage.set(std::any{42});
+  ASSERT(co_await storage.has());
+  auto* stored = co_await storage.get_ptr();
+  ASSERT(stored);
+  auto* value = std::any_cast<int>(stored);
+  ASSERT(value && *value == 42);
+  co_await coro_local_any_child(storage);
+  auto parent = co_await storage.get();
+  value = std::any_cast<int>(&parent);
+  ASSERT(value && *value == 42);
+
+  co_await storage.set(std::any{});
+  ASSERT(co_await storage.has());
+  auto empty = co_await storage.get_optional();
+  ASSERT(empty && !empty->has_value());
+  co_await storage.erase();
+  ASSERT(!(co_await storage.get_optional()));
+
+  auto resource = std::make_shared<int>(7);
+  co_await storage.set(std::any{resource});
+  ASSERT(resource.use_count() == 2);
+  co_await storage.erase();
+  ASSERT(resource.use_count() == 1);
+
+  // Constructor tags are values here, not instructions to construct another any payload.
+  static coro_local<std::in_place_type_t<int>> tag_storage;
+  co_await tag_storage.set(std::in_place_type<int>);
+  ASSERT((co_await tag_storage.get_ptr()) != nullptr);
+  ASSERT(co_await tag_storage.get_optional());
+}
 
 void test_deep_local_storage_lookup() {
   using storage_map = detail::coro_local_map;
@@ -605,6 +652,7 @@ async<void> coro_local_exception_test() {
 #endif
 
 async<void> run_all_tests() {
+  co_await coro_local_erased_type_test();
   co_await coro_local_lazy_default_test();
   co_await coro_local_basic_test();
   co_await coro_local_nonassignable_test();
