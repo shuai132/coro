@@ -66,6 +66,16 @@ async<void> debug_catch(bool& caught) {
 }
 #endif
 
+void test_async_debug_static_lifetime() {
+  {
+    auto task = debug_immediate();
+    task.current_coro_handle_.resume();
+    ASSERT(task.await_resume() == 7);
+  }
+  ASSERT(detail::async_debug_registry::head_ == nullptr);
+  check_coro_leak();
+}
+
 // Stable breakpoint for debugger integration tests, with all three frames alive.
 extern "C" void coro_debug_checkpoint() {
   ASSERT(debug_leaf_handle);

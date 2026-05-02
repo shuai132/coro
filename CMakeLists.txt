@@ -105,7 +105,7 @@ if (CORO_BUILD_TEST)
 
     # test asynchronous debugger metadata
     set(TARGET_NAME ${PROJECT_NAME}_debug)
-    add_executable(${TARGET_NAME} test/coro_debug.cpp)
+    add_executable(${TARGET_NAME} test/coro_debug_static.cpp test/coro_debug.cpp)
     target_compile_definitions(${TARGET_NAME} PRIVATE CORO_DEBUG_ASYNC_STACK)
 
     # test core callback

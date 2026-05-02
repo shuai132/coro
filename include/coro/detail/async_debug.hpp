@@ -12,14 +12,18 @@ struct async_debug_node;
 
 // Plain fields form the debugger interface; scripts read them only with all threads stopped.
 struct async_debug_registry {
-  inline static std::mutex mutex_;
+  static std::mutex& mutex() {
+    // Global destructors in other translation units can still create and destroy coroutine frames.
+    static auto* value = new std::mutex;
+    return *value;
+  }
   inline static async_debug_node* head_ = nullptr;
   inline static std::uint64_t next_id_ = 0;
   inline static volatile bool updating_ = false;
 };
 
 struct async_debug_guard {
-  std::lock_guard<std::mutex> lock_{async_debug_registry::mutex_};
+  std::lock_guard<std::mutex> lock_{async_debug_registry::mutex()};
 
   async_debug_guard() noexcept {
     async_debug_registry::updating_ = true;
