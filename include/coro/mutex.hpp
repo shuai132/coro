@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
+#include <utility>
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
@@ -204,9 +205,9 @@ struct mutex_t {
 
     // Manually unlock the mutex
     void unlock() {
-      if (mutex_) {
-        mutex_->unlock();
-        mutex_ = nullptr;
+      if (auto* mutex = std::exchange(mutex_, nullptr)) {
+        // Resuming an unbound waiter can destroy this guard inline.
+        mutex->unlock();
       }
     }
 

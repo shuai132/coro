@@ -1,6 +1,8 @@
 /// config debug
 #define CORO_DEBUG_PROMISE_LEAK
 // #define CORO_DISABLE_EXCEPTION
+#include <memory>
+
 #include "log.h"
 // #define CORO_DEBUG_LEAK_LOG LOG
 // #define CORO_DEBUG_LIFECYCLE LOG
@@ -11,6 +13,41 @@
 #include "utils.hpp"
 
 using namespace coro;
+
+async<void> mutex_destroy_previous_guard(coro::mutex& mtx, std::unique_ptr<coro::mutex::lock_guard>& previous_guard, bool& completed) {
+  auto guard = co_await mtx.scoped_lock();
+  previous_guard.reset();
+  ASSERT(mtx.is_locked());
+  completed = true;
+}
+
+void mutex_guard_reentrant_destruction_test() {
+  for (bool use_executor : {false, true}) {
+    coro::mutex mtx;
+    executor_poll executor;
+    ASSERT(mtx.try_lock());
+    auto previous_guard = std::make_unique<coro::mutex::lock_guard>(&mtx);
+    bool completed = false;
+    auto waiter = mutex_destroy_previous_guard(mtx, previous_guard, completed);
+    if (use_executor) {
+      spawn(executor, std::move(waiter));
+      executor.poll();
+    } else {
+      waiter.current_coro_handle_.promise().started_ = true;
+      waiter.current_coro_handle_.resume();
+    }
+    ASSERT(!completed);
+    previous_guard->unlock();
+    if (use_executor) {
+      ASSERT(!completed);
+      executor.poll();
+    }
+    ASSERT(completed);
+    ASSERT(!previous_guard);
+    ASSERT(!mtx.is_locked());
+  }
+  check_coro_leak();
+}
 
 async<void> mutex_test_task(coro::mutex& mtx, const char* name, int sleep_ms) {
   LOG("Task %s: attempting to acquire lock", name);
@@ -209,6 +246,7 @@ async<void> run_all_tests() {
 
 int main() {
   LOG("Mutex test init");
+  mutex_guard_reentrant_destruction_test();
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {
     executor.stop();
