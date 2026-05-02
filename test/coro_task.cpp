@@ -394,6 +394,60 @@ void test_stop_wakes_idle_loop() {
   }
 }
 
+void test_stop_wakes_all_idle_loop_threads(bool stop_from_loop) {
+  executor_loop executor;
+  constexpr int worker_count = 4;
+  std::atomic<int> entered{0};
+  std::atomic<int> callbacks_finished{0};
+  std::atomic<int> loops_finished{0};
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  for (int i = 0; i < worker_count; ++i) {
+    executor.post([&] {
+      entered.fetch_add(1, std::memory_order_release);
+      while (entered.load(std::memory_order_acquire) != worker_count && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+      }
+      ASSERT(entered.load(std::memory_order_acquire) == worker_count);
+      callbacks_finished.fetch_add(1, std::memory_order_release);
+    });
+  }
+  std::vector<std::thread> workers;
+  for (int i = 0; i < worker_count; ++i) {
+    workers.emplace_back([&] {
+      executor.run_loop();
+      loops_finished.fetch_add(1, std::memory_order_release);
+    });
+  }
+  while (callbacks_finished.load(std::memory_order_acquire) != worker_count && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  ASSERT(callbacks_finished.load(std::memory_order_acquire) == worker_count);
+  // Let all workers enter the empty-queue wait before issuing one stop request.
+  std::this_thread::sleep_for(20ms);
+  if (stop_from_loop) {
+    executor.post([&] {
+      executor.stop();
+    });
+  } else {
+    executor.stop();
+  }
+  deadline = std::chrono::steady_clock::now() + 500ms;
+  while (loops_finished.load(std::memory_order_acquire) != worker_count && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  bool stopped_on_time = loops_finished.load(std::memory_order_acquire) == worker_count;
+  if (!stopped_on_time) {
+    // Rescue workers left asleep by a single-notification implementation before asserting.
+    for (int i = 0; i < worker_count; ++i) {
+      executor.stop();
+    }
+  }
+  for (auto& worker : workers) {
+    worker.join();
+  }
+  ASSERT(stopped_on_time);
+}
+
 void test_loop_releases_thread_context() {
   executor_loop executor;
   executor.post([&] {
@@ -821,6 +875,8 @@ int main() {
   test_poll_moves_delayed_callback();
   test_post_racing_with_stop(false);
   test_post_racing_with_stop(true);
+  test_stop_wakes_all_idle_loop_threads(false);
+  test_stop_wakes_all_idle_loop_threads(true);
   test_loop_releases_thread_context();
   test_nested_loop_preserves_thread_context();
   test_nested_distinct_loop_context();

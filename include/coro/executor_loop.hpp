@@ -121,7 +121,7 @@ class executor_loop : public executor_base {
 
   void stop() override {
     executor_base::stop();
-    condition_.notify_one();
+    condition_.notify_all();
   }
 };
 }  // namespace coro

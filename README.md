@@ -292,7 +292,7 @@ executor_loop executor;
 executor.run_loop();
 ```
 
-After `stop()`, `run_loop()` finishes already queued tasks, including timers, before returning.
+After `stop()`, all idle `run_loop()` threads are woken. The loops keep servicing already queued tasks, including timers, until the queues are empty.
 
 `dispatch()` runs inline only while its calling thread is inside this executor's `run_loop()`, including nested calls.
 After the loop returns or throws, that thread is no longer treated as an active loop context.
