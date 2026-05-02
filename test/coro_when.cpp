@@ -20,6 +20,7 @@ using namespace coro;
 struct reentrant_result_state {
   channel<int> signal;
   bool close_on_move = false;
+  bool throw_on_move = false;
   int live = 0;
 };
 
@@ -32,11 +33,16 @@ struct reentrant_result {
   }
   reentrant_result(const reentrant_result&) = delete;
   reentrant_result(reentrant_result&& other) : state(other.state), generation(other.generation + 1) {
-    ++state->live;
-    // The fourth move stores the wrapper's result in when_all's shared state.
+    // The fourth move stores the wrapper's result in the combiner's shared state.
     if (state->close_on_move && generation == 4) {
       state->signal.close();
     }
+#ifndef CORO_DISABLE_EXCEPTION
+    if (state->throw_on_move && generation == 4) {
+      throw std::runtime_error("reentrant result storage failed");
+    }
+#endif
+    ++state->live;
   }
   ~reentrant_result() {
     --state->live;
@@ -61,6 +67,24 @@ async<reentrant_result> make_reentrant_result(reentrant_result_state& state, boo
 async<void> await_reentrant_result(reentrant_result_state& state, bool delayed) {
   auto result = co_await when_all(wait_for_reentrant_signal(state.signal), make_reentrant_result(state, delayed));
   ASSERT(result.state == &state);
+  ASSERT(state.signal.is_closed());
+}
+
+async<void> await_reentrant_any_result(reentrant_result_state& state, bool delayed) {
+#ifndef CORO_DISABLE_EXCEPTION
+  bool caught = false;
+  try {
+#endif
+    auto result = co_await when_any(wait_for_reentrant_signal(state.signal), make_reentrant_result(state, delayed));
+    ASSERT(result.index == 1);
+    ASSERT(result.get<1>().state == &state);
+#ifndef CORO_DISABLE_EXCEPTION
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "reentrant result storage failed");
+    caught = true;
+  }
+  ASSERT(caught == state.throw_on_move);
+#endif
   ASSERT(state.signal.is_closed());
 }
 
@@ -133,6 +157,25 @@ void test_when_all_reentrant_completion() {
   }
 }
 
+void test_when_any_reentrant_completion() {
+  for (bool delayed : {false, true}) {
+    for (bool close_on_move : {false, true}) {
+      LOG("when_any reentrant result: move=%d delayed=%d", close_on_move, delayed);
+      reentrant_result_state state;
+      state.close_on_move = close_on_move;
+      run_reentrant_test(await_reentrant_any_result(state, delayed));
+      ASSERT(state.live == 0);
+#ifndef CORO_DISABLE_EXCEPTION
+      reentrant_result_state throwing_state;
+      throwing_state.close_on_move = close_on_move;
+      throwing_state.throw_on_move = true;
+      run_reentrant_test(await_reentrant_any_result(throwing_state, delayed));
+      ASSERT(throwing_state.live == 0);
+#endif
+    }
+  }
+}
+
 // Hold the winning result's move constructor open while the parent checks readiness.
 struct publication_value {
   std::atomic<bool>* entered;
@@ -168,6 +211,13 @@ void test_when_any_result_publication() {
     std::this_thread::yield();
   }
   bool ready_before_result = waiter.await_ready();
+  // Other completions must neither block on the user's move nor replace the claimed result.
+  std::optional<int> losing_value{17};
+  state->template set_result<0>(losing_value);
+#ifndef CORO_DISABLE_EXCEPTION
+  state->set_exception(std::make_exception_ptr(std::runtime_error("losing completion")));
+#endif
+  ASSERT(!waiter.await_ready());
   release.store(true, std::memory_order_release);
   writer.join();
 
@@ -681,6 +731,7 @@ async<void> run_all_tests() {
 int main() {
   LOG("when_all/when_any test init");
   test_when_all_reentrant_completion();
+  test_when_any_reentrant_completion();
   test_when_any_result_publication();
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {

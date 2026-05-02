@@ -469,6 +469,7 @@ struct when_any_state_impl {
   std::variant<std::monostate, void_to_placeholder_t<Ts>...> result;
   size_t completed_index = 0;
   std::atomic<bool> completed{false};
+  bool claimed = false;
   std::coroutine_handle<> parent_handle;
   executor* parent_exec = nullptr;
   mutable std::mutex mtx;  // Mutex to protect shared state access
@@ -485,52 +486,62 @@ struct when_any_state_impl {
     }
   };
 
+  bool try_claim() {
+    std::lock_guard<std::mutex> lock(mtx);
+    if (claimed) {
+      return false;
+    }
+    claimed = true;
+    return true;
+  }
+
+  void publish_completion() {
+    std::unique_lock<std::mutex> lock(mtx);
+    // Keep winner selection separate from publication: user values may resume other branches.
+    completed.store(true, std::memory_order_release);
+    if (parent_handle) {
+      lock.unlock();
+      detail::resume_via(parent_exec, parent_handle);
+    }
+  }
+
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
-    std::unique_lock<std::mutex> lock(mtx);
-    if (!completed.load(std::memory_order_relaxed)) {
+    if (try_claim()) {
       exception = std::move(ex);
       ex = nullptr;
-      // Publish completion only after the result or exception is fully initialized.
-      completed.store(true, std::memory_order_release);
-      if (parent_handle) {
-        lock.unlock();
-        detail::resume_via(parent_exec, parent_handle);
-      }
+      publish_completion();
     }
   }
 #endif
 
   template <size_t Index, typename T>
   void set_result(std::optional<T>& value) {
-    std::unique_lock<std::mutex> lock(mtx);
-    if (!completed.load(std::memory_order_relaxed)) {
-      completed_index = Index;
-      result.template emplace<Index + 1>(std::move(*value));
-      // Release the source before publishing completion to the parent.
-      value.reset();
-      // Publish completion only after the result or exception is fully initialized.
-      completed.store(true, std::memory_order_release);
-      if (parent_handle) {
-        lock.unlock();
-        detail::resume_via(parent_exec, parent_handle);
-      }
+    if (!try_claim()) {
+      return;
     }
+    completed_index = Index;
+#ifndef CORO_DISABLE_EXCEPTION
+    try {
+#endif
+      result.template emplace<Index + 1>(std::move(*value));
+#ifndef CORO_DISABLE_EXCEPTION
+    } catch (...) {
+      exception = std::current_exception();
+    }
+#endif
+    // Moving or destroying a user value must not hold the shared-state mutex.
+    // End the catch and release the source before publishing completion to the parent.
+    value.reset();
+    publish_completion();
   }
 
   template <size_t Index>
   void set_completed_at() {
-    std::unique_lock<std::mutex> lock(mtx);
-    if (!completed.load(std::memory_order_relaxed)) {
+    if (try_claim()) {
       completed_index = Index;
-      // Store void_placeholder for void tasks
       result.template emplace<Index + 1>(void_placeholder{});
-      // Publish completion only after the result or exception is fully initialized.
-      completed.store(true, std::memory_order_release);
-      if (parent_handle) {
-        lock.unlock();
-        detail::resume_via(parent_exec, parent_handle);
-      }
+      publish_completion();
     }
   }
 };
