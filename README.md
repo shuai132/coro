@@ -1044,10 +1044,24 @@ asio::awaitable<void> asio_catches_coro_exception() {
 ### Complete Example
 
 ```cpp
+#include <chrono>
+#include <iostream>
 #include "coro/coro.hpp"
+#include "coro/time.hpp"
 #include "coro/adaptor/asio_adaptor.hpp"
 
 using namespace coro;
+
+asio::awaitable<void> asio_sleep(std::chrono::milliseconds duration) {
+    auto executor = co_await asio::this_coro::executor;
+    asio::steady_timer timer(executor);
+    timer.expires_after(duration);
+    co_await timer.async_wait(asio::use_awaitable);
+}
+
+asio::awaitable<int> asio_compute() {
+    co_return 42;
+}
 
 async<void> main_task() {
     // Mix coro and ASIO coroutines freely
