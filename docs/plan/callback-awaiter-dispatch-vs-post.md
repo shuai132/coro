@@ -41,12 +41,16 @@ So pure `post()` is simpler but worse for this library's executor semantics.
 
 ## Current decision
 
-Use `dispatch()` for asynchronous completion, but special-case completion that occurs before `await_suspend()` returns:
+Use `dispatch()` after suspension is committed, with one atomic phase shared by registration and completion:
 
-- `await_suspend()` marks itself as running.
-- If the callback fires while `await_suspend()` is still running, the callback stores the result and marks inline completion.
-- `await_suspend()` then returns `false`, allowing the coroutine to continue through the standard non-suspending path.
-- If the callback fires after `await_suspend()` has returned, it resumes through `executor->dispatch(...)`.
+- `await_suspend()` starts in `registering` and invokes the callback-style API.
+- The callback stores its result, then atomically exchanges the phase for `completed`.
+- After registration returns, `await_suspend()` tries to change `registering` to `suspended`. If completion already won, it returns `false`, allowing the coroutine to continue without suspension.
+- If suspension wins, the callback observes `suspended` and resumes through `executor->dispatch(...)`.
+
+The phase change is the handoff point; it does not require `await_suspend()` to have returned. Once suspension is published, `await_suspend()` must not access the awaiter again, because another thread may already resume and destroy it. The atomic operations also publish the stored result before the coroutine reads it.
+
+Separate "registration running" and "completed inline" flags are insufficient: registration can finish while the callback is still storing its result, causing both sides to leave resumption to the other. A single atomic phase ensures exactly one side owns continuation.
 
 This preserves the original low-overhead `dispatch()` behavior for normal asynchronous callbacks while avoiding re-entrant resume for synchronous callbacks.
 
@@ -61,4 +65,5 @@ This preserves the original low-overhead `dispatch()` behavior for normal asynch
 Regression coverage:
 
 - `coro_core_callback` proves synchronous callback completion does not destroy the awaiter during active callback execution.
+- `coro_core_callback` also pauses an asynchronous callback during result storage while registration returns, covering the suspension handoff for both callback API overloads.
 - `coro_when` under `CORO_DISABLE_EXCEPTION=ON` proves slower `when_any` branches can still drain after the winner stops the executor.
