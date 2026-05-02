@@ -2,6 +2,8 @@
 #define CORO_DEBUG_PROMISE_LEAK
 // #define CORO_DISABLE_EXCEPTION
 #include <array>
+#include <memory>
+#include <thread>
 #include <vector>
 
 #include "log.h"
@@ -242,6 +244,65 @@ async<void> test_channel_close_unblocks_waiting_sender() {
   ASSERT(!recv_result.has_value());
 
   LOG("Channel close unblocks waiting sender test completed");
+}
+
+async<void> destroyed_channel_receiver(channel<int>* ch, bool& receiver_completed) {
+  auto value = co_await ch->recv();
+  ASSERT(!value.has_value());
+  receiver_completed = true;
+}
+
+async<void> test_channel_destroy_unblocks_waiting_receiver() {
+  LOG("Starting channel destroy unblocks waiting receiver test");
+
+  auto ch = std::make_unique<channel<int>>();
+  bool receiver_completed = false;
+
+  co_await spawn_local(destroyed_channel_receiver(ch.get(), receiver_completed));
+  co_await sleep(10ms);
+
+  ASSERT(!receiver_completed);
+
+  std::thread destroyer([owned = std::move(ch)]() mutable {
+    owned.reset();
+  });
+  destroyer.join();
+
+  ASSERT(!receiver_completed);
+  co_await sleep(10ms);
+  ASSERT(receiver_completed);
+
+  LOG("Channel destroy unblocks waiting receiver test completed");
+}
+
+async<void> destroyed_channel_sender(channel<int>* ch, bool& send_result, bool& sender_completed) {
+  send_result = co_await ch->send(9);
+  sender_completed = true;
+}
+
+async<void> test_channel_destroy_unblocks_waiting_sender() {
+  LOG("Starting channel destroy unblocks waiting sender test");
+
+  auto ch = std::make_unique<channel<int>>();
+  bool send_result = true;
+  bool sender_completed = false;
+
+  co_await spawn_local(destroyed_channel_sender(ch.get(), send_result, sender_completed));
+  co_await sleep(10ms);
+
+  ASSERT(!sender_completed);
+
+  std::thread destroyer([owned = std::move(ch)]() mutable {
+    owned.reset();
+  });
+  destroyer.join();
+
+  ASSERT(!sender_completed);
+  co_await sleep(10ms);
+  ASSERT(sender_completed);
+  ASSERT(!send_result);
+
+  LOG("Channel destroy unblocks waiting sender test completed");
 }
 
 async<void> test_channel_drain_buffer_after_close() {
@@ -488,6 +549,12 @@ async<void> run_all_tests() {
 
   co_await test_channel_close_unblocks_waiting_sender();
   LOG("Channel close unblocks waiting sender test passed");
+
+  co_await test_channel_destroy_unblocks_waiting_receiver();
+  LOG("Channel destroy unblocks waiting receiver test passed");
+
+  co_await test_channel_destroy_unblocks_waiting_sender();
+  LOG("Channel destroy unblocks waiting sender test passed");
 
   co_await test_channel_drain_buffer_after_close();
   LOG("Channel drain buffer after close test passed");
