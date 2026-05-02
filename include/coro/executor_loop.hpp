@@ -49,14 +49,13 @@ class executor_loop : public executor_base {
         } else {
           if (delayed_task_queue_.empty()) {
             condition_.wait(lock, [this] {
-              return stop_.load(std::memory_order_acquire) || !task_queue_.empty() ||
-                     (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at <= std::chrono::steady_clock::now());
+              return stop_.load(std::memory_order_acquire) || !task_queue_.empty() || !delayed_task_queue_.empty();
             });
           } else {
             auto next_wakeup = delayed_task_queue_.top().execute_at;
-            condition_.wait_until(lock, next_wakeup, [this] {
+            condition_.wait_until(lock, next_wakeup, [this, next_wakeup] {
               return stop_.load(std::memory_order_acquire) || !task_queue_.empty() ||
-                     (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at <= std::chrono::steady_clock::now());
+                     (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at < next_wakeup);
             });
           }
 

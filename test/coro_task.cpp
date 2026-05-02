@@ -5,6 +5,8 @@
 // #define CORO_DEBUG_LEAK_LOG LOG
 // #define CORO_DEBUG_LIFECYCLE LOG
 
+#include <future>
+
 #include "TimeCount.hpp"
 #include "assert_def.h"
 #include "coro/coro.hpp"
@@ -145,8 +147,38 @@ void test_simple(executor& executor) {
   }(&executor));
 }
 
+void test_delayed_post_wakes_loop(bool existing_timer) {
+  executor_loop executor;
+  std::promise<void> started;
+  std::promise<void> completed;
+  auto completion = completed.get_future();
+  if (existing_timer) {
+    executor.post_delayed_ns([] {}, 1000000000);
+  }
+  executor.post([&] {
+    started.set_value();
+  });
+  std::thread worker([&] {
+    executor.run_loop();
+  });
+  started.get_future().wait();
+  // Allow the loop to enter its empty-queue or existing-deadline wait.
+  std::this_thread::sleep_for(20ms);
+  executor.post_delayed_ns(
+      [&] {
+        completed.set_value();
+      },
+      10000000);
+  bool completed_on_time = completion.wait_for(500ms) == std::future_status::ready;
+  executor.stop();
+  worker.join();
+  ASSERT(completed_on_time);
+}
+
 int main() {
   LOG("init");
+  test_delayed_post_wakes_loop(false);
+  test_delayed_post_wakes_loop(true);
 #ifdef CORO_EXECUTOR_LOOP
   executor_loop executor;
 #elif defined(CORO_EXECUTOR_POLL)
