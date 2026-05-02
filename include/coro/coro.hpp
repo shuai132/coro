@@ -493,14 +493,24 @@ void spawn(executor& executor, T&& coro) {
   coro.detach(executor);
 }
 
+namespace detail {
+
 template <typename T>
-[[nodiscard]] async<void> spawn_local(T&& awaitable) {
+async<void> spawn_local_impl(T awaitable) {
   auto* exec = co_await current_executor();
   if (exec) {
-    spawn(*exec, std::forward<T>(awaitable));
+    spawn(*exec, std::move(awaitable));
   } else {
-    co_await std::forward<T>(awaitable);
+    co_await std::move(awaitable);
   }
+}
+
+}  // namespace detail
+
+template <typename T>
+[[nodiscard]] async<void> spawn_local(T&& awaitable) {
+  // Transfer ownership before the lazy coroutine reaches initial_suspend.
+  return detail::spawn_local_impl(std::move(awaitable));
 }
 
 }  // namespace coro
