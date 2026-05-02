@@ -5,8 +5,10 @@
 // #define CORO_DEBUG_LEAK_LOG LOG
 // #define CORO_DEBUG_LIFECYCLE LOG
 
+#include <atomic>
 #include <future>
 #include <limits>
+#include <thread>
 
 #include "TimeCount.hpp"
 #include "assert_def.h"
@@ -190,8 +192,39 @@ void test_large_delayed_post() {
   }
 }
 
+void test_stop_wakes_idle_loop() {
+  for (int iteration = 0; iteration < 256; ++iteration) {
+    executor_loop executor;
+    std::atomic<bool> started{false};
+    std::atomic<bool> finished{false};
+    executor.post([&started] {
+      started.store(true, std::memory_order_release);
+    });
+    std::thread worker([&] {
+      executor.run_loop();
+      finished.store(true, std::memory_order_release);
+    });
+    while (!started.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    executor.stop();
+    auto deadline = std::chrono::steady_clock::now() + 500ms;
+    while (!finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::yield();
+    }
+    bool stopped_on_time = finished.load(std::memory_order_acquire);
+    if (!stopped_on_time) {
+      // A second notification lets a lost-wakeup failure join cleanly.
+      executor.stop();
+    }
+    worker.join();
+    ASSERT(stopped_on_time);
+  }
+}
+
 int main() {
   LOG("init");
+  test_stop_wakes_idle_loop();
   test_large_delayed_post();
   test_delayed_post_wakes_loop(false);
   test_delayed_post_wakes_loop(true);
