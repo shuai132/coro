@@ -53,7 +53,7 @@ struct coro_local {
   // Awaiter for getting the stored value
   struct get_awaiter {
     const coro_local* self_;
-    T result_{};
+    std::optional<T> result_{std::in_place};
 
     [[nodiscard]] bool await_ready() const noexcept {
       return false;
@@ -63,13 +63,13 @@ struct coro_local {
     bool await_suspend(std::coroutine_handle<Promise> h) {
       T* ptr = self_->find_in_storage(h.promise());
       if (ptr) {
-        result_ = *ptr;
+        result_.emplace(*ptr);
       }
       return false;  // Don't actually suspend
     }
 
     T await_resume() noexcept(std::is_nothrow_move_constructible_v<T>) {
-      return std::move(result_);
+      return std::move(*result_);
     }
   };
 
@@ -86,7 +86,7 @@ struct coro_local {
     bool await_suspend(std::coroutine_handle<Promise> h) {
       T* ptr = self_->find_in_storage(h.promise());
       if (ptr) {
-        result_ = *ptr;
+        result_.emplace(*ptr);
       }
       return false;
     }

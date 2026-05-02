@@ -337,6 +337,35 @@ async<void> coro_local_overwrite_test() {
   co_return;
 }
 
+struct nonassignable_local_value {
+  int value;
+
+  explicit nonassignable_local_value(int v = 0) : value(v) {}
+  nonassignable_local_value(const nonassignable_local_value&) = default;
+  nonassignable_local_value(nonassignable_local_value&&) = default;
+  nonassignable_local_value& operator=(const nonassignable_local_value&) = delete;
+  nonassignable_local_value& operator=(nonassignable_local_value&&) = delete;
+};
+
+async<void> coro_local_nonassignable_test() {
+  static coro_local<nonassignable_local_value> storage;
+  auto missing = co_await storage.get();
+  ASSERT(missing.value == 0);
+  auto missing_optional = co_await storage.get_optional();
+  ASSERT(!missing_optional);
+  co_await storage.set(42);
+  auto value = co_await storage.get();
+  ASSERT(value.value == 42);
+  auto optional = co_await storage.get_optional();
+  ASSERT(optional && optional->value == 42);
+  nonassignable_local_value replacement{53};
+  co_await storage.set(replacement);
+  auto updated = co_await storage.get();
+  ASSERT(updated.value == 53);
+  co_await storage.erase();
+  ASSERT(!(co_await storage.has()));
+}
+
 #ifndef CORO_DISABLE_EXCEPTION
 struct throwing_local_value {
   inline static int live = 0;
@@ -481,6 +510,7 @@ async<void> coro_local_exception_test() {
 
 async<void> run_all_tests() {
   co_await coro_local_basic_test();
+  co_await coro_local_nonassignable_test();
 #ifndef CORO_DISABLE_EXCEPTION
   co_await coro_local_exception_test();
   co_await coro_local_failed_set_test();
