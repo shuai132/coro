@@ -16,6 +16,7 @@ option(CORO_ENABLE_LOCAL_STORAGE "Enable coroutine local storage" OFF)
 
 add_library(${PROJECT_NAME} INTERFACE)
 target_include_directories(${PROJECT_NAME} INTERFACE include)
+target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_20)
 
 if (CORO_DISABLE_EXCEPTION)
     target_compile_definitions(${PROJECT_NAME} INTERFACE CORO_DISABLE_EXCEPTION)
