@@ -728,6 +728,7 @@ async<void> setter() {
 
 `event` is a manual-reset event: `set()` and `clear()` are idempotent state changes. `set()` releases all current waiters
 and lets future waiters pass until `clear()` is called.
+For suspended waiters associated with an executor, `set()` queues their continuation on that executor. A waiter without an executor resumes directly on the calling thread.
 
 ## Coroutine-Local Storage
 

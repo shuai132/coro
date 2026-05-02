@@ -13,7 +13,8 @@ namespace coro {
 // Coroutine-safe event synchronization primitive
 // The event allows one or more coroutines to wait for an event to be set before proceeding.
 //
-// When the event is set, all waiting coroutines are resumed on the thread that sets the event.
+// When the event is set, all waiting coroutines are posted to their associated executors.
+// A waiter without an executor is resumed directly on the thread that sets the event.
 // If the event is already set when a coroutine waits, it will simply continue executing
 // with no suspend or wait time incurred.
 //
