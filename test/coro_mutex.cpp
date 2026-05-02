@@ -109,6 +109,33 @@ async<void> mutex_basic_test() {
   LOG("Mutex finally unlocked: OK");
 }
 
+async<void> mutex_scheduled_waiter(coro::mutex& mtx, int& step) {
+  auto guard = co_await mtx.scoped_lock();
+  ASSERT(step == 1);
+  step = 2;
+  co_return;
+}
+
+async<void> mutex_unlock_schedules_waiter_test() {
+  LOG("Mutex unlock schedules waiter test: starting...");
+
+  coro::mutex mtx;
+  int step = 0;
+  auto guard = co_await mtx.scoped_lock();
+
+  co_await spawn_local(mutex_scheduled_waiter(mtx, step));
+  co_await sleep(1ms);
+
+  guard.unlock();
+  ASSERT(step == 0);
+
+  step = 1;
+  co_await sleep(1ms);
+  ASSERT(step == 2);
+
+  LOG("Mutex unlock schedules waiter test: OK");
+}
+
 async<void> mutex_race_condition_test() {
   coro::mutex mtx;
   int shared_counter = 0;
@@ -167,6 +194,11 @@ async<void> run_all_tests() {
     // Run race condition test
     co_await mutex_race_condition_test();
     LOG("Race condition test completed");
+  }
+
+  {
+    co_await mutex_unlock_schedules_waiter_test();
+    LOG("Unlock scheduling test completed");
   }
 
   {

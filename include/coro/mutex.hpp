@@ -147,7 +147,7 @@ struct mutex_t {
     auto next_handle = waiters_head->handle;
     auto next_exec = waiters_head->exec;
 
-    detail::resume_via(next_exec, next_handle);
+    detail::post_resume_via(next_exec, next_handle);
   }
 
  private:

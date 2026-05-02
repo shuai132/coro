@@ -150,6 +150,32 @@ async<void> binary_semaphore_test() {
   co_return;
 }
 
+async<void> semaphore_scheduled_waiter(counting_semaphore& sem, int& step) {
+  co_await sem.acquire();
+  ASSERT(step == 1);
+  step = 2;
+  co_return;
+}
+
+async<void> semaphore_release_schedules_waiter_test() {
+  LOG("=== Release Schedules Waiter Test ===");
+  counting_semaphore sem(0);
+  int step = 0;
+
+  co_await spawn_local(semaphore_scheduled_waiter(sem, step));
+  co_await sleep(1ms);
+
+  sem.release();
+  ASSERT(step == 0);
+
+  step = 1;
+  co_await sleep(1ms);
+  ASSERT(step == 2);
+
+  LOG("Release schedules waiter test: OK");
+  co_return;
+}
+
 // Test resource pooling
 async<void> semaphore_resource_pool_test() {
   LOG("=== Resource Pool Test ===");
@@ -194,6 +220,7 @@ async<void> run_all_tests() {
   co_await semaphore_basic_test();
   co_await semaphore_try_acquire_test();
   co_await binary_semaphore_test();
+  co_await semaphore_release_schedules_waiter_test();
   co_await semaphore_multiple_waiters_test();
   co_await semaphore_fifo_waiter_test();
   co_await semaphore_resource_pool_test();

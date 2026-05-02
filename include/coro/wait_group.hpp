@@ -70,7 +70,7 @@ struct wait_group_t {
         auto* next_exec = node->exec;
         waiter_node* next_node = node->next;
 
-        detail::resume_via(next_exec, next_handle);
+        detail::post_resume_via(next_exec, next_handle);
 
         node = next_node;
       }

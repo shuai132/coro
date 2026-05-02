@@ -161,7 +161,7 @@ struct condition_variable_t {
 
     // Resume the waiting coroutine outside the lock
     if (node) {
-      detail::resume_via(exec_to_use, handle_to_resume);
+      detail::post_resume_via(exec_to_use, handle_to_resume);
     }
   }
 
@@ -202,7 +202,7 @@ struct condition_variable_t {
       auto* next_exec = node->exec;
       waiter_node* next_node = node->next;
 
-      detail::resume_via(next_exec, next_handle);
+      detail::post_resume_via(next_exec, next_handle);
 
       node = next_node;
     }

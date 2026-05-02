@@ -20,4 +20,14 @@ inline void resume_via(executor* exec, std::coroutine_handle<> handle) {
   }
 }
 
+inline void post_resume_via(executor* exec, std::coroutine_handle<> handle) {
+  if (exec) {
+    exec->post([handle]() {
+      resume_handle(handle);
+    });
+  } else {
+    resume_handle(handle);
+  }
+}
+
 }  // namespace coro::detail

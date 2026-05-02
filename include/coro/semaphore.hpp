@@ -158,7 +158,7 @@ struct counting_semaphore_t {
     waiter_node* waiter = nodes_to_resume;
     while (waiter) {
       waiter_node* next = waiter->next;
-      detail::resume_via(waiter->exec, waiter->handle);
+      detail::post_resume_via(waiter->exec, waiter->handle);
       waiter = next;
     }
   }
