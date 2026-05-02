@@ -97,7 +97,7 @@ struct awaitable_promise_value {
   template <typename R>
   void return_value(R&& val) noexcept {
 #ifndef CORO_DISABLE_EXCEPTION
-    value_.template emplace<T>(std::forward<R>(val));
+    value_.template emplace<2>(std::forward<R>(val));
 #else
     value_.emplace(std::forward<R>(val));
 #endif
@@ -105,16 +105,16 @@ struct awaitable_promise_value {
 
   void unhandled_exception() noexcept {
 #ifndef CORO_DISABLE_EXCEPTION
-    value_.template emplace<std::exception_ptr>(std::current_exception());
+    value_.template emplace<1>(std::current_exception());
 #endif
   }
 
   T get_value() {
 #ifndef CORO_DISABLE_EXCEPTION
-    if (std::holds_alternative<std::exception_ptr>(value_)) {
-      std::rethrow_exception(std::get<std::exception_ptr>(value_));
+    if (value_.index() == 1) {
+      std::rethrow_exception(std::get<1>(value_));
     }
-    return std::move(std::get<T>(value_));
+    return std::move(std::get<2>(value_));
 #else
     return std::move(value_.value());
 #endif

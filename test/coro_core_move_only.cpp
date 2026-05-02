@@ -1,6 +1,8 @@
 #define CORO_DEBUG_PROMISE_LEAK
 
 #include <memory>
+#include <stdexcept>
+#include <string_view>
 #include <tuple>
 
 #include "assert_def.h"
@@ -85,12 +87,57 @@ async<void> consume_when_any_unique_value(int& result) {
   result = *value;
 }
 
+async<std::monostate> make_monostate_value() {
+  co_return std::monostate{};
+}
+
+async<void> consume_monostate_value() {
+  auto value = co_await make_monostate_value();
+  static_assert(std::is_same_v<decltype(value), std::monostate>);
+  auto combined = co_await when_any(make_monostate_value());
+  ASSERT(combined.index == 0);
+  ASSERT(combined.value.index() == 1);
+}
+
+#ifndef CORO_DISABLE_EXCEPTION
+async<std::exception_ptr> make_exception_ptr_value(bool failure) {
+  if (failure) {
+    throw std::runtime_error("task failure");
+  }
+  co_return std::make_exception_ptr(std::runtime_error("exception as value"));
+}
+
+async<void> consume_exception_ptr_value() {
+  auto value = co_await make_exception_ptr_value(false);
+  bool caught_value = false;
+  try {
+    std::rethrow_exception(value);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "exception as value");
+    caught_value = true;
+  }
+  ASSERT(caught_value);
+  bool caught_failure = false;
+  try {
+    co_await make_exception_ptr_value(true);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "task failure");
+    caught_failure = true;
+  }
+  ASSERT(caught_failure);
+}
+#endif
+
 async<void> run_all_tests(int& unique_result, int& when_all_sum, int& mixed_result, int& when_any_result) {
   co_await consume_unique_value(unique_result);
   co_await consume_when_all_move_only_values(when_all_sum);
   co_await consume_when_all_mixed_move_only_value(mixed_result);
   co_await consume_when_any_unique_value(when_any_result);
   co_await consume_when_all_tuple_values();
+  co_await consume_monostate_value();
+#ifndef CORO_DISABLE_EXCEPTION
+  co_await consume_exception_ptr_value();
+#endif
 }
 
 int main() {
