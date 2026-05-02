@@ -369,10 +369,16 @@ struct callback_awaiter_base {
   using callback_function_with_executor = std::function<void(executor*, std::function<void(T)>)>;
 
   T await_resume() noexcept {
-    return std::move(result_);
+    assert(result_.has_value());
+    return std::move(*result_);
   }
 
-  T result_;
+  template <typename U>
+  void set_result(U&& value) {
+    result_.emplace(std::forward<U>(value));
+  }
+
+  std::optional<T> result_;
 };
 
 template <>
@@ -422,12 +428,12 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
         } else {
           func([handle, this, executor](T value) {
             if (await_suspend_running_.load(std::memory_order_acquire)) {
-              this->result_ = std::move(value);
+              this->set_result(std::move(value));
               completed_inline_.store(true, std::memory_order_release);
               return;
             }
-            executor->dispatch([handle, this, value = std::move(value)]() mutable {
-              this->result_ = std::move(value);
+            this->set_result(std::move(value));
+            executor->dispatch([handle]() mutable {
               handle.resume();
             });
           });
@@ -448,12 +454,12 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
         } else {
           func(executor, [handle, this, executor](T value) {
             if (await_suspend_running_.load(std::memory_order_acquire)) {
-              this->result_ = std::move(value);
+              this->set_result(std::move(value));
               completed_inline_.store(true, std::memory_order_release);
               return;
             }
-            executor->dispatch([handle, this, value = std::move(value)]() mutable {
-              this->result_ = std::move(value);
+            this->set_result(std::move(value));
+            executor->dispatch([handle]() mutable {
               handle.resume();
             });
           });

@@ -54,6 +54,23 @@ cmake -S . -B build -DCORO_DISABLE_EXCEPTION=ON && cmake --build build
 
 **无测试框架** - 测试使用自定义 `ASSERT()` 宏和 `LOG()` 输出。测试通过的标志是退出码为 0。
 
+推荐在 `build` 或 `build_noexcept` 目录下用同一目标列表做全量验证：
+
+```bash
+tests=(
+  coro_task_verbose coro_task coro_core_lifetime coro_core_callback coro_core_move_only
+  coro_mutex coro_condition_variable coro_condition_variable_mt
+  coro_channel coro_broadcast coro_when
+  coro_wait_group coro_wait_group_mt coro_latch coro_event
+  coro_semaphore coro_semaphore_mt
+  coro_multi_thread coro_multi_thread_st coro_coro_local coro_asio_adaptor
+)
+
+for t in "${tests[@]}"; do
+  ./"$t"
+done
+```
+
 ## 测试驱动开发模式
 
 本项目默认采用 TDD/回归测试优先的开发方式。除纯文档、注释或机械格式化外，任何行为变更都应先补测试，再改实现。
@@ -62,8 +79,9 @@ cmake -S . -B build -DCORO_DISABLE_EXCEPTION=ON && cmake --build build
 2. **Green**：只做让失败用例通过所需的最小实现，不顺手重构无关模块。
 3. **Refactor**：确认测试通过后再清理命名、重复代码或内部结构，并重新运行受影响测试。
 4. **Regression**：修 bug 必须保留能复现该 bug 的测试，覆盖正常路径、边界路径和资源释放路径。协程组件优先覆盖：立即完成、挂起后恢复、关闭/取消、异常与 `CORO_DISABLE_EXCEPTION`、`_mt`/`_st` 变体。
-5. **Verification**：提交前至少运行修改点对应的单测；触及核心 `awaitable`、执行器、`when_*`、同步原语或公共头文件时，运行标准构建下的全部测试。影响异常路径时额外运行 `-DCORO_DISABLE_EXCEPTION=ON` 构建。
-6. **Leak check**：新增协程测试默认启用 `CORO_DEBUG_PROMISE_LEAK`，结束时调用 `check_coro_leak()`。
+5. **Callback APIs**：涉及 `callback_awaiter`、`sleep/delay` 或适配器时，测试需同时覆盖同步立即回调、异步 post 回调、executor-aware 重载、`void` 结果，以及 move-only/非默认构造结果。
+6. **Verification**：提交前至少运行修改点对应的单测；触及核心 `awaitable`、执行器、`when_*`、同步原语或公共头文件时，运行标准构建下的全部测试。影响异常路径时额外运行 `-DCORO_DISABLE_EXCEPTION=ON` 构建。
+7. **Leak check**：新增协程测试默认启用 `CORO_DEBUG_PROMISE_LEAK`，结束时调用 `check_coro_leak()`。
 
 ## 代码风格
 
