@@ -1,6 +1,9 @@
 /// config debug
 #define CORO_DEBUG_PROMISE_LEAK
 // #define CORO_DISABLE_EXCEPTION
+#include <array>
+#include <vector>
+
 #include "log.h"
 // #define CORO_DEBUG_LEAK_LOG LOG
 // #define CORO_DEBUG_LIFECYCLE LOG
@@ -210,6 +213,137 @@ async<void> test_channel_close() {
   LOG("Channel close test completed");
 }
 
+async<void> close_waiting_sender(channel<int>& ch, bool& send_result, bool& sender_completed) {
+  send_result = co_await ch.send(7);
+  sender_completed = true;
+}
+
+async<void> test_channel_close_unblocks_waiting_sender() {
+  LOG("Starting channel close unblocks waiting sender test");
+
+  channel<int> ch;
+  bool send_result = true;
+  bool sender_completed = false;
+
+  co_await spawn_local(close_waiting_sender(ch, send_result, sender_completed));
+  co_await sleep(10ms);
+
+  ASSERT(!sender_completed);
+  ch.close();
+  co_await sleep(10ms);
+
+  ASSERT(sender_completed);
+  ASSERT(!send_result);
+
+  bool immediate_send_result = co_await ch.send(8);
+  ASSERT(!immediate_send_result);
+
+  auto recv_result = co_await ch.recv();
+  ASSERT(!recv_result.has_value());
+
+  LOG("Channel close unblocks waiting sender test completed");
+}
+
+async<void> test_channel_drain_buffer_after_close() {
+  LOG("Starting channel drain buffer after close test");
+
+  channel<int> ch(2);
+
+  ASSERT(co_await ch.send(1));
+  ASSERT(co_await ch.send(2));
+  ASSERT(ch.size() == 2);
+  ASSERT(ch.full());
+
+  ch.close();
+  ASSERT(ch.is_closed());
+
+  auto first = co_await ch.recv();
+  ASSERT(first.has_value());
+  ASSERT(*first == 1);
+
+  auto second = co_await ch.recv();
+  ASSERT(second.has_value());
+  ASSERT(*second == 2);
+
+  auto closed = co_await ch.recv();
+  ASSERT(!closed.has_value());
+  ASSERT(ch.empty());
+
+  LOG("Channel drain buffer after close test completed");
+}
+
+async<void> queued_sender(channel<int>& ch, int value, int& waiting_count, bool& send_result) {
+  ++waiting_count;
+  send_result = co_await ch.send(value);
+}
+
+async<void> test_unbuffered_channel_fifo_senders() {
+  LOG("Starting unbuffered channel FIFO sender test");
+
+  channel<int> ch;
+  int waiting_count = 0;
+  std::array<bool, 3> send_results{false, false, false};
+
+  co_await spawn_local(queued_sender(ch, 1, waiting_count, send_results[0]));
+  co_await spawn_local(queued_sender(ch, 2, waiting_count, send_results[1]));
+  co_await spawn_local(queued_sender(ch, 3, waiting_count, send_results[2]));
+
+  ASSERT(waiting_count == 3);
+
+  auto first = co_await ch.recv();
+  auto second = co_await ch.recv();
+  auto third = co_await ch.recv();
+
+  ASSERT(first.has_value());
+  ASSERT(second.has_value());
+  ASSERT(third.has_value());
+  ASSERT(*first == 1);
+  ASSERT(*second == 2);
+  ASSERT(*third == 3);
+  ASSERT(send_results[0]);
+  ASSERT(send_results[1]);
+  ASSERT(send_results[2]);
+
+  LOG("Unbuffered channel FIFO sender test completed");
+}
+
+async<void> queued_receiver(channel<int>& ch, size_t index, int& waiting_count, std::array<int, 3>& received_values,
+                            std::array<bool, 3>& receiver_completed) {
+  ++waiting_count;
+  auto value = co_await ch.recv();
+  ASSERT(value.has_value());
+  received_values[index] = *value;
+  receiver_completed[index] = true;
+}
+
+async<void> test_unbuffered_channel_fifo_receivers() {
+  LOG("Starting unbuffered channel FIFO receiver test");
+
+  channel<int> ch;
+  int waiting_count = 0;
+  std::array<int, 3> received_values{0, 0, 0};
+  std::array<bool, 3> receiver_completed{false, false, false};
+
+  co_await spawn_local(queued_receiver(ch, 0, waiting_count, received_values, receiver_completed));
+  co_await spawn_local(queued_receiver(ch, 1, waiting_count, received_values, receiver_completed));
+  co_await spawn_local(queued_receiver(ch, 2, waiting_count, received_values, receiver_completed));
+
+  ASSERT(waiting_count == 3);
+
+  ASSERT(co_await ch.send(10));
+  ASSERT(co_await ch.send(20));
+  ASSERT(co_await ch.send(30));
+
+  ASSERT(receiver_completed[0]);
+  ASSERT(receiver_completed[1]);
+  ASSERT(receiver_completed[2]);
+  ASSERT(received_values[0] == 10);
+  ASSERT(received_values[1] == 20);
+  ASSERT(received_values[2] == 30);
+
+  LOG("Unbuffered channel FIFO receiver test completed");
+}
+
 // Test ping-pong pattern with channels
 async<void> test_ping_pong() {
   LOG("Starting ping-pong test");
@@ -351,6 +485,18 @@ async<void> run_all_tests() {
 
   co_await test_channel_close();
   LOG("Channel close test passed");
+
+  co_await test_channel_close_unblocks_waiting_sender();
+  LOG("Channel close unblocks waiting sender test passed");
+
+  co_await test_channel_drain_buffer_after_close();
+  LOG("Channel drain buffer after close test passed");
+
+  co_await test_unbuffered_channel_fifo_senders();
+  LOG("Unbuffered channel FIFO sender test passed");
+
+  co_await test_unbuffered_channel_fifo_receivers();
+  LOG("Unbuffered channel FIFO receiver test passed");
 
   co_await test_ping_pong();
   LOG("Ping-pong test passed");

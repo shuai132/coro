@@ -49,6 +49,10 @@ struct channel {
       if (ch_->recv_queue_head_ != nullptr) {
         auto* recv_awaiter = ch_->recv_queue_head_;
         ch_->recv_queue_head_ = recv_awaiter->next_;
+        if (ch_->recv_queue_head_ == nullptr) {
+          ch_->recv_queue_tail_ = nullptr;
+        }
+        recv_awaiter->next_ = nullptr;
 
         // Store the value in the receiver's pending value slot
         recv_awaiter->pending_value_ = std::move(value_);
@@ -78,8 +82,13 @@ struct channel {
       // No receiver available and buffer is full, wait in send queue
       exec_ = h.promise().executor_;
       handle_ = h;
-      next_ = ch_->send_queue_head_;
-      ch_->send_queue_head_ = this;
+      next_ = nullptr;
+      if (ch_->send_queue_tail_) {
+        ch_->send_queue_tail_->next_ = this;
+      } else {
+        ch_->send_queue_head_ = this;
+      }
+      ch_->send_queue_tail_ = this;
       return true;  // Suspend
     }
 
@@ -137,6 +146,7 @@ struct channel {
 
         // Clear the receiver queue as all have been notified
         ch_->recv_queue_head_ = nullptr;
+        ch_->recv_queue_tail_ = nullptr;
 
         return false;  // Don't suspend, broadcast is complete
       }
@@ -170,6 +180,7 @@ struct channel {
 
     bool await_ready() const noexcept {
       // Check if channel is closed and no data available without suspending
+      std::lock_guard<MUTEX> lock(ch_->mutex_);
       return ch_->closed_.load(std::memory_order_acquire) && ch_->buffer_.empty();
     }
 
@@ -192,6 +203,10 @@ struct channel {
       if (ch_->send_queue_head_ != nullptr) {
         auto* send_awaiter = ch_->send_queue_head_;
         ch_->send_queue_head_ = send_awaiter->next_;
+        if (ch_->send_queue_head_ == nullptr) {
+          ch_->send_queue_tail_ = nullptr;
+        }
+        send_awaiter->next_ = nullptr;
         // Store the value in our local pending value
         pending_value_ = std::move(send_awaiter->value_);
 
@@ -213,8 +228,13 @@ struct channel {
       // No data available, wait in recv queue with our own pending value storage
       handle_ = h;
       exec_ = h.promise().executor_;
-      this->next_ = ch_->recv_queue_head_;
-      ch_->recv_queue_head_ = this;
+      this->next_ = nullptr;
+      if (ch_->recv_queue_tail_) {
+        ch_->recv_queue_tail_->next_ = this;
+      } else {
+        ch_->recv_queue_head_ = this;
+      }
+      ch_->recv_queue_tail_ = this;
       return true;  // Suspend
     }
 
@@ -242,6 +262,10 @@ struct channel {
         if (ch_->send_queue_head_ != nullptr && ch_->buffer_.size() < ch_->capacity_) {
           auto* sender_awaiter = ch_->send_queue_head_;
           ch_->send_queue_head_ = sender_awaiter->next_;
+          if (ch_->send_queue_head_ == nullptr) {
+            ch_->send_queue_tail_ = nullptr;
+          }
+          sender_awaiter->next_ = nullptr;
           ch_->buffer_.push(std::move(sender_awaiter->value_));
 
           // Resume the sender since its value is now in the buffer
@@ -289,10 +313,12 @@ struct channel {
       // Take ownership of the entire linked list of senders
       senders_to_resume = send_queue_head_;
       send_queue_head_ = nullptr;  // Clear the head
+      send_queue_tail_ = nullptr;  // Clear the tail
 
       // Take ownership of the entire linked list of receivers
       receivers_to_resume = recv_queue_head_;
       recv_queue_head_ = nullptr;  // Clear the head
+      recv_queue_tail_ = nullptr;  // Clear the tail
     }
 
     // Wake up all waiting senders outside the lock
@@ -351,10 +377,12 @@ struct channel {
 
  private:
   size_t capacity_;
-  MUTEX mutex_;
+  mutable MUTEX mutex_;
   std::queue<T> buffer_;                       // For buffered channels
   send_awaitable* send_queue_head_ = nullptr;  // Head of waiting senders linked list
+  send_awaitable* send_queue_tail_ = nullptr;  // Tail of waiting senders linked list
   recv_awaitable* recv_queue_head_ = nullptr;  // Head of waiting receivers linked list
+  recv_awaitable* recv_queue_tail_ = nullptr;  // Tail of waiting receivers linked list
   std::atomic<bool> closed_{false};
 };
 

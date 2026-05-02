@@ -1,10 +1,14 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <coroutine>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <tuple>
+#include <type_traits>
+#include <utility>
 #include <variant>
 
 #include "coro/coro.hpp"
@@ -45,10 +49,23 @@ struct void_to_placeholder<void> {
 template <typename T>
 using void_to_placeholder_t = typename void_to_placeholder<T>::type;
 
+template <typename T>
+struct when_all_storage {
+  using type = std::optional<T>;
+};
+
+template <>
+struct when_all_storage<void> {
+  using type = void_placeholder;
+};
+
+template <typename T>
+using when_all_storage_t = typename when_all_storage<T>::type;
+
 // Storage for when_all results
 template <typename... Ts>
 struct when_all_state {
-  std::tuple<void_to_placeholder_t<Ts>...> results;
+  std::tuple<when_all_storage_t<Ts>...> results;
   std::atomic<size_t> completed_count{0};
   size_t total_count = sizeof...(Ts);
   std::coroutine_handle<> parent_handle;
@@ -81,7 +98,7 @@ struct when_all_state {
   template <size_t Index, typename T>
   void set_result(T&& value) {
     std::unique_lock<std::mutex> lock(mtx);
-    std::get<Index>(results) = std::forward<T>(value);
+    std::get<Index>(results).emplace(std::forward<T>(value));
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
     if (count == total_count) {
       if (parent_handle && parent_exec) {
@@ -140,7 +157,6 @@ struct when_all_init_state_awaiter {
   bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
     std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_exec = h.promise().executor_;
-    state_->parent_handle = h;
     return false;  // Don't actually suspend
   }
 
@@ -212,7 +228,8 @@ struct result_extractor {
       } else {
         // Found a non-void value
         if constexpr (CurrentNonVoidCount == TargetIndex) {
-          return std::get<CurrentIndex>(storage);
+          assert(std::get<CurrentIndex>(storage).has_value());
+          return std::move(*std::get<CurrentIndex>(storage));
         } else {
           return get_nth_non_void_recursive<TargetIndex, CurrentIndex + 1, CurrentNonVoidCount + 1>(storage);
         }
@@ -290,7 +307,8 @@ struct when_all_awaiter<State, ResultType, std::enable_if_t<!is_tuple<ResultType
       if constexpr (std::is_same_v<current_type, void_placeholder>) {
         return get_first_non_void_impl<Index + 1>(storage);
       } else {
-        return std::get<Index>(storage);
+        assert(std::get<Index>(storage).has_value());
+        return std::move(*std::get<Index>(storage));
       }
     }
   }
@@ -395,8 +413,8 @@ struct when_all_void_awaiter {
 };
 
 // Helper for expanding parameter pack
-template <size_t... Is, typename... Awaitables>
-awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_impl(std::index_sequence<Is...>, Awaitables&&... awaitables) {
+template <typename... Awaitables, size_t... Is>
+awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_impl(std::index_sequence<Is...>, Awaitables... awaitables) {
   using result_tuple = when_all_result_type_t<awaitable_result_t<Awaitables>...>;
   using state_type = when_all_state<awaitable_result_t<Awaitables>...>;
   auto state = std::make_shared<state_type>();
@@ -405,11 +423,11 @@ awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_im
   co_await when_all_init_state_awaiter<state_type>{state};
 
   // Launch all tasks
-  auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw&& aw) {
+  auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw& aw) {
     auto* exec = aw.get_executor() ? aw.get_executor() : parent_exec;
-    when_all_task<I>(std::forward<Aw>(aw), state).bind_executor(*exec).detach(*exec);
+    when_all_task<I>(std::move(aw), state).bind_executor(*exec).detach(*exec);
   };
-  (launch_task.template operator()<Is>(state->parent_exec, std::forward<Awaitables>(awaitables)), ...);
+  (launch_task.template operator()<Is>(state->parent_exec, awaitables), ...);
 
   // Wait for all to complete
   if constexpr (std::is_void_v<result_tuple>) {
@@ -424,7 +442,8 @@ awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_im
 // when_all: waits for all awaitables to complete and returns tuple of results
 template <typename... Awaitables>
 auto when_all(Awaitables&&... awaitables) {
-  return detail::when_all_impl(std::index_sequence_for<Awaitables...>{}, std::forward<Awaitables>(awaitables)...);
+  return detail::when_all_impl<std::decay_t<Awaitables>...>(std::index_sequence_for<std::decay_t<Awaitables>...>{},
+                                                            std::forward<Awaitables>(awaitables)...);
 }
 
 // ============================================================================
@@ -611,7 +630,6 @@ struct when_any_init_state_awaiter {
   bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
     std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_exec = h.promise().executor_;
-    state_->parent_handle = h;
     return false;  // Don't actually suspend
   }
 
@@ -677,8 +695,8 @@ struct when_any_awaiter : when_any_awaiter_impl<State, ResultType, all_void<Ts..
 };
 
 // Helper for expanding parameter pack
-template <size_t... Is, typename... Awaitables>
-awaitable<when_any_result<awaitable_result_t<Awaitables>...>> when_any_impl(std::index_sequence<Is...>, Awaitables&&... awaitables) {
+template <typename... Awaitables, size_t... Is>
+awaitable<when_any_result<awaitable_result_t<Awaitables>...>> when_any_impl(std::index_sequence<Is...>, Awaitables... awaitables) {
   using result_type = when_any_result<awaitable_result_t<Awaitables>...>;
   using state_type = when_any_state<awaitable_result_t<Awaitables>...>;
   auto state = std::make_shared<state_type>();
@@ -687,11 +705,11 @@ awaitable<when_any_result<awaitable_result_t<Awaitables>...>> when_any_impl(std:
   co_await when_any_init_state_awaiter<state_type>{state};
 
   // Launch all tasks
-  auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw&& aw) {
+  auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw& aw) {
     auto* exec = aw.get_executor() ? aw.get_executor() : parent_exec;
-    when_any_task<I>(std::forward<Aw>(aw), state).bind_executor(*exec).detach(*exec);
+    when_any_task<I>(std::move(aw), state).bind_executor(*exec).detach(*exec);
   };
-  (launch_task.template operator()<Is>(state->parent_exec, std::forward<Awaitables>(awaitables)), ...);
+  (launch_task.template operator()<Is>(state->parent_exec, awaitables), ...);
 
   // Wait for first to complete
   co_return co_await when_any_awaiter<state_type, result_type, awaitable_result_t<Awaitables>...>{state};
@@ -702,7 +720,8 @@ awaitable<when_any_result<awaitable_result_t<Awaitables>...>> when_any_impl(std:
 // when_any: returns as soon as any awaitable completes
 template <typename... Awaitables>
 auto when_any(Awaitables&&... awaitables) {
-  return detail::when_any_impl(std::index_sequence_for<Awaitables...>{}, std::forward<Awaitables>(awaitables)...);
+  return detail::when_any_impl<std::decay_t<Awaitables>...>(std::index_sequence_for<std::decay_t<Awaitables>...>{},
+                                                            std::forward<Awaitables>(awaitables)...);
 }
 
 }  // namespace coro

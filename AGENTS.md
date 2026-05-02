@@ -30,21 +30,40 @@ cmake -S . -B build -DCORO_DISABLE_EXCEPTION=ON && cmake --build build
 
 ```bash
 ./coro_task              # 核心异步任务测试
+./coro_task_verbose      # 带生命周期日志的任务测试
+./coro_core_lifetime     # 协程生命周期和泄漏回归测试
+./coro_core_callback     # callback_awaiter 同步/异步回调测试
+./coro_core_move_only    # move-only 返回值和组合器回归测试
 ./coro_mutex             # 互斥锁测试
 ./coro_channel           # 通道测试
 ./coro_when              # when_all/when_any 测试
 ./coro_semaphore         # 信号量测试
+./coro_semaphore_mt      # 信号量多线程测试
 ./coro_condition_variable    # 条件变量测试
+./coro_condition_variable_mt # 条件变量多线程测试
 ./coro_wait_group        # 等待组测试
+./coro_wait_group_mt     # 等待组多线程测试
 ./coro_latch             # 闩锁测试
 ./coro_event             # 事件测试
 ./coro_broadcast         # 通道广播测试
-./coro_task_verbose      # 带生命周期日志的任务测试
 ./coro_multi_thread      # 多线程测试
 ./coro_multi_thread_st   # 多线程测试（单线程模式）
+./coro_coro_local        # 协程本地存储测试（目标名保留当前 CMake 命名）
+./coro_asio_adaptor      # ASIO 适配器测试；无 ASIO 或禁用异常时为空占位测试
 ```
 
 **无测试框架** - 测试使用自定义 `ASSERT()` 宏和 `LOG()` 输出。测试通过的标志是退出码为 0。
+
+## 测试驱动开发模式
+
+本项目默认采用 TDD/回归测试优先的开发方式。除纯文档、注释或机械格式化外，任何行为变更都应先补测试，再改实现。
+
+1. **Red**：先在现有同类测试文件中添加最小失败用例；如果是新组件，先新增 `test/coro_<feature>.cpp` 并接入 CMake 和 CI。
+2. **Green**：只做让失败用例通过所需的最小实现，不顺手重构无关模块。
+3. **Refactor**：确认测试通过后再清理命名、重复代码或内部结构，并重新运行受影响测试。
+4. **Regression**：修 bug 必须保留能复现该 bug 的测试，覆盖正常路径、边界路径和资源释放路径。协程组件优先覆盖：立即完成、挂起后恢复、关闭/取消、异常与 `CORO_DISABLE_EXCEPTION`、`_mt`/`_st` 变体。
+5. **Verification**：提交前至少运行修改点对应的单测；触及核心 `awaitable`、执行器、`when_*`、同步原语或公共头文件时，运行标准构建下的全部测试。影响异常路径时额外运行 `-DCORO_DISABLE_EXCEPTION=ON` 构建。
+6. **Leak check**：新增协程测试默认启用 `CORO_DEBUG_PROMISE_LEAK`，结束时调用 `check_coro_leak()`。
 
 ## 代码风格
 
