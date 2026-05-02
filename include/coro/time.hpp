@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <type_traits>
 
 #include "coro.hpp"
@@ -13,9 +14,13 @@ using namespace std::chrono_literals;
 
 namespace detail {
 
-inline uint64_t scale_duration_remainder(uint64_t value, uint64_t numerator, uint64_t denominator) noexcept {
+inline uint64_t scale_duration_remainder(uint64_t value, uint64_t numerator, uint64_t denominator, uint64_t* remainder_out = nullptr) noexcept {
   if (value <= std::numeric_limits<uint64_t>::max() / numerator) {
-    return value * numerator / denominator;
+    auto product = value * numerator;
+    if (remainder_out) {
+      *remainder_out = product % denominator;
+    }
+    return product / denominator;
   }
   // Track the quotient and remainder separately when the product does not fit.
   uint64_t quotient = 0;
@@ -35,6 +40,9 @@ inline uint64_t scale_duration_remainder(uint64_t value, uint64_t numerator, uin
       }
     }
   }
+  if (remainder_out) {
+    *remainder_out = remainder;
+  }
   return quotient;
 }
 
@@ -44,21 +52,51 @@ uint64_t sleep_duration_ns(std::chrono::duration<REP, PERIOD> duration) {
   if (!(duration > duration.zero())) {
     return 0;
   }
+  constexpr auto divisor = std::gcd(PERIOD::den, std::nano::den);
+  constexpr auto factor = std::nano::den / divisor;
+  constexpr bool wide_ratio = PERIOD::num > std::numeric_limits<std::intmax_t>::max() / factor;
   if constexpr (std::is_integral_v<REP>) {
-    using scale = std::ratio_divide<PERIOD, std::nano>;
-    constexpr auto numerator = static_cast<uint64_t>(scale::num);
-    constexpr auto denominator = static_cast<uint64_t>(scale::den);
     auto count = static_cast<std::common_type_t<REP, uint64_t>>(duration.count());
-    auto whole = count / denominator;
-    if (whole > max_ns / numerator) {
-      return max_ns;
+    if constexpr (wide_ratio) {
+      // Split seconds and subsecond remainder without forming an overflowing ratio.
+      constexpr auto numerator = static_cast<uint64_t>(PERIOD::num);
+      constexpr auto denominator = static_cast<uint64_t>(PERIOD::den);
+      constexpr uint64_t ns_per_second = 1000000000;
+      constexpr auto max_seconds = max_ns / ns_per_second;
+      auto whole = count / denominator;
+      if (whole > max_seconds / numerator) {
+        return max_ns;
+      }
+      auto seconds = static_cast<uint64_t>(whole) * numerator;
+      uint64_t remainder;
+      auto fractional_seconds = scale_duration_remainder(static_cast<uint64_t>(count % denominator), numerator, denominator, &remainder);
+      if (fractional_seconds > max_seconds - seconds) {
+        return max_ns;
+      }
+      auto ns = (seconds + fractional_seconds) * ns_per_second;
+      auto fractional_ns = scale_duration_remainder(remainder, ns_per_second, denominator);
+      return fractional_ns > max_ns - ns ? max_ns : ns + fractional_ns;
+    } else {
+      using scale = std::ratio_divide<PERIOD, std::nano>;
+      constexpr auto numerator = static_cast<uint64_t>(scale::num);
+      constexpr auto denominator = static_cast<uint64_t>(scale::den);
+      auto whole = count / denominator;
+      if (whole > max_ns / numerator) {
+        return max_ns;
+      }
+      auto ns = static_cast<uint64_t>(whole) * numerator;
+      auto fractional = scale_duration_remainder(static_cast<uint64_t>(count % denominator), numerator, denominator);
+      return fractional > max_ns - ns ? max_ns : ns + fractional;
     }
-    auto ns = static_cast<uint64_t>(whole) * numerator;
-    auto fractional = scale_duration_remainder(static_cast<uint64_t>(count % denominator), numerator, denominator);
-    return fractional > max_ns - ns ? max_ns : ns + fractional;
   } else {
     using calculation_rep = std::common_type_t<REP, std::chrono::nanoseconds::rep, std::intmax_t>;
-    auto ns = std::chrono::duration_cast<std::chrono::duration<calculation_rep, std::nano>>(duration).count();
+    calculation_rep ns;
+    if constexpr (wide_ratio) {
+      constexpr auto numerator = static_cast<calculation_rep>(PERIOD::num) * static_cast<calculation_rep>(factor);
+      ns = static_cast<calculation_rep>(duration.count()) * numerator / static_cast<calculation_rep>(PERIOD::den / divisor);
+    } else {
+      ns = std::chrono::duration_cast<std::chrono::duration<calculation_rep, std::nano>>(duration).count();
+    }
     if (ns >= static_cast<calculation_rep>(max_ns)) {
       return max_ns;
     }

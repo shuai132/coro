@@ -113,6 +113,36 @@ async<void> await_sleep_durations(recording_timer_executor& exec, bool& complete
 }
 
 async<void> await_large_sleep_durations(recording_timer_executor& exec, bool& completed) {
+  constexpr auto period_limit = std::numeric_limits<std::intmax_t>::max();
+  using enormous_seconds = std::chrono::duration<int64_t, std::ratio<period_limit>>;
+  using below_seconds = std::chrono::duration<uint64_t, std::ratio<period_limit - 1, period_limit>>;
+  using above_seconds = std::chrono::duration<uint64_t, std::ratio<period_limit, period_limit - 1>>;
+  co_await sleep(enormous_seconds{0});
+  ASSERT(exec.last_delay == 0);
+  co_await sleep(enormous_seconds{-1});
+  ASSERT(exec.last_delay == 0);
+  co_await sleep(enormous_seconds{1});
+  ASSERT(exec.last_delay == static_cast<uint64_t>(std::chrono::nanoseconds::max().count()));
+  co_await sleep(below_seconds{1});
+  ASSERT(exec.last_delay == 999999999);
+  co_await sleep(below_seconds{2});
+  ASSERT(exec.last_delay == 1999999999);
+  co_await sleep(above_seconds{1});
+  ASSERT(exec.last_delay == 1000000000);
+  co_await sleep(above_seconds{2});
+  ASSERT(exec.last_delay == 2000000000);
+  co_await sleep(below_seconds{std::numeric_limits<uint64_t>::max()});
+  ASSERT(exec.last_delay == static_cast<uint64_t>(std::chrono::nanoseconds::max().count()));
+  co_await sleep(below_seconds{9223372036ULL});
+  ASSERT(exec.last_delay == 9223372035999999999ULL);
+  co_await sleep(below_seconds{9223372037ULL});
+  ASSERT(exec.last_delay == static_cast<uint64_t>(std::chrono::nanoseconds::max().count()));
+  co_await sleep(std::chrono::duration<uint64_t, std::ratio<period_limit, 1000000001>>{1});
+  ASSERT(exec.last_delay == 9223372027631403779ULL);
+  co_await sleep(std::chrono::duration<double, above_seconds::period>{0.5});
+  ASSERT(exec.last_delay == 500000000);
+  co_await sleep(std::chrono::duration<double, enormous_seconds::period>{1.0});
+  ASSERT(exec.last_delay == static_cast<uint64_t>(std::chrono::nanoseconds::max().count()));
   constexpr auto max_ns = static_cast<uint64_t>(std::chrono::nanoseconds::max().count());
   co_await sleep(std::chrono::seconds::max());
   ASSERT(exec.last_delay == max_ns);
