@@ -622,29 +622,41 @@ async<void> example() {
 The library also supports broadcast functionality, which sends a value to ALL waiting receivers simultaneously:
 
 ```cpp
+#include <iostream>
 #include "coro/channel.hpp"
+#include "coro/executor_poll.hpp"
 
-async<void> broadcast_example() {
-    channel<int> ch;  // Unbuffered channel for broadcast example
+using namespace coro;
 
-    // Multiple receivers waiting for data
-    auto receiver = [](channel<int>& ch, int id) -> async<void> {
-        auto val = co_await ch.recv();
-        if (val.has_value()) {
-            std::cout << "Receiver " << id << " got: " << *val << std::endl;
-        }
+async<void> receive_once(channel<int>& ch, int id) {
+    if (auto value = co_await ch.recv()) {
+        std::cout << "Receiver " << id << " got: " << *value << std::endl;
+    }
+}
+
+async<void> broadcast_once(channel<int>& ch) {
+    size_t notified = co_await ch.broadcast(42);
+    std::cout << "Broadcast notified " << notified << " receivers" << std::endl;
+}
+
+int main() {
+    executor_poll exec;
+    channel<int> ch;
+    int finished = 0;
+    auto on_finished = [&finished] {
+        ++finished;
     };
 
-    // Spawn multiple receivers
-    co_await spawn_local(receiver(ch, 1));
-    co_await spawn_local(receiver(ch, 2));
-    co_await spawn_local(receiver(ch, 3));
+    for (int id = 1; id <= 3; ++id) {
+        receive_once(ch, id).detach_with_callback(exec, on_finished);
+        exec.poll();  // Ensure this receiver reaches recv() before broadcasting.
+    }
 
-    // Broadcasting sends the value to ALL waiting receivers
-    size_t notified_count = co_await ch.broadcast(42);
-    std::cout << "Broadcast notified " << notified_count << " receivers" << std::endl;
-
-    // All 3 receivers will receive the value 42
+    broadcast_once(ch).detach_with_callback(exec, on_finished);
+    while (finished != 4) {
+        exec.poll();  // Keep the channel alive until all four tasks finish.
+    }
+    return 0;
 }
 ```
 

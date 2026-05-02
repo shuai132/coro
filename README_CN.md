@@ -602,29 +602,41 @@ async<void> example() {
 该库还支持广播功能，可以同时向所有等待的接收者发送值：
 
 ```cpp
+#include <iostream>
 #include "coro/channel.hpp"
+#include "coro/executor_poll.hpp"
 
-async<void> broadcast_example() {
-    channel<int> ch;  // 用于广播示例的无缓冲 channel
+using namespace coro;
 
-    // 多个接收者等待数据
-    auto receiver = [](channel<int>& ch, int id) -> async<void> {
-        auto val = co_await ch.recv();
-        if (val.has_value()) {
-            std::cout << "接收者 " << id << " 收到: " << *val << std::endl;
-        }
+async<void> receive_once(channel<int>& ch, int id) {
+    if (auto value = co_await ch.recv()) {
+        std::cout << "接收者 " << id << " 收到: " << *value << std::endl;
+    }
+}
+
+async<void> broadcast_once(channel<int>& ch) {
+    size_t notified = co_await ch.broadcast(42);
+    std::cout << "广播通知了 " << notified << " 个接收者" << std::endl;
+}
+
+int main() {
+    executor_poll exec;
+    channel<int> ch;
+    int finished = 0;
+    auto on_finished = [&finished] {
+        ++finished;
     };
 
-    // 启动多个接收者
-    co_await spawn_local(receiver(ch, 1));
-    co_await spawn_local(receiver(ch, 2));
-    co_await spawn_local(receiver(ch, 3));
+    for (int id = 1; id <= 3; ++id) {
+        receive_once(ch, id).detach_with_callback(exec, on_finished);
+        exec.poll();  // 确保此接收者已进入 recv()，再进行广播。
+    }
 
-    // 广播将值发送给所有等待的接收者
-    size_t notified_count = co_await ch.broadcast(42);
-    std::cout << "广播通知了 " << notified_count << " 个接收者" << std::endl;
-
-    // 所有 3 个接收者都将收到值 42
+    broadcast_once(ch).detach_with_callback(exec, on_finished);
+    while (finished != 4) {
+        exec.poll();  // 等待全部四个任务结束，再销毁 channel。
+    }
+    return 0;
 }
 ```
 
