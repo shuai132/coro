@@ -42,8 +42,9 @@
    - Move non-void values out of the promise in `get_value()`.
 
 4. Fix callback re-entry.
-   - Schedule callback completion with `post()` instead of inline-capable `dispatch()`.
-   - Keep result assignment immediately before resuming the suspended coroutine.
+   - Detect callback completion that happens before `await_suspend()` returns.
+   - Return `false` from `await_suspend()` for inline completion so the coroutine continues without re-entrant `resume()`.
+   - Keep asynchronous callback completion on the executor.
 
 5. Tighten no-exception callback overloads.
    - Avoid exposing `std::exception_ptr` callback parameters when `CORO_DISABLE_EXCEPTION` is defined.
@@ -71,10 +72,11 @@
   - Destroyed unstarted frames from `awaitable` destruction and move assignment.
   - Switched non-void result retrieval to move values out of promise storage.
   - Replaced the exception-enabled result variant initial state with `std::monostate`.
-  - Changed `callback_awaiter` completion scheduling from inline-capable `dispatch()` to `post()`.
+  - Prevented callback awaiter re-entry by returning `false` from `await_suspend()` when the callback completes inline.
+  - Kept asynchronous callback completion on `dispatch()` so executor-loop shutdown can still drain already-scheduled delayed work.
   - Removed the exception-handler overload from `with_callback()` and `detach_with_callback()` when `CORO_DISABLE_EXCEPTION` is defined.
 - Verified with the local CLT toolchain:
   - Full exception-enabled build passed.
   - Full exception-enabled test suite passed.
   - `CORO_DISABLE_EXCEPTION=ON` build passed.
-  - No-exception `coro_core_lifetime`, `coro_core_callback`, `coro_core_move_only`, and `coro_task` passed.
+  - Full no-exception test suite passed.

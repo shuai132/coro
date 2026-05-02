@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cassert>
 #include <coroutine>
 #ifndef CORO_DISABLE_EXCEPTION
@@ -383,28 +384,40 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
 
   explicit callback_awaiter(callback_function_no_executor callback) : callback_function_(std::move(callback)) {}
   explicit callback_awaiter(callback_function_with_executor callback) : callback_function_(std::move(callback)) {}
-  callback_awaiter(callback_awaiter&&) = default;
+  callback_awaiter(callback_awaiter&& other)
+      : detail::callback_awaiter_base<T>(std::move(other)), callback_function_(std::move(other.callback_function_)) {}
 
   [[nodiscard]] bool await_ready() const noexcept {
     return false;
   }
 
   template <typename Promise>
-  void await_suspend(std::coroutine_handle<Promise> handle) {
+  bool await_suspend(std::coroutine_handle<Promise> handle) {
     auto executor = handle.promise().executor_;
     assert(executor && "executor must be set before using callback_awaiter");
+    await_suspend_running_.store(true, std::memory_order_release);
+    completed_inline_.store(false, std::memory_order_release);
     switch (callback_function_.index()) {
       case 0: {
         auto& func = std::get<0>(callback_function_);
         if constexpr (std::is_void_v<T>) {
-          func([handle, executor]() {
-            executor->post([handle] {
+          func([handle, this, executor]() {
+            if (await_suspend_running_.load(std::memory_order_acquire)) {
+              completed_inline_.store(true, std::memory_order_release);
+              return;
+            }
+            executor->dispatch([handle] {
               handle.resume();
             });
           });
         } else {
           func([handle, this, executor](T value) {
-            executor->post([handle, this, value = std::move(value)]() mutable {
+            if (await_suspend_running_.load(std::memory_order_acquire)) {
+              this->result_ = std::move(value);
+              completed_inline_.store(true, std::memory_order_release);
+              return;
+            }
+            executor->dispatch([handle, this, value = std::move(value)]() mutable {
               this->result_ = std::move(value);
               handle.resume();
             });
@@ -414,14 +427,23 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
       case 1: {
         auto& func = std::get<1>(callback_function_);
         if constexpr (std::is_void_v<T>) {
-          func(executor, [handle, executor]() {
-            executor->post([handle] {
+          func(executor, [handle, this, executor]() {
+            if (await_suspend_running_.load(std::memory_order_acquire)) {
+              completed_inline_.store(true, std::memory_order_release);
+              return;
+            }
+            executor->dispatch([handle] {
               handle.resume();
             });
           });
         } else {
           func(executor, [handle, this, executor](T value) {
-            executor->post([handle, this, value = std::move(value)]() mutable {
+            if (await_suspend_running_.load(std::memory_order_acquire)) {
+              this->result_ = std::move(value);
+              completed_inline_.store(true, std::memory_order_release);
+              return;
+            }
+            executor->dispatch([handle, this, value = std::move(value)]() mutable {
               this->result_ = std::move(value);
               handle.resume();
             });
@@ -429,7 +451,13 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
         }
       } break;
     }
+    await_suspend_running_.store(false, std::memory_order_release);
+    return !completed_inline_.load(std::memory_order_acquire);
   }
+
+ private:
+  std::atomic<bool> await_suspend_running_{false};
+  std::atomic<bool> completed_inline_{false};
 };
 
 /// current_executor_awaiter
