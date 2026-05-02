@@ -33,9 +33,8 @@ struct handoff_value {
   handoff_value(const handoff_value&) = delete;
 
   handoff_value(handoff_value&& other) noexcept : state(other.state), generation(other.generation + 1) {
-    // The first move passes std::function's argument to its target; the second
-    // stores the callback result, after the callback has observed registration.
-    if (generation == 2) {
+    // Pause the move into result storage while registration is still active.
+    if (generation == 1) {
       state->moving_result.store(true, std::memory_order_release);
       while (!state->release_result.load(std::memory_order_acquire)) {
         std::this_thread::yield();
@@ -331,6 +330,7 @@ struct callback_storage_state {
   bool escaped = false;
   bool caught = false;
   bool fail_storage = true;
+  int fail_generation = 1;
 };
 
 struct throwing_storage_value {
@@ -343,8 +343,7 @@ struct throwing_storage_value {
 
   throwing_storage_value(const throwing_storage_value&) = delete;
   throwing_storage_value(throwing_storage_value&& other) : state(other.state), generation(other.generation + 1) {
-    // The callback's argument moves once into its target, then into result storage.
-    if (generation == 2 && state->fail_storage) {
+    if (generation == state->fail_generation && state->fail_storage) {
       throw std::runtime_error("callback result storage failed");
     }
     ++state->live;
@@ -390,9 +389,10 @@ async<void> await_throwing_callback_storage(executor& exec, callback_storage_sta
 }
 
 template <bool EXECUTOR_AWARE>
-void test_callback_storage_failure(bool asynchronous) {
+void test_callback_storage_failure(bool asynchronous, int fail_generation) {
   executor_poll exec;
   callback_storage_state state;
+  state.fail_generation = fail_generation;
   bool completed = false;
   {
     auto task = await_throwing_callback_storage<EXECUTOR_AWARE>(exec, state, asynchronous).bind_executor(exec);
@@ -527,8 +527,10 @@ int main() {
   test_large_sleep_duration_conversion();
 #ifndef CORO_DISABLE_EXCEPTION
   for (bool asynchronous : {false, true}) {
-    test_callback_storage_failure<false>(asynchronous);
-    test_callback_storage_failure<true>(asynchronous);
+    for (int fail_generation : {1, 2}) {
+      test_callback_storage_failure<false>(asynchronous, fail_generation);
+      test_callback_storage_failure<true>(asynchronous, fail_generation);
+    }
   }
 #endif
   test_concurrent_detach_completion();

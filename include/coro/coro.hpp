@@ -448,7 +448,7 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
             complete(handle, executor);
           });
         } else {
-          func([handle, this, executor](T value) {
+          func([handle, this, executor](T&& value) {
             this->set_result(std::move(value));
             complete(handle, executor);
           });
@@ -461,7 +461,7 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
             complete(handle, executor);
           });
         } else {
-          func(executor, [handle, this, executor](T value) {
+          func(executor, [handle, this, executor](T&& value) {
             this->set_result(std::move(value));
             complete(handle, executor);
           });
