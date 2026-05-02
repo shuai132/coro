@@ -6,6 +6,7 @@
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
+#include "coro/detail/thread_support.hpp"
 #include "coro/dummy_mutex.hpp"
 
 namespace coro {
@@ -23,7 +24,11 @@ namespace coro {
 // Template parameter MUTEX controls internal thread safety:
 //   - std::mutex: Thread-safe for multithreaded use (default)
 //   - dummy_mutex: No lock overhead for single-threaded use
+#if CORO_DETAIL_HAS_STD_MUTEX
 template <typename MUTEX = std::mutex>
+#else
+template <typename MUTEX>
+#endif
 struct event_t {
  private:
   struct waiter_node {
@@ -152,8 +157,10 @@ struct event_t {
 };
 
 // Type aliases for convenience
+#if CORO_DETAIL_HAS_STD_MUTEX
 using event = event_t<std::mutex>;
 using event_mt = event_t<std::mutex>;
+#endif
 using event_st = event_t<dummy_mutex>;
 
 }  // namespace coro

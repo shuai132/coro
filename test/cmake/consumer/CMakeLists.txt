@@ -19,3 +19,7 @@ target_include_directories(consumer PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../det
 
 enable_testing()
 add_test(NAME consumer_run COMMAND consumer)
+
+# Compile the portable component headers independently of the host test helpers.
+add_library(threadless_consumer OBJECT ../threadless.cpp)
+target_link_libraries(threadless_consumer PRIVATE coro)

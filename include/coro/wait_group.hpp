@@ -8,6 +8,7 @@
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
+#include "coro/detail/thread_support.hpp"
 #include "coro/dummy_mutex.hpp"
 
 namespace coro {
@@ -18,7 +19,11 @@ namespace coro {
 // Template parameter MUTEX controls internal thread safety:
 //   - std::mutex: Thread-safe for multithreaded use (default)
 //   - dummy_mutex: No lock overhead for single-threaded use
+#if CORO_DETAIL_HAS_STD_MUTEX
 template <typename MUTEX = std::mutex>
+#else
+template <typename MUTEX>
+#endif
 struct wait_group_t {
  private:
   // Intrusive list node for waiting coroutines
@@ -155,8 +160,10 @@ struct wait_group_t {
 };
 
 // Type aliases for convenience
+#if CORO_DETAIL_HAS_STD_MUTEX
 using wait_group = wait_group_t<std::mutex>;
 using wait_group_mt = wait_group_t<std::mutex>;
+#endif
 using wait_group_st = wait_group_t<dummy_mutex>;
 
 }  // namespace coro

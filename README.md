@@ -154,6 +154,12 @@ GCC 10 also requires `-fcoroutines`; the CMake `coro` target supplies this optio
 
 GCC 10.3 does not pass the coroutine regression suite: some lvalue awaiters fail to compile, and temporary aggregate awaiters can release shared ownership prematurely. Use a toolchain that passes the test suite; C++20 mode alone is insufficient to establish compatibility.
 
+On bare-metal standard libraries without `std::mutex`, include individual component headers (for example,
+`coro/channel.hpp`) and use `_st` aliases or supply an explicit mutex template argument. Native-mutex defaults and
+`_mt` aliases are unavailable on these toolchains. Provide a platform executor and define `CORO_DISABLE_EXCEPTION`
+when compiling without exceptions. The umbrella `coro.hpp`, bundled executors, `when_*`, and promise leak tracing
+currently require standard threading support.
+
 ## Installation
 
 ### Option 1: Direct Include

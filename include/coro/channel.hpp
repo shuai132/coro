@@ -10,11 +10,16 @@
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
+#include "coro/detail/thread_support.hpp"
 #include "coro/dummy_mutex.hpp"
 
 namespace coro {
 
+#if CORO_DETAIL_HAS_STD_MUTEX
 template <typename T, typename MUTEX = std::mutex>
+#else
+template <typename T, typename MUTEX>
+#endif
 struct channel {
   struct send_awaitable;
   struct broadcast_awaitable;
@@ -392,8 +397,10 @@ struct channel {
   std::shared_ptr<state> state_;
 };
 
+#if CORO_DETAIL_HAS_STD_MUTEX
 template <typename T>
 using channel_mt = channel<T, std::mutex>;
+#endif
 
 template <typename T>
 using channel_st = channel<T, dummy_mutex>;
@@ -402,8 +409,10 @@ using channel_st = channel<T, dummy_mutex>;
 template <typename T, typename M>
 using unbuffered_channel = channel<T, M>;
 
+#if CORO_DETAIL_HAS_STD_MUTEX
 template <typename T>
 using unbuffered_channel_mt = unbuffered_channel<T, std::mutex>;
+#endif
 
 template <typename T>
 using unbuffered_channel_st = unbuffered_channel<T, dummy_mutex>;

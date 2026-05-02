@@ -7,6 +7,7 @@
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
+#include "coro/detail/thread_support.hpp"
 #include "coro/dummy_mutex.hpp"
 
 namespace coro {
@@ -17,7 +18,11 @@ namespace coro {
 // Template parameter MUTEX controls internal thread safety:
 //   - std::mutex: Thread-safe for multithreaded use (default)
 //   - dummy_mutex: No lock overhead for single-threaded use
+#if CORO_DETAIL_HAS_STD_MUTEX
 template <typename MUTEX = std::mutex>
+#else
+template <typename MUTEX>
+#endif
 struct counting_semaphore_t {
  private:
   // Intrusive list node for waiting coroutines
@@ -183,7 +188,11 @@ struct counting_semaphore_t {
 };
 
 // Binary semaphore (special case with max value of 1)
+#if CORO_DETAIL_HAS_STD_MUTEX
 template <typename MUTEX = std::mutex>
+#else
+template <typename MUTEX>
+#endif
 struct binary_semaphore_t {
  public:
   explicit binary_semaphore_t(int desired) : sem_(desired, 1) {}
@@ -209,12 +218,16 @@ struct binary_semaphore_t {
 };
 
 // Type aliases for convenience
+#if CORO_DETAIL_HAS_STD_MUTEX
 using counting_semaphore = counting_semaphore_t<std::mutex>;
 using counting_semaphore_mt = counting_semaphore_t<std::mutex>;
+#endif
 using counting_semaphore_st = counting_semaphore_t<dummy_mutex>;
 
+#if CORO_DETAIL_HAS_STD_MUTEX
 using binary_semaphore = binary_semaphore_t<std::mutex>;
 using binary_semaphore_mt = binary_semaphore_t<std::mutex>;
+#endif
 using binary_semaphore_st = binary_semaphore_t<dummy_mutex>;
 
 }  // namespace coro

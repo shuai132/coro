@@ -4,6 +4,7 @@
 #include <mutex>
 
 #include "coro/coro.hpp"
+#include "coro/detail/thread_support.hpp"
 #include "coro/dummy_mutex.hpp"
 #include "coro/wait_group.hpp"
 
@@ -20,7 +21,11 @@ namespace coro {
 // Template parameter MUTEX controls internal thread safety:
 //   - std::mutex: Thread-safe for multithreaded use (default)
 //   - dummy_mutex: No lock overhead for single-threaded use
+#if CORO_DETAIL_HAS_STD_MUTEX
 template <typename MUTEX = std::mutex>
+#else
+template <typename MUTEX>
+#endif
 struct latch_t {
  public:
   // Construct a latch with the given count
@@ -81,8 +86,10 @@ struct latch_t {
 };
 
 // Type aliases for convenience
+#if CORO_DETAIL_HAS_STD_MUTEX
 using latch = latch_t<std::mutex>;
 using latch_mt = latch_t<std::mutex>;
+#endif
 using latch_st = latch_t<dummy_mutex>;
 
 }  // namespace coro

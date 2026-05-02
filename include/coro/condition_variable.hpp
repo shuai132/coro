@@ -7,6 +7,7 @@
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
+#include "coro/detail/thread_support.hpp"
 #include "coro/dummy_mutex.hpp"  // For dummy_mutex
 #include "coro/mutex.hpp"
 
@@ -19,7 +20,11 @@ namespace coro {
 // Template parameter MUTEX controls internal thread safety:
 //   - std::mutex: Thread-safe for multithreaded use (default)
 //   - dummy_mutex: No lock overhead for single-threaded use
+#if CORO_DETAIL_HAS_STD_MUTEX
 template <typename MUTEX = std::mutex>
+#else
+template <typename MUTEX>
+#endif
 struct condition_variable_t {
  private:
   // Intrusive list node for waiting coroutines
@@ -215,8 +220,10 @@ struct condition_variable_t {
 };
 
 // Type aliases for convenience
+#if CORO_DETAIL_HAS_STD_MUTEX
 using condition_variable = condition_variable_t<std::mutex>;
 using condition_variable_mt = condition_variable_t<std::mutex>;
+#endif
 using condition_variable_st = condition_variable_t<dummy_mutex>;
 
 }  // namespace coro
