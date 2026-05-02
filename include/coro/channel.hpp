@@ -56,7 +56,8 @@ struct channel {
 
     send_awaitable(std::shared_ptr<state> state, T value) : state_(std::move(state)), value_(std::move(value)) {}
 
-    bool await_ready() const noexcept {
+    bool await_ready() noexcept {
+      delivered_ = false;
       // Check if channel is closed without suspending
       return state_->closed_.load(std::memory_order_acquire);
     }
@@ -133,7 +134,8 @@ struct channel {
 
     broadcast_awaitable(std::shared_ptr<state> state, T value) : state_(std::move(state)), value_(std::move(value)) {}
 
-    bool await_ready() const noexcept {
+    bool await_ready() noexcept {
+      receivers_notified_ = 0;
       return state_->closed_.load(std::memory_order_acquire);
     }
 

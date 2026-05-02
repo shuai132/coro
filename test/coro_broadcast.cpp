@@ -9,6 +9,31 @@
 
 using namespace coro;
 
+template <typename CHANNEL>
+async<void> reused_broadcast_receiver(CHANNEL& ch, wait_group& receivers) {
+  auto value = co_await ch.recv();
+  ASSERT(value && *value == 42);
+  receivers.done();
+}
+
+template <typename CHANNEL>
+async<void> test_reused_broadcast_count() {
+  CHANNEL ch;
+  auto broadcast = ch.broadcast(42);
+  for (int count : {2, 0, 1}) {
+    wait_group receivers;
+    receivers.add(count);
+    for (int i = 0; i < count; ++i) {
+      co_await spawn_local(reused_broadcast_receiver(ch, receivers));
+    }
+    ASSERT((co_await broadcast) == static_cast<size_t>(count));
+    co_await receivers;
+  }
+  ch.close();
+  ASSERT((co_await broadcast) == 0);
+  ASSERT((co_await broadcast) == 0);
+}
+
 #ifndef CORO_DISABLE_EXCEPTION
 struct broadcast_copy_state {
   int copies = 0;
@@ -420,6 +445,8 @@ void run_multithread_tests() {
 }
 
 async<void> run_all_tests() {
+  co_await test_reused_broadcast_count<channel_mt<int>>();
+  co_await test_reused_broadcast_count<channel_st<int>>();
 #ifndef CORO_DISABLE_EXCEPTION
   co_await test_failed_broadcast_keeps_receivers<channel_mt<throwing_broadcast_value>>(false);
   co_await test_failed_broadcast_keeps_receivers<channel_st<throwing_broadcast_value>>(false);

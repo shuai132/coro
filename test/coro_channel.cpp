@@ -17,6 +17,37 @@
 
 using namespace coro;
 
+template <typename CHANNEL>
+async<void> reused_queued_sender(CHANNEL& ch, bool& completed) {
+  auto sending = ch.send(42);
+  ASSERT(co_await sending);
+  ASSERT(!(co_await sending));
+  completed = true;
+}
+
+template <typename CHANNEL>
+async<void> test_reused_send_results() {
+  {
+    CHANNEL ch(1);
+    auto sending = ch.send(42);
+    ASSERT(co_await sending);
+    ch.close();
+    ASSERT(!(co_await sending));
+    ASSERT(!(co_await sending));
+    auto value = co_await ch.recv();
+    ASSERT(value && *value == 42);
+    ASSERT(!(co_await ch.recv()));
+  }
+  {
+    CHANNEL ch(1);
+    bool completed = false;
+    co_await spawn_local(reused_queued_sender(ch, completed));
+    ASSERT(!completed);
+    ch.close();
+    ASSERT(completed);
+  }
+}
+
 uint64_t get_now_ms() {
   auto now = std::chrono::steady_clock::now();
   auto epoch = now.time_since_epoch();
@@ -662,6 +693,8 @@ async<void> test_multiple_producers_consumers() {
 }
 
 async<void> run_all_tests() {
+  co_await test_reused_send_results<channel_mt<int>>();
+  co_await test_reused_send_results<channel_st<int>>();
   co_await test_buffered_receive_reservation<channel_mt<int>>();
   co_await test_buffered_receive_reservation<channel_st<int>>();
 #ifndef CORO_DISABLE_EXCEPTION
