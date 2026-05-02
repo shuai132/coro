@@ -148,7 +148,23 @@ struct channel {
           return false;
         }
 
-        // Broadcast to ALL waiting receivers (not just one)
+        // Prepare every result before removing any waiter from the queue.
+#ifndef CORO_DISABLE_EXCEPTION
+        try {
+#endif
+          for (auto* receiver = state_->recv_queue_head_; receiver; receiver = receiver->next_) {
+            receiver->pending_value_.emplace(value_);
+            ++receivers_notified_;
+          }
+#ifndef CORO_DISABLE_EXCEPTION
+        } catch (...) {
+          for (auto* receiver = state_->recv_queue_head_; receiver; receiver = receiver->next_) {
+            receiver->pending_value_.reset();
+          }
+          receivers_notified_ = 0;
+          throw;
+        }
+#endif
         receivers_to_resume = state_->recv_queue_head_;
         state_->recv_queue_head_ = nullptr;
         state_->recv_queue_tail_ = nullptr;
@@ -156,10 +172,6 @@ struct channel {
 
       auto* recv_awaiter = receivers_to_resume;
       while (recv_awaiter != nullptr) {
-        // Copy the value to each receiver's pending value
-        recv_awaiter->pending_value_.emplace(value_);
-        receivers_notified_++;
-
         auto recv_handle = recv_awaiter->handle_;
         auto recv_exec = recv_awaiter->exec_;
         auto* next = recv_awaiter->next_;

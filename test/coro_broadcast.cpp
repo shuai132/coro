@@ -1,11 +1,88 @@
 /// Test for broadcast channel functionality
 #define CORO_DEBUG_PROMISE_LEAK
+#include <stdexcept>
+
 #include "assert_def.h"
 #include "coro.hpp"
 #include "log.h"
 #include "utils.hpp"
 
 using namespace coro;
+
+#ifndef CORO_DISABLE_EXCEPTION
+struct broadcast_copy_state {
+  int copies = 0;
+  int fail_copy = 2;
+  int live = 0;
+};
+
+struct throwing_broadcast_value {
+  broadcast_copy_state* state;
+  int value;
+
+  throwing_broadcast_value(broadcast_copy_state& copy_state, int v) : state(&copy_state), value(v) {
+    ++state->live;
+  }
+
+  throwing_broadcast_value(const throwing_broadcast_value& other) : state(other.state), value(other.value) {
+    if (++state->copies == state->fail_copy) {
+      throw std::runtime_error("broadcast copy failed");
+    }
+    ++state->live;
+  }
+
+  throwing_broadcast_value(throwing_broadcast_value&& other) noexcept : state(other.state), value(other.value) {
+    ++state->live;
+  }
+
+  ~throwing_broadcast_value() {
+    --state->live;
+  }
+};
+
+template <typename CHANNEL>
+async<void> failed_broadcast_receiver(CHANNEL& ch, bool expect_value, int& completed, wait_group& receivers) {
+  auto value = co_await ch.recv();
+  if (expect_value) {
+    ASSERT(value && value->value == 42);
+  } else {
+    ASSERT(!value);
+  }
+  ++completed;
+  receivers.done();
+}
+
+template <typename CHANNEL>
+async<void> test_failed_broadcast_keeps_receivers(bool retry) {
+  broadcast_copy_state state;
+  CHANNEL ch;
+  int completed = 0;
+  wait_group receivers;
+  receivers.add(3);
+  for (int i = 0; i < 3; ++i) {
+    co_await spawn_local(failed_broadcast_receiver(ch, retry, completed, receivers));
+  }
+  bool caught = false;
+  try {
+    co_await ch.broadcast(throwing_broadcast_value{state, 42});
+  } catch (const std::runtime_error&) {
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(completed == 0);
+  ASSERT(state.live == 0);
+  if (retry) {
+    state.fail_copy = -1;
+    auto notified = co_await ch.broadcast(throwing_broadcast_value{state, 42});
+    ASSERT(notified == 3);
+  } else {
+    ch.close();
+  }
+  co_await receivers.wait();
+  ASSERT(completed == 3);
+  ASSERT(state.live == 0);
+}
+#endif
 
 // Test basic broadcast to multiple receivers
 async<void> test_broadcast_multiple_receivers() {
@@ -343,6 +420,12 @@ void run_multithread_tests() {
 }
 
 async<void> run_all_tests() {
+#ifndef CORO_DISABLE_EXCEPTION
+  co_await test_failed_broadcast_keeps_receivers<channel_mt<throwing_broadcast_value>>(false);
+  co_await test_failed_broadcast_keeps_receivers<channel_st<throwing_broadcast_value>>(false);
+  co_await test_failed_broadcast_keeps_receivers<channel_mt<throwing_broadcast_value>>(true);
+  co_await test_failed_broadcast_keeps_receivers<channel_st<throwing_broadcast_value>>(true);
+#endif
   co_await test_broadcast_multiple_receivers();
   LOG("✓ Broadcast multiple receivers test passed\n");
 

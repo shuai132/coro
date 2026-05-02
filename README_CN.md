@@ -606,6 +606,8 @@ async<void> broadcast_example() {
 - `broadcast()` 返回被通知的接收者数量
 - 如果没有接收者在等待，`broadcast()` 会立即完成，不进行缓冲
 
+复制广播值抛出异常时，所有接收者仍保持等待，且不会收到部分广播；调用方可以重试或关闭通道。
+
 ### wait_group
 
 等待组，类似于 Go 的 `sync.WaitGroup`，用于协调多个协程。

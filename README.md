@@ -623,6 +623,8 @@ Broadcast differs from regular send in that:
 - `broadcast()` returns the number of receivers that were notified
 - If no receivers are waiting, `broadcast()` completes immediately without buffering
 
+If copying a broadcast value throws, all receivers remain queued and no value is delivered; the caller can retry or close the channel.
+
 ### wait_group
 
 A wait group, similar to Go's `sync.WaitGroup`, for coordinating multiple coroutines.
