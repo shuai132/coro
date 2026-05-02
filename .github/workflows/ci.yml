@@ -12,17 +12,27 @@ on:
 
 jobs:
   arm-threadless:
-    name: ARM bare-metal component headers
+    name: ARM bare-metal components (${{ matrix.cpu }})
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        cpu: [cortex-m0, cortex-m3]
     steps:
       - uses: actions/checkout@v4
       - name: Install ARM compiler and standard library headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libstdc++-arm-none-eabi-dev libnewlib-arm-none-eabi
       - name: Compile single-threaded components without exceptions or RTTI
         run: |
-          arm-none-eabi-g++ -std=c++20 -mcpu=cortex-m3 -mthumb \
+          arm-none-eabi-g++ -std=c++20 -mcpu=${{ matrix.cpu }} -mthumb \
             -fno-exceptions -fno-rtti -DCORO_DISABLE_EXCEPTION -DCORO_TEST_NO_NATIVE_MUTEX \
             -Iinclude -c test/cmake/threadless.cpp -o threadless.o
+      - name: Check single-threaded components need no atomic runtime helpers
+        run: |
+          arm-none-eabi-nm -u threadless.o > undefined-symbols.txt
+          if grep '__atomic_' undefined-symbols.txt; then
+            echo "Single-threaded components unexpectedly require an atomic runtime library"
+            exit 1
+          fi
 
   gcc10-cmake:
     name: GCC 10 CMake integration

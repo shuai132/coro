@@ -335,10 +335,11 @@ struct channel {
     {
       std::lock_guard<MUTEX> lock(state->mutex_);
 
-      bool expected = false;
-      if (!state->closed_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      if (state->closed_.load(std::memory_order_relaxed)) {
         return;  // Already closed
       }
+      // The mutex serializes closers; avoid an atomic read-modify-write dependency on small MCUs.
+      state->closed_.store(true, std::memory_order_release);
 
       // Take ownership of the entire linked list of senders
       senders_to_resume = state->send_queue_head_;
