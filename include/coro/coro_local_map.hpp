@@ -17,12 +17,11 @@ struct coro_local_map {
   // Look up a value by key, checking parent chain if not found locally
   template <typename T>
   T* find(const void* key) {
-    auto it = data.find(key);
-    if (it != data.end()) {
-      return std::any_cast<T>(&it->second);
-    }
-    if (parent) {
-      return parent->find<T>(key);
+    for (auto* storage = this; storage; storage = storage->parent.get()) {
+      auto it = storage->data.find(key);
+      if (it != storage->data.end()) {
+        return std::any_cast<T>(&it->second);
+      }
     }
     return nullptr;
   }
@@ -35,11 +34,10 @@ struct coro_local_map {
 
   // Check if key exists locally or in parent chain
   bool contains(const void* key) const {
-    if (data.count(key) > 0) {
-      return true;
-    }
-    if (parent) {
-      return parent->contains(key);
+    for (auto* storage = this; storage; storage = storage->parent.get()) {
+      if (storage->data.count(key) > 0) {
+        return true;
+      }
     }
     return false;
   }

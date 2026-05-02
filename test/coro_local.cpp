@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "coro.hpp"
 #include "detail/assert_def.h"
@@ -17,6 +18,31 @@ using namespace coro;
 static coro_local<int> int_storage;
 static coro_local<std::string> string_storage;
 static coro_local<double> double_storage;
+
+void test_deep_local_storage_lookup() {
+  using storage_map = detail::coro_local_map;
+  std::vector<std::shared_ptr<storage_map>> maps;
+  constexpr int depth = 200000;
+  maps.reserve(depth);
+  maps.push_back(std::make_shared<storage_map>());
+  int key = 0;
+  int missing_key = 0;
+  maps.front()->set<int>(&key, 42);
+  for (int index = 1; index < depth; ++index) {
+    auto map = std::make_shared<storage_map>();
+    map->parent = maps.back();
+    maps.push_back(std::move(map));
+  }
+  auto* value = maps.back()->find<int>(&key);
+  ASSERT(value && *value == 42);
+  ASSERT(!maps.back()->find<int>(&missing_key));
+  ASSERT(maps.back()->contains(&key));
+  ASSERT(!maps.back()->contains(&missing_key));
+  // Release links explicitly so cleanup itself does not recurse through shared_ptr.
+  for (auto& map : maps) {
+    map->parent.reset();
+  }
+}
 
 // Test 1: Basic set and get
 async<void> coro_local_basic_test() {
@@ -603,6 +629,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_deep_local_storage_lookup();
   LOG("Local Storage test init");
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {
