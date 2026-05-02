@@ -1,6 +1,9 @@
 /// Test for broadcast channel functionality
 #define CORO_DEBUG_PROMISE_LEAK
+#include <atomic>
 #include <stdexcept>
+#include <thread>
+#include <vector>
 
 #include "assert_def.h"
 #include "coro.hpp"
@@ -287,6 +290,14 @@ async<void> test_sequential_broadcasts() {
   LOG("Sequential broadcasts test completed successfully");
 }
 
+async<void> wait_for_broadcast_count(const std::atomic<int>& count, int expected) {
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (count.load(std::memory_order_acquire) != expected && std::chrono::steady_clock::now() < deadline) {
+    co_await sleep(1ms);
+  }
+  ASSERT(count.load(std::memory_order_acquire) == expected);
+}
+
 void run_multithread_tests() {
   LOG("=== Starting multi-threaded broadcast tests ===\n");
 
@@ -295,6 +306,7 @@ void run_multithread_tests() {
     LOG("Test 1: Broadcast across multiple threads");
     channel_mt<int> ch;
     std::atomic<int> receiver_count(0);
+    std::atomic<int> waiting_count(0);
 
     std::vector<executor_loop> executors(4);  // Pre-allocate: 3 receivers + 1 broadcaster
     std::vector<std::thread> threads;
@@ -303,7 +315,12 @@ void run_multithread_tests() {
     for (int i = 0; i < 3; i++) {
       auto& exec = executors[i];
 
-      auto receiver = [](channel_mt<int>& ch, std::atomic<int>& receiver_count, int id) -> async<void> {
+      auto receiver = [](channel_mt<int>& ch, std::atomic<int>& receiver_count, std::atomic<int>& waiting_count, int id) -> async<void> {
+        auto* exec = co_await current_executor();
+        // This marker runs after recv() has registered the waiter and suspended.
+        exec->post([&waiting_count] {
+          waiting_count.fetch_add(1, std::memory_order_release);
+        });
         LOG("Receiver %d: waiting", id);
         auto val_opt = co_await ch.recv();
         if (val_opt.has_value()) {
@@ -313,31 +330,33 @@ void run_multithread_tests() {
         co_return;
       };
 
-      receiver(ch, receiver_count, i + 1).detach(exec);
+      receiver(ch, receiver_count, waiting_count, i + 1).detach(exec);
     }
 
     // Now start threads for receiver executors
     threads.reserve(3);
     for (size_t i = 0; i < 3; i++) {
-      threads.emplace_back([&exec = executors[i]]() {
+      threads.emplace_back([&exec = executors[i], i]() {
+        if (i == 0) {
+          // Exercise a receiver that starts after the old fixed readiness delay.
+          std::this_thread::sleep_for(200ms);
+        }
         exec.run_loop();
       });
     }
 
-    // Wait for receivers to start
-    std::this_thread::sleep_for(100ms);
-
     // Use broadcaster executor
     auto& exec_broadcast = executors[3];
 
-    auto broadcaster = [](channel_mt<int>& ch, std::vector<executor_loop>& executors) -> async<void> {
+    auto broadcaster = [](channel_mt<int>& ch, std::vector<executor_loop>& executors, std::atomic<int>& waiting_count,
+                          std::atomic<int>& receiver_count) -> async<void> {
+      co_await wait_for_broadcast_count(waiting_count, 3);
       LOG("Broadcasting 999");
       size_t count = co_await ch.broadcast(999);
       LOG("Broadcast notified %zu receivers", count);
       ASSERT(count == 3);
 
-      // Give time for receivers to process
-      co_await sleep(100ms);
+      co_await wait_for_broadcast_count(receiver_count, 3);
 
       // Stop all executors
       for (auto& exec : executors) {
@@ -346,7 +365,7 @@ void run_multithread_tests() {
       co_return;
     };
 
-    broadcaster(ch, executors).detach_with_callback(exec_broadcast, [&exec_broadcast]() {
+    broadcaster(ch, executors, waiting_count, receiver_count).detach_with_callback(exec_broadcast, [&exec_broadcast]() {
       exec_broadcast.stop();
     });
 
@@ -368,6 +387,7 @@ void run_multithread_tests() {
     LOG("Test 2: Multiple broadcasts across threads");
     channel_mt<int> ch;
     std::atomic<int> total_received(0);
+    std::atomic<int> waiting_count(0);
 
     std::vector<executor_loop> executors(3);  // Pre-allocate: 2 receivers + 1 broadcaster
     std::vector<std::thread> threads;
@@ -376,8 +396,16 @@ void run_multithread_tests() {
     for (int i = 0; i < 2; i++) {
       auto& exec = executors[i];
 
-      auto receiver = [](channel_mt<int>& ch, std::atomic<int>& total_received, int id) -> async<void> {
+      auto receiver = [](channel_mt<int>& ch, std::atomic<int>& total_received, std::atomic<int>& waiting_count, int id) -> async<void> {
+        auto* exec = co_await current_executor();
         for (int j = 0; j < 3; j++) {
+          if (id == 1 && j > 0) {
+            // A slow receiver must register again before the next broadcast.
+            co_await sleep(75ms);
+          }
+          exec->post([&waiting_count] {
+            waiting_count.fetch_add(1, std::memory_order_release);
+          });
           auto val_opt = co_await ch.recv();
           if (val_opt.has_value()) {
             total_received.fetch_add(1);
@@ -387,7 +415,7 @@ void run_multithread_tests() {
         co_return;
       };
 
-      receiver(ch, total_received, i + 1).detach(exec);
+      receiver(ch, total_received, waiting_count, i + 1).detach(exec);
     }
 
     // Now start threads for receiver executors
@@ -398,24 +426,22 @@ void run_multithread_tests() {
       });
     }
 
-    // Wait for receivers to start
-    std::this_thread::sleep_for(100ms);
-
     // Use broadcaster executor
     auto& exec_broadcast = executors[2];
 
-    auto broadcaster = [](channel_mt<int>& ch, std::vector<executor_loop>& executors) -> async<void> {
+    auto broadcaster = [](channel_mt<int>& ch, std::vector<executor_loop>& executors, std::atomic<int>& waiting_count,
+                          std::atomic<int>& total_received) -> async<void> {
       // Send 3 broadcasts
       for (int i = 0; i < 3; i++) {
+        co_await wait_for_broadcast_count(waiting_count, (i + 1) * 2);
         int value = (i + 1) * 100;
         LOG("Broadcasting %d", value);
         size_t count = co_await ch.broadcast(value);
         LOG("Broadcast %d notified %zu receivers", i, count);
-        co_await sleep(50ms);
+        ASSERT(count == 2);
       }
 
-      // Give time for receivers to process
-      co_await sleep(100ms);
+      co_await wait_for_broadcast_count(total_received, 6);
 
       // Stop all executors
       for (auto& exec : executors) {
@@ -424,7 +450,7 @@ void run_multithread_tests() {
       co_return;
     };
 
-    broadcaster(ch, executors).detach_with_callback(exec_broadcast, [&exec_broadcast]() {
+    broadcaster(ch, executors, waiting_count, total_received).detach_with_callback(exec_broadcast, [&exec_broadcast]() {
       exec_broadcast.stop();
     });
 
