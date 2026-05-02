@@ -158,6 +158,7 @@ target_link_libraries(your_target coro)
 `async<T>` 的 `co_return` 同时支持表达式和列表初始化，包括只能移动的聚合返回值。
 
 ```cpp
+#include <iostream>
 #include "coro/coro.hpp"
 #include "coro/time.hpp"
 #include "coro/executor_loop.hpp"
@@ -179,9 +180,10 @@ async<void> process() {
 int main() {
     executor_loop executor;
 
-    // 在指定执行器上启动协程
-    spawn(executor, process());
-    // 或者: process().detach(executor);
+    // 启动任务，并在任务完成时停止事件循环
+    process().detach_with_callback(executor, [&executor] {
+        executor.stop();
+    });
 
     // 运行事件循环
     executor.run_loop();

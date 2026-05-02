@@ -174,6 +174,7 @@ target_link_libraries(your_target coro)
 `async<T>` supports both expressions and braced initialization in `co_return`, including move-only aggregate results.
 
 ```cpp
+#include <iostream>
 #include "coro/coro.hpp"
 #include "coro/time.hpp"
 #include "coro/executor_loop.hpp"
@@ -195,9 +196,10 @@ async<void> process() {
 int main() {
     executor_loop executor;
 
-    // Launch coroutine on specific executor
-    spawn(executor, process());
-    // Or: process().detach(executor);
+    // Launch the task and stop the event loop when it finishes
+    process().detach_with_callback(executor, [&executor] {
+        executor.stop();
+    });
     
     // Run event loop
     executor.run_loop();
