@@ -3,6 +3,7 @@
 // #define CORO_DISABLE_EXCEPTION
 
 #include <atomic>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 
@@ -13,6 +14,52 @@
 #include "utils.hpp"
 
 using namespace coro;
+
+// Hold the winning result's move constructor open while the parent checks readiness.
+struct publication_value {
+  std::atomic<bool>* entered;
+  std::atomic<bool>* release;
+  int value;
+
+  publication_value(std::atomic<bool>& entered_flag, std::atomic<bool>& release_flag, int v)
+      : entered(&entered_flag), release(&release_flag), value(v) {}
+
+  publication_value(publication_value&& other) noexcept : entered(other.entered), release(other.release), value(other.value) {
+    entered->store(true, std::memory_order_release);
+    while (!release->load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+  }
+
+  publication_value(const publication_value&) = delete;
+};
+
+void test_when_any_result_publication() {
+  using state_type = detail::when_any_state<int, publication_value>;
+  using result_type = detail::when_any_result<int, publication_value>;
+  auto state = std::make_shared<state_type>();
+  detail::when_any_awaiter<state_type, result_type, int, publication_value> waiter{state};
+  std::atomic<bool> entered{false};
+  std::atomic<bool> release{false};
+  publication_value value{entered, release, 42};
+
+  std::thread writer([&] {
+    state->template set_result<1>(std::move(value));
+  });
+  while (!entered.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  bool ready_before_result = waiter.await_ready();
+  release.store(true, std::memory_order_release);
+  writer.join();
+
+  ASSERT(!ready_before_result);
+  ASSERT(waiter.await_ready());
+  auto result = waiter.await_resume();
+  ASSERT(result.index == 1);
+  ASSERT(result.template get<1>().value == 42);
+  LOG("when_any result publication test: PASSED");
+}
 
 // Test task that returns a value after a delay
 async<int> delayed_value_task(int value, int delay_ms) {
@@ -515,6 +562,7 @@ async<void> run_all_tests() {
 
 int main() {
   LOG("when_all/when_any test init");
+  test_when_any_result_publication();
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {
     executor.stop();

@@ -463,10 +463,11 @@ struct when_any_state_impl {
 
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
-    bool expected = false;
-    if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-      std::unique_lock<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lock(mtx);
+    if (!completed.load(std::memory_order_relaxed)) {
       exception = ex;
+      // Publish completion only after the result or exception is fully initialized.
+      completed.store(true, std::memory_order_release);
       if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
@@ -477,11 +478,12 @@ struct when_any_state_impl {
 
   template <size_t Index, typename T>
   void set_result(T&& value) {
-    bool expected = false;
-    if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-      std::unique_lock<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lock(mtx);
+    if (!completed.load(std::memory_order_relaxed)) {
       completed_index = Index;
       result.template emplace<Index + 1>(std::forward<T>(value));
+      // Publish completion only after the result or exception is fully initialized.
+      completed.store(true, std::memory_order_release);
       if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
@@ -491,12 +493,13 @@ struct when_any_state_impl {
 
   template <size_t Index>
   void set_completed_at() {
-    bool expected = false;
-    if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-      std::unique_lock<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lock(mtx);
+    if (!completed.load(std::memory_order_relaxed)) {
       completed_index = Index;
       // Store void_placeholder for void tasks
       result.template emplace<Index + 1>(void_placeholder{});
+      // Publish completion only after the result or exception is fully initialized.
+      completed.store(true, std::memory_order_release);
       if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
@@ -519,10 +522,11 @@ struct when_any_state_impl<true, Ts...> {
 
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
-    bool expected = false;
-    if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-      std::unique_lock<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lock(mtx);
+    if (!completed.load(std::memory_order_relaxed)) {
       exception = ex;
+      // Publish completion only after the result or exception is fully initialized.
+      completed.store(true, std::memory_order_release);
       if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
@@ -533,10 +537,11 @@ struct when_any_state_impl<true, Ts...> {
 
   template <size_t Index>
   void set_completed_at() {
-    bool expected = false;
-    if (completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-      std::unique_lock<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lock(mtx);
+    if (!completed.load(std::memory_order_relaxed)) {
       completed_index = Index;
+      // Publish completion only after the result or exception is fully initialized.
+      completed.store(true, std::memory_order_release);
       if (parent_handle) {
         lock.unlock();
         detail::resume_via(parent_exec, parent_handle);
