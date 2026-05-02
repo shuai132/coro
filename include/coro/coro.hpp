@@ -13,6 +13,7 @@
 #include <utility>
 #include <variant>
 
+#include "coro/detail/async_debug.hpp"
 #include "coro/detail/resume.hpp"
 #include "executor.hpp"
 
@@ -213,7 +214,12 @@ struct final_awaitable {
 
 template <typename T>
 struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
+#ifdef CORO_DEBUG_ASYNC_STACK
+  awaitable<T> get_return_object(std::source_location location = std::source_location::current());
+  detail::async_debug_node debug_node_;
+#else
   awaitable<T> get_return_object();
+#endif
 
   std::suspend_always initial_suspend() {
 #ifndef CORO_DISABLE_EXCEPTION
@@ -231,6 +237,9 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
   }
 
   final_awaitable<T> final_suspend() noexcept {
+#ifdef CORO_DEBUG_ASYNC_STACK
+    debug_node_.complete();
+#endif
     CORO_DEBUG_LIFECYCLE("promise: final_suspend: p: %p, p.h: %p", this, parent_handle_.address());
     return final_awaitable<T>{this};
   }
@@ -321,6 +330,13 @@ struct awaitable {
     }
 #endif
     current_coro_handle_.promise().parent_handle_ = h;
+#ifdef CORO_DEBUG_ASYNC_STACK
+    if constexpr (requires { h.promise().debug_node_.id_; }) {
+      current_coro_handle_.promise().debug_node_.set_parent(h.promise().debug_node_.id_);
+    } else {
+      current_coro_handle_.promise().debug_node_.set_parent(0, h.address());
+    }
+#endif
     current_coro_handle_.promise().parent_executor_ = h.promise().executor_;
     auto* child_exec = current_coro_handle_.promise().executor_;
     if (child_exec && child_exec != h.promise().executor_) {
@@ -412,8 +428,15 @@ struct awaitable {
 };
 
 template <typename T>
+#ifdef CORO_DEBUG_ASYNC_STACK
+awaitable<T> awaitable_promise<T>::get_return_object(std::source_location location) {
+#else
 awaitable<T> awaitable_promise<T>::get_return_object() {
+#endif
   auto handle = std::coroutine_handle<awaitable_promise<T>>::from_promise(*this);
+#ifdef CORO_DEBUG_ASYNC_STACK
+  debug_node_.register_frame(handle.address(), location);
+#endif
   CORO_DEBUG_LIFECYCLE("promise: get_return_object: p: %p, h: %p", this, handle.address());
   return awaitable<T>{handle};
 }

@@ -1,0 +1,94 @@
+#pragma once
+
+#ifdef CORO_DEBUG_ASYNC_STACK
+#include <atomic>
+#include <cstdint>
+#include <mutex>
+#include <source_location>
+
+namespace coro::detail {
+
+struct async_debug_node;
+
+// Plain fields form the debugger interface; scripts read them only with all threads stopped.
+struct async_debug_registry {
+  inline static std::mutex mutex_;
+  inline static async_debug_node* head_ = nullptr;
+  inline static std::uint64_t next_id_ = 0;
+  inline static volatile bool updating_ = false;
+};
+
+struct async_debug_guard {
+  std::lock_guard<std::mutex> lock_{async_debug_registry::mutex_};
+
+  async_debug_guard() noexcept {
+    async_debug_registry::updating_ = true;
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+  }
+  ~async_debug_guard() {
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+    async_debug_registry::updating_ = false;
+  }
+};
+
+struct async_debug_node {
+  async_debug_node* next_ = nullptr;
+  async_debug_node* prev_ = nullptr;
+  void* frame_ = nullptr;
+  std::uint64_t id_ = 0;
+  std::uint64_t parent_id_ = 0;
+  void* external_parent_ = nullptr;
+  const char* function_ = "";
+  const char* file_ = "";
+  std::uint_least32_t line_ = 0;
+  bool completed_ = false;
+
+  async_debug_node() = default;
+  async_debug_node(const async_debug_node&) = delete;
+  async_debug_node& operator=(const async_debug_node&) = delete;
+
+  void register_frame(void* frame, std::source_location location) noexcept {
+    async_debug_guard lock;
+    frame_ = frame;
+    id_ = ++async_debug_registry::next_id_;
+    function_ = location.function_name();
+    file_ = location.file_name();
+    line_ = location.line();
+    next_ = async_debug_registry::head_;
+    if (next_) {
+      next_->prev_ = this;
+    }
+    async_debug_registry::head_ = this;
+  }
+
+  void set_parent(std::uint64_t id, void* external = nullptr) noexcept {
+    async_debug_guard lock;
+    parent_id_ = id;
+    external_parent_ = external;
+  }
+
+  void complete() noexcept {
+    async_debug_guard lock;
+    completed_ = true;
+    parent_id_ = 0;
+    external_parent_ = nullptr;
+  }
+
+  ~async_debug_node() {
+    if (!frame_) {
+      return;
+    }
+    async_debug_guard lock;
+    if (prev_) {
+      prev_->next_ = next_;
+    } else {
+      async_debug_registry::head_ = next_;
+    }
+    if (next_) {
+      next_->prev_ = prev_;
+    }
+  }
+};
+
+}  // namespace coro::detail
+#endif

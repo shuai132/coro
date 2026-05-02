@@ -165,6 +165,12 @@ jobs:
         run: |
           ./coro_core_lifetime${{ matrix.env.BIN_SUFFIX }}
 
+      - name: Test debug
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_debug${{ matrix.env.BIN_SUFFIX }}
+
       - name: Test core_callback
         if: always()
         working-directory: build

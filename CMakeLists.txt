@@ -13,6 +13,7 @@ endif ()
 
 option(CORO_DISABLE_EXCEPTION "Disable C++ exceptions" OFF)
 option(CORO_ENABLE_LOCAL_STORAGE "Enable coroutine local storage" OFF)
+option(CORO_DEBUG_ASYNC_STACK "Enable asynchronous debugger metadata" OFF)
 
 add_library(${PROJECT_NAME} INTERFACE)
 target_include_directories(${PROJECT_NAME} INTERFACE include)
@@ -24,6 +25,10 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         # GCC 10 does not enable coroutines with -std=c++20 alone.
         target_compile_options(${PROJECT_NAME} INTERFACE "$<$<COMPILE_LANGUAGE:CXX>:-fcoroutines>")
     endif ()
+endif ()
+
+if (CORO_DEBUG_ASYNC_STACK)
+    target_compile_definitions(${PROJECT_NAME} INTERFACE CORO_DEBUG_ASYNC_STACK)
 endif ()
 
 if (CORO_DISABLE_EXCEPTION)
@@ -97,6 +102,11 @@ if (CORO_BUILD_TEST)
         target_compile_options(${TARGET_NAME} PRIVATE -fcoro-aligned-allocation)
         target_compile_definitions(${TARGET_NAME} PRIVATE CORO_TEST_ALIGNED_COROUTINE_ALLOCATION)
     endif ()
+
+    # test asynchronous debugger metadata
+    set(TARGET_NAME ${PROJECT_NAME}_debug)
+    add_executable(${TARGET_NAME} test/coro_debug.cpp)
+    target_compile_definitions(${TARGET_NAME} PRIVATE CORO_DEBUG_ASYNC_STACK)
 
     # test core callback
     set(TARGET_NAME ${PROJECT_NAME}_core_callback)

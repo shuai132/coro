@@ -71,6 +71,9 @@ struct when_all_state {
   size_t total_count = sizeof...(Ts);
   std::coroutine_handle<> parent_handle;
   executor* parent_exec = nullptr;
+#ifdef CORO_DEBUG_ASYNC_STACK
+  std::uint64_t debug_parent_id_ = 0;
+#endif
   mutable std::mutex mtx;  // Mutex to protect shared state access
 #ifndef CORO_DISABLE_EXCEPTION
   std::atomic<bool> exception_set{false};
@@ -171,6 +174,9 @@ struct when_all_init_state_awaiter {
   bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
     std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_exec = h.promise().executor_;
+#ifdef CORO_DEBUG_ASYNC_STACK
+    state_->debug_parent_id_ = h.promise().debug_node_.id_;
+#endif
     return false;  // Don't actually suspend
   }
 
@@ -436,7 +442,11 @@ awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_im
   auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw& aw) {
     auto* exec = aw.get_executor() ? aw.get_executor() : parent_exec;
     assert(exec && "when_all requires an executor unless every child awaitable is already bound to one");
-    when_all_task<I>(std::move(aw), state).bind_executor(*exec).detach(*exec);
+    auto task = when_all_task<I>(std::move(aw), state);
+#ifdef CORO_DEBUG_ASYNC_STACK
+    task.current_coro_handle_.promise().debug_node_.set_parent(state->debug_parent_id_);
+#endif
+    task.bind_executor(*exec).detach(*exec);
   };
   (launch_task.template operator()<Is>(state->parent_exec, awaitables), ...);
 
@@ -472,6 +482,9 @@ struct when_any_state_impl {
   bool claimed = false;
   std::coroutine_handle<> parent_handle;
   executor* parent_exec = nullptr;
+#ifdef CORO_DEBUG_ASYNC_STACK
+  std::uint64_t debug_parent_id_ = 0;
+#endif
   mutable std::mutex mtx;  // Mutex to protect shared state access
 #ifndef CORO_DISABLE_EXCEPTION
   std::exception_ptr exception;  // Add exception support
@@ -553,6 +566,9 @@ struct when_any_state_impl<true, Ts...> {
   std::atomic<bool> completed{false};
   std::coroutine_handle<> parent_handle;
   executor* parent_exec = nullptr;
+#ifdef CORO_DEBUG_ASYNC_STACK
+  std::uint64_t debug_parent_id_ = 0;
+#endif
   mutable std::mutex mtx;  // Mutex to protect shared state access
 #ifndef CORO_DISABLE_EXCEPTION
   std::exception_ptr exception;  // Add exception support
@@ -666,6 +682,9 @@ struct when_any_init_state_awaiter {
   bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
     std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_exec = h.promise().executor_;
+#ifdef CORO_DEBUG_ASYNC_STACK
+    state_->debug_parent_id_ = h.promise().debug_node_.id_;
+#endif
     return false;  // Don't actually suspend
   }
 
@@ -745,7 +764,11 @@ awaitable<when_any_result<awaitable_result_t<Awaitables>...>> when_any_impl(std:
   auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw& aw) {
     auto* exec = aw.get_executor() ? aw.get_executor() : parent_exec;
     assert(exec && "when_any requires an executor unless every child awaitable is already bound to one");
-    when_any_task<I>(std::move(aw), state).bind_executor(*exec).detach(*exec);
+    auto task = when_any_task<I>(std::move(aw), state);
+#ifdef CORO_DEBUG_ASYNC_STACK
+    task.current_coro_handle_.promise().debug_node_.set_parent(state->debug_parent_id_);
+#endif
+    task.bind_executor(*exec).detach(*exec);
   };
   (launch_task.template operator()<Is>(state->parent_exec, awaitables), ...);
 
