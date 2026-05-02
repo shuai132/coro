@@ -26,3 +26,17 @@ add_test(NAME consumer_run COMMAND consumer)
 # Compile the portable component headers independently of the host test helpers.
 add_library(threadless_consumer OBJECT ../threadless.cpp)
 target_link_libraries(threadless_consumer PRIVATE coro)
+
+# The public macro can disable propagation even when the consumer still enables C++ exceptions.
+add_executable(noexcept_failure_consumer noexcept_failure.cpp)
+target_link_libraries(noexcept_failure_consumer PRIVATE coro)
+target_include_directories(noexcept_failure_consumer PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../detail")
+target_compile_definitions(noexcept_failure_consumer PRIVATE CORO_DISABLE_EXCEPTION)
+if (MSVC)
+    target_compile_options(noexcept_failure_consumer PRIVATE /EHsc)
+else ()
+    target_compile_options(noexcept_failure_consumer PRIVATE -fexceptions)
+endif ()
+foreach (mode normal void value)
+    add_test(NAME noexcept_failure_${mode} COMMAND noexcept_failure_consumer ${mode})
+endforeach ()

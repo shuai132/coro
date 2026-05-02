@@ -1142,6 +1142,9 @@ Or via CMake:
 add_definitions(-DCORO_DISABLE_EXCEPTION)
 ```
 
+The macro disables coroutine exception propagation; it does not change the compiler's exception flags. If compiler
+exceptions remain enabled, an exception escaping a coroutine body calls `std::terminate()` instead of reporting successful completion.
+
 ### Debug Coroutine Leaks
 
 Logging hooks run on the calling thread and may be invoked concurrently; use a thread-safe logger. Leak counts are snapshots taken when each event is recorded.

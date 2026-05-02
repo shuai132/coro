@@ -3,9 +3,7 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
-#ifndef CORO_DISABLE_EXCEPTION
 #include <exception>
-#endif
 #include <functional>
 #include <memory>
 #include <optional>
@@ -132,6 +130,8 @@ struct awaitable_promise_value {
   void unhandled_exception() noexcept {
 #ifndef CORO_DISABLE_EXCEPTION
     value_.template emplace<1>(std::current_exception());
+#else
+    std::terminate();
 #endif
   }
 
@@ -160,6 +160,8 @@ struct awaitable_promise_value<void> {
   void unhandled_exception() noexcept {
 #ifndef CORO_DISABLE_EXCEPTION
     exception_ = std::current_exception();
+#else
+    std::terminate();
 #endif
   }
 
