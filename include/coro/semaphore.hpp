@@ -6,6 +6,7 @@
 #include <mutex>
 
 #include "coro/coro.hpp"
+#include "coro/detail/resume.hpp"
 #include "coro/dummy_mutex.hpp"
 
 namespace coro {
@@ -157,13 +158,7 @@ struct counting_semaphore_t {
     waiter_node* waiter = nodes_to_resume;
     while (waiter) {
       waiter_node* next = waiter->next;
-      if (waiter->exec) {
-        waiter->exec->dispatch([handle = waiter->handle]() {
-          handle.resume();
-        });
-      } else {
-        waiter->handle.resume();
-      }
+      detail::resume_via(waiter->exec, waiter->handle);
       waiter = next;
     }
   }

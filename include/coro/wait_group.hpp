@@ -7,6 +7,7 @@
 #include <mutex>
 
 #include "coro/coro.hpp"
+#include "coro/detail/resume.hpp"
 #include "coro/dummy_mutex.hpp"
 
 namespace coro {
@@ -69,13 +70,7 @@ struct wait_group_t {
         auto* next_exec = node->exec;
         waiter_node* next_node = node->next;
 
-        if (next_exec) {
-          next_exec->dispatch([next_handle]() {
-            next_handle.resume();
-          });
-        } else {
-          next_handle.resume();
-        }
+        detail::resume_via(next_exec, next_handle);
 
         node = next_node;
       }

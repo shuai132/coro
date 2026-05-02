@@ -7,6 +7,7 @@
 #include <queue>
 
 #include "coro/coro.hpp"
+#include "coro/detail/resume.hpp"
 #include "coro/dummy_mutex.hpp"
 
 namespace coro {
@@ -60,13 +61,7 @@ struct channel {
         // Resume receiver immediately with the value
         auto recv_handle = recv_awaiter->handle_;
         lock.unlock();
-        if (recv_awaiter->exec_) {
-          recv_awaiter->exec_->dispatch([recv_handle]() {
-            recv_handle.resume();
-          });
-        } else {
-          recv_handle.resume();
-        }
+        detail::resume_via(recv_awaiter->exec_, recv_handle);
 
         // Return false to continue execution without suspension
         return false;
@@ -213,13 +208,7 @@ struct channel {
         // Resume sender immediately so it can continue
         auto send_handle = send_awaiter->handle_;
         lock.unlock();
-        if (send_awaiter->exec_) {
-          send_awaiter->exec_->dispatch([send_handle]() {
-            send_handle.resume();
-          });
-        } else {
-          send_handle.resume();
-        }
+        detail::resume_via(send_awaiter->exec_, send_handle);
 
         // Return false to continue execution without suspension
         return false;
@@ -271,13 +260,7 @@ struct channel {
           // Resume the sender since its value is now in the buffer
           auto sender_h = sender_awaiter->handle_;
           lock.unlock();
-          if (sender_awaiter->exec_) {
-            sender_awaiter->exec_->dispatch([sender_h]() {
-              sender_h.resume();
-            });
-          } else {
-            sender_h.resume();
-          }
+          detail::resume_via(sender_awaiter->exec_, sender_h);
         }
 
         return result;
@@ -328,13 +311,7 @@ struct channel {
       auto exec = send_current->exec_;
       auto* next = send_current->next_;
       send_current->next_ = nullptr;  // Clear the link for safety
-      if (exec) {
-        exec->dispatch([h]() {
-          h.resume();
-        });
-      } else {
-        h.resume();
-      }
+      detail::resume_via(exec, h);
       send_current = next;
     }
 
@@ -345,13 +322,7 @@ struct channel {
       auto exec = recv_current->exec_;
       auto* next = recv_current->next_;
       recv_current->next_ = nullptr;  // Clear the link for safety
-      if (exec) {
-        exec->dispatch([h]() {
-          h.resume();
-        });
-      } else {
-        h.resume();
-      }
+      detail::resume_via(exec, h);
       recv_current = next;
     }
   }

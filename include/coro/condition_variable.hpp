@@ -6,6 +6,7 @@
 #include <mutex>
 
 #include "coro/coro.hpp"
+#include "coro/detail/resume.hpp"
 #include "coro/dummy_mutex.hpp"  // For dummy_mutex
 #include "coro/mutex.hpp"
 
@@ -160,13 +161,7 @@ struct condition_variable_t {
 
     // Resume the waiting coroutine outside the lock
     if (node) {
-      if (exec_to_use) {
-        exec_to_use->dispatch([handle_to_resume]() {
-          handle_to_resume.resume();
-        });
-      } else {
-        handle_to_resume.resume();
-      }
+      detail::resume_via(exec_to_use, handle_to_resume);
     }
   }
 
@@ -207,13 +202,7 @@ struct condition_variable_t {
       auto* next_exec = node->exec;
       waiter_node* next_node = node->next;
 
-      if (next_exec) {
-        next_exec->dispatch([next_handle]() {
-          next_handle.resume();
-        });
-      } else {
-        next_handle.resume();
-      }
+      detail::resume_via(next_exec, next_handle);
 
       node = next_node;
     }

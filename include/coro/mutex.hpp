@@ -13,6 +13,7 @@
 #include <coroutine>
 
 #include "coro/coro.hpp"
+#include "coro/detail/resume.hpp"
 
 namespace coro {
 
@@ -146,13 +147,7 @@ struct mutex_t {
     auto next_handle = waiters_head->handle;
     auto next_exec = waiters_head->exec;
 
-    if (next_exec) {
-      next_exec->dispatch([next_handle]() {
-        next_handle.resume();
-      });
-    } else {
-      next_handle.resume();
-    }
+    detail::resume_via(next_exec, next_handle);
   }
 
  private:

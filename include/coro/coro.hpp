@@ -13,6 +13,7 @@
 #include <utility>
 #include <variant>
 
+#include "coro/detail/resume.hpp"
 #include "executor.hpp"
 
 #ifdef CORO_ENABLE_LOCAL_STORAGE
@@ -421,9 +422,7 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
               completed_inline_.store(true, std::memory_order_release);
               return;
             }
-            executor->dispatch([handle] {
-              handle.resume();
-            });
+            detail::resume_via(executor, handle);
           });
         } else {
           func([handle, this, executor](T value) {
@@ -433,9 +432,7 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
               return;
             }
             this->set_result(std::move(value));
-            executor->dispatch([handle]() mutable {
-              handle.resume();
-            });
+            detail::resume_via(executor, handle);
           });
         }
       } break;
@@ -447,9 +444,7 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
               completed_inline_.store(true, std::memory_order_release);
               return;
             }
-            executor->dispatch([handle] {
-              handle.resume();
-            });
+            detail::resume_via(executor, handle);
           });
         } else {
           func(executor, [handle, this, executor](T value) {
@@ -459,9 +454,7 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
               return;
             }
             this->set_result(std::move(value));
-            executor->dispatch([handle]() mutable {
-              handle.resume();
-            });
+            detail::resume_via(executor, handle);
           });
         }
       } break;

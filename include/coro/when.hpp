@@ -12,6 +12,7 @@
 #include <variant>
 
 #include "coro/coro.hpp"
+#include "coro/detail/resume.hpp"
 
 namespace coro {
 
@@ -87,9 +88,7 @@ struct when_all_state {
     if (count == total_count) {
       if (parent_handle && parent_exec) {
         lock.unlock();
-        parent_exec->dispatch([h = parent_handle]() {
-          h.resume();
-        });
+        detail::resume_via(parent_exec, parent_handle);
       }
     }
   }
@@ -103,9 +102,7 @@ struct when_all_state {
     if (count == total_count) {
       if (parent_handle && parent_exec) {
         lock.unlock();
-        parent_exec->dispatch([h = parent_handle]() {
-          h.resume();
-        });
+        detail::resume_via(parent_exec, parent_handle);
       }
     }
   }
@@ -116,9 +113,7 @@ struct when_all_state {
     if (count == total_count) {
       if (parent_handle && parent_exec) {
         lock.unlock();
-        parent_exec->dispatch([h = parent_handle]() {
-          h.resume();
-        });
+        detail::resume_via(parent_exec, parent_handle);
       }
     }
   }
@@ -473,9 +468,7 @@ struct when_any_state_impl {
       exception = ex;
       if (parent_handle && parent_exec) {
         lock.unlock();
-        parent_exec->dispatch([h = parent_handle]() {
-          h.resume();
-        });
+        detail::resume_via(parent_exec, parent_handle);
       }
     }
   }
@@ -490,9 +483,7 @@ struct when_any_state_impl {
       result.template emplace<Index + 1>(std::forward<T>(value));
       if (parent_handle && parent_exec) {
         lock.unlock();
-        parent_exec->dispatch([h = parent_handle]() {
-          h.resume();
-        });
+        detail::resume_via(parent_exec, parent_handle);
       }
     }
   }
@@ -507,9 +498,7 @@ struct when_any_state_impl {
       result.template emplace<Index + 1>(void_placeholder{});
       if (parent_handle && parent_exec) {
         lock.unlock();
-        parent_exec->dispatch([h = parent_handle]() {
-          h.resume();
-        });
+        detail::resume_via(parent_exec, parent_handle);
       }
     }
   }
@@ -535,9 +524,7 @@ struct when_any_state_impl<true, Ts...> {
       exception = ex;
       if (parent_handle && parent_exec) {
         lock.unlock();
-        parent_exec->dispatch([h = parent_handle]() {
-          h.resume();
-        });
+        detail::resume_via(parent_exec, parent_handle);
       }
     }
   }
@@ -551,9 +538,7 @@ struct when_any_state_impl<true, Ts...> {
       completed_index = Index;
       if (parent_handle && parent_exec) {
         lock.unlock();
-        parent_exec->dispatch([h = parent_handle]() {
-          h.resume();
-        });
+        detail::resume_via(parent_exec, parent_handle);
       }
     }
   }
