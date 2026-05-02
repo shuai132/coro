@@ -2,6 +2,8 @@
 #define CORO_DEBUG_PROMISE_LEAK
 // #define CORO_DISABLE_EXCEPTION
 
+#include <atomic>
+
 #include "TimeCount.hpp"
 #include "assert_def.h"
 #include "coro.hpp"
@@ -23,6 +25,24 @@ async<void> delayed_void_task(const char* name, int delay_ms) {
   LOG("Task %s: starting, will complete after %d ms", name, delay_ms);
   co_await sleep(std::chrono::milliseconds(delay_ms));
   LOG("Task %s: completed", name);
+}
+
+async<int> immediate_value_task(int value) {
+  LOG("Immediate task %d: completed", value);
+  co_return value;
+}
+
+async<void> immediate_void_task(int& marker, int bit) {
+  marker |= bit;
+  LOG("Immediate void task: marker=%d", marker);
+  co_return;
+}
+
+async<int> delayed_counter_task(std::atomic<int>& counter, int value, int delay_ms) {
+  co_await sleep(std::chrono::milliseconds(delay_ms));
+  counter.fetch_add(value, std::memory_order_relaxed);
+  LOG("Counter task %d: completed", value);
+  co_return value;
 }
 
 // Test when_all with multiple tasks returning values
@@ -170,6 +190,51 @@ async<void> test_when_any_mixed_types() {
 #endif
 
   LOG("when_any mixed types test: PASSED");
+}
+
+async<void> test_when_all_immediate_completion() {
+  LOG("=== Testing when_all with immediately-completed tasks ===");
+
+  int marker = 0;
+  auto results = co_await when_all(immediate_value_task(10), immediate_void_task(marker, 1), immediate_value_task(20));
+  auto [r1, r2] = results;
+
+  ASSERT(r1 == 10);
+  ASSERT(r2 == 20);
+  ASSERT(marker == 1);
+
+  LOG("when_all immediate completion test: PASSED");
+}
+
+async<void> test_when_any_immediate_completion() {
+  LOG("=== Testing when_any with immediately-completed first task ===");
+
+  auto result = co_await when_any(immediate_value_task(7), delayed_value_task(8, 30));
+
+  ASSERT(result.index == 0);
+  ASSERT(result.template get<0>() == 7);
+
+  // when_any does not cancel slower tasks; let the delayed task finish before leak checks.
+  co_await sleep(40ms);
+
+  LOG("when_any immediate completion test: PASSED");
+}
+
+async<void> test_when_any_keeps_losers_running() {
+  LOG("=== Testing when_any leaves slower tasks running ===");
+
+  std::atomic<int> completed_sum{0};
+  auto result = co_await when_any(delayed_counter_task(completed_sum, 1, 10), delayed_counter_task(completed_sum, 2, 35),
+                                  delayed_counter_task(completed_sum, 4, 55));
+
+  ASSERT(result.index == 0);
+  ASSERT(result.template get<0>() == 1);
+  ASSERT(completed_sum.load(std::memory_order_relaxed) == 1);
+
+  co_await sleep(70ms);
+  ASSERT(completed_sum.load(std::memory_order_relaxed) == 7);
+
+  LOG("when_any slower tasks running test: PASSED");
 }
 
 #ifndef CORO_DISABLE_EXCEPTION
@@ -414,6 +479,9 @@ async<void> run_all_tests() {
   co_await test_when_all_mixed_types();
   co_await test_when_all_mixed_types2();
   co_await test_when_any_mixed_types();
+  co_await test_when_all_immediate_completion();
+  co_await test_when_any_immediate_completion();
+  co_await test_when_any_keeps_losers_running();
   LOG("=== ALL TESTS PASSED ===");
 
 #ifndef CORO_DISABLE_EXCEPTION
