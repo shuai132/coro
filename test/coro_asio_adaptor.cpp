@@ -302,7 +302,7 @@ void test_immediate_coro_completion(bool void_result, bool failure = false) {
 struct nonassignable_value {
   int value;
 
-  explicit nonassignable_value(int v = 0) : value(v) {}
+  explicit nonassignable_value(int v) : value(v) {}
   nonassignable_value(nonassignable_value&&) noexcept = default;
   nonassignable_value(const nonassignable_value&) = delete;
   nonassignable_value& operator=(nonassignable_value&&) = delete;
@@ -316,10 +316,15 @@ async<nonassignable_value> make_coro_nonassignable_value(bool delayed) {
   co_return nonassignable_value{42};
 }
 
-asio::awaitable<nonassignable_value> make_asio_nonassignable_value(bool delayed) {
+asio::awaitable<nonassignable_value> make_asio_nonassignable_value(bool delayed, [[maybe_unused]] bool fail = false) {
   if (delayed) {
     co_await asio_sleep(1);
   }
+#ifndef CORO_DISABLE_EXCEPTION
+  if (fail) {
+    throw std::runtime_error("nondefault value failure");
+  }
+#endif
   co_return nonassignable_value{53};
 }
 
@@ -327,6 +332,16 @@ async<void> test_nonassignable_asio_values() {
   for (bool delayed : {false, true}) {
     auto value = co_await await_asio(make_asio_nonassignable_value(delayed));
     ASSERT(value.value == 53);
+#ifndef CORO_DISABLE_EXCEPTION
+    bool failed = false;
+    try {
+      co_await await_asio(make_asio_nonassignable_value(delayed, true));
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == "nondefault value failure");
+      failed = true;
+    }
+    ASSERT(failed);
+#endif
   }
 }
 

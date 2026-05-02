@@ -864,6 +864,8 @@ async<void> async_void_operation() {
 
 该库提供了 `coro::async<T>` 和 `asio::awaitable<T>` 之间的互操作适配器，让你可以无缝混合使用 coro 和 ASIO 协程。
 
+两个适配器均支持只能移动的返回值，无需默认构造或赋值能力。
+
 ### asio_executor
 
 `asio_executor` 将 `asio::io_context` 适配为 `coro::executor` 接口，使 coro 协程可以在 ASIO 事件循环上运行：

@@ -110,6 +110,10 @@ struct asio_awaitable_awaiter {
 
   explicit asio_awaitable_awaiter(asio::awaitable<T> aw) : asio_awaitable_(std::move(aw)), state_(std::make_shared<shared_state>()) {}
 
+  static asio::awaitable<void> store_result(asio::awaitable<T> task, std::shared_ptr<shared_state> state) {
+    state->result.emplace(co_await std::move(task));
+  }
+
   bool await_ready() const noexcept {
     return false;
   }
@@ -125,7 +129,7 @@ struct asio_awaitable_awaiter {
     auto state = state_;  // Copy shared_ptr for the lambda
 
     // Spawn the asio awaitable and resume when complete
-    asio::co_spawn(*io_ctx, std::move(asio_awaitable_), [state, handle, io_ctx](std::exception_ptr ep, T value) {
+    asio::co_spawn(*io_ctx, store_result(std::move(asio_awaitable_), state), [state, handle, io_ctx]([[maybe_unused]] std::exception_ptr ep) {
       // If io_context is stopped, don't resume the coroutine as it may have been
       // destroyed or its captured references may be invalid
       if (io_ctx->stopped()) {
@@ -134,12 +138,7 @@ struct asio_awaitable_awaiter {
 #ifndef CORO_DISABLE_EXCEPTION
       if (ep) {
         state->exception = ep;
-      } else {
-        state->result.emplace(std::move(value));
       }
-#else
-      state->result.emplace(std::move(value));
-      (void)ep;
 #endif
       // Use asio::post to schedule the resume. Check stopped() again inside
       // the posted handler since io_context may be stopped between now and

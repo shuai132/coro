@@ -883,6 +883,8 @@ async<void> async_void_operation() {
 The library provides an adaptor for interoperability between `coro::async<T>` and `asio::awaitable<T>`, allowing you to
 mix coro and ASIO coroutines seamlessly.
 
+Both adaptors support move-only results without requiring default construction or assignment.
+
 ### asio_executor
 
 `asio_executor` adapts `asio::io_context` to the `coro::executor` interface, enabling coro coroutines to run on an ASIO
