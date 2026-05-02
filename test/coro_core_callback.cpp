@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
@@ -105,6 +106,10 @@ async<void> await_sleep_durations(recording_timer_executor& exec, bool& complete
   ASSERT(exec.last_delay == 1500000);
   co_await delay(2);
   ASSERT(exec.last_delay == 2000000);
+  co_await delay(std::numeric_limits<uint64_t>::max());
+  ASSERT(exec.last_delay == static_cast<uint64_t>(std::chrono::nanoseconds::max().count()));
+  co_await delay(static_cast<uint64_t>(std::chrono::nanoseconds::max().count()) / 1000000 + 1);
+  ASSERT(exec.last_delay == static_cast<uint64_t>(std::chrono::nanoseconds::max().count()));
   completed = true;
 }
 

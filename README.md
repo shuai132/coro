@@ -313,6 +313,7 @@ async<void> timer_example() {
 ```
 
 `sleep(duration)` and direct `co_await duration` submit non-positive durations to the executor as zero-delay operations.
+`delay(ms)` saturates millisecond values that exceed the nanosecond representation at `std::chrono::nanoseconds::max()`.
 
 ## Concurrency Operations
 

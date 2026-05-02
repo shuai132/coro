@@ -18,7 +18,10 @@ inline callback_awaiter<void> sleep(std::chrono::duration<Rep, Period> duration)
 }
 
 inline callback_awaiter<void> delay(uint64_t ms) {
-  return sleep(std::chrono::milliseconds(ms));
+  using nanoseconds = std::chrono::nanoseconds;
+  constexpr auto max_ns = static_cast<uint64_t>(nanoseconds::max().count());
+  auto ns = ms > max_ns / 1000000 ? max_ns : ms * 1000000;
+  return sleep(nanoseconds(static_cast<nanoseconds::rep>(ns)));
 }
 
 template <typename Rep, typename Period>

@@ -297,6 +297,7 @@ async<void> timer_example() {
 ```
 
 `sleep(duration)` 和直接 `co_await duration` 会将非正时长作为零延迟任务提交给执行器。
+`delay(ms)` 会将超出纳秒表示范围的毫秒数饱和到 `std::chrono::nanoseconds::max()`。
 
 ## 并发操作
 
