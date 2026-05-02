@@ -1,8 +1,11 @@
 #define CORO_DEBUG_PROMISE_LEAK
 
+#include <cstdint>
+
 #include "assert_def.h"
 #include "coro/coro.hpp"
 #include "coro/executor_poll.hpp"
+#include "log.h"
 
 using namespace coro;
 
@@ -20,6 +23,7 @@ async<void> spawn_local_without_executor(int& value) {
 }
 
 int main() {
+  ASSERT(reinterpret_cast<std::uintptr_t>(&L_O_G_NS_MUTEX::mutex()) % alignof(std::mutex) == 0);
   ASSERT(debug_coro_promise::debug_coro_leak.empty());
 
   {

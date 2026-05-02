@@ -212,7 +212,7 @@ struct L_O_G_NS_MUTEX {
 static std::mutex& mutex() {
   // 2. never delete, avoid destroy before user log
   // 3. static memory, avoid memory fragmentation
-  static char memory[sizeof(std::mutex)];
+  alignas(std::mutex) static char memory[sizeof(std::mutex)];
   static std::mutex& mutex = *(new (memory) std::mutex());
   return mutex;
 }
