@@ -1152,6 +1152,11 @@ exceptions remain enabled, an exception escaping a coroutine body calls `std::te
 
 Logging hooks run on the calling thread and may be invoked concurrently; use a thread-safe logger. Leak counts are snapshots taken when each event is recorded.
 
+Apple Clang 21.0.0 (`clang-2100.3.34.2`) at `-O0` can read a freed coroutine frame while unwinding an exception
+from `initial_suspend()` when final suspension uses symmetric transfer. Keep creation-time logging hooks nonthrowing
+on that configuration. A [standalone standard C++20 probe](tools/compiler/clang_creation_cleanup.cpp) reproduces this
+compiler limitation without library headers; the same probe passed at `-O1` and `-O2`, which does not establish a general workaround.
+
 The debug tracker retains its shared registry until process exit so static constructors and destructors can safely create coroutines.
 
 Leak tracking preserves aligned allocations requested by the compiler. Clang builds with over-aligned coroutine state may require `-fcoro-aligned-allocation`.
