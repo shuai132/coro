@@ -7,6 +7,7 @@
 - Support move-only coroutine return values such as `std::unique_ptr<T>`.
 - Avoid synchronous callback re-entry from `callback_awaiter`.
 - Keep `CORO_DISABLE_EXCEPTION` builds free of exception-specific callback API requirements where practical.
+- Avoid null executor dereference in `spawn_local()`.
 
 ## Bugs to prove first
 
@@ -24,6 +25,9 @@
    - `std::variant<std::exception_ptr, T> value_{nullptr}` is not a valid initial state for many `T`.
    - `get_value() const` returns by copy.
    - Regression test: compile and run an `async<std::unique_ptr<int>>` task.
+
+4. `spawn_local()` dereferences a null executor when used in a coroutine that was resumed manually without binding an executor.
+   - Regression test: manually resume a parent coroutine that calls `spawn_local()` and verify the child still runs and all frames are destroyed.
 
 ## Fix plan
 
@@ -49,6 +53,10 @@
 5. Tighten no-exception callback overloads.
    - Avoid exposing `std::exception_ptr` callback parameters when `CORO_DISABLE_EXCEPTION` is defined.
 
+6. Handle executor-less `spawn_local()`.
+   - Fall back to directly awaiting the child task when no current executor exists.
+   - Keep normal current-executor behavior unchanged.
+
 ## Verification
 
 - `cmake -S . -B build && cmake --build build -j`
@@ -67,6 +75,7 @@
   - `coro_core_lifetime` failed with one leaked lazy coroutine frame.
   - `coro_core_callback` failed by observing callback awaiter destruction during an active synchronous callback.
   - `coro_core_move_only` failed to compile because `std::variant<std::exception_ptr, T> value_{nullptr}` does not support `T = std::unique_ptr<int>`.
+  - Existing no-exception `coro_when` failed leak checking after `when_any` returned while slower tasks still needed to drain after executor stop.
 - Fixed in `include/coro/coro.hpp`:
   - Added started-state tracking for coroutine frames.
   - Destroyed unstarted frames from `awaitable` destruction and move assignment.
@@ -75,6 +84,8 @@
   - Prevented callback awaiter re-entry by returning `false` from `await_suspend()` when the callback completes inline.
   - Kept asynchronous callback completion on `dispatch()` so executor-loop shutdown can still drain already-scheduled delayed work.
   - Removed the exception-handler overload from `with_callback()` and `detach_with_callback()` when `CORO_DISABLE_EXCEPTION` is defined.
+  - Made `spawn_local()` directly await its child when there is no current executor.
+  - Made debug promise allocation failure explicit: throw `std::bad_alloc` with exceptions, abort without exceptions.
 - Verified with the local CLT toolchain:
   - Full exception-enabled build passed.
   - Full exception-enabled test suite passed.

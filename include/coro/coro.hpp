@@ -34,7 +34,9 @@
 /// compiler check and debug config
 #if defined(CORO_DEBUG_PROMISE_LEAK)
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
+#include <new>
 #include <unordered_set>
 struct debug_coro_promise {
   inline static std::unordered_set<void*> debug_coro_leak;
@@ -47,6 +49,13 @@ struct debug_coro_promise {
 
   void* operator new(std::size_t size) {
     void* ptr = std::malloc(size);
+    if (!ptr) {
+#ifndef CORO_DISABLE_EXCEPTION
+      throw std::bad_alloc();
+#else
+      std::abort();
+#endif
+    }
     {
       std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
       debug_coro_leak.insert(ptr);
@@ -499,7 +508,11 @@ void spawn(executor& executor, T&& coro) {
 template <typename T>
 [[nodiscard]] async<void> spawn_local(T&& awaitable) {
   auto* exec = co_await current_executor();
-  spawn(*exec, std::forward<T>(awaitable));
+  if (exec) {
+    spawn(*exec, std::forward<T>(awaitable));
+  } else {
+    co_await std::forward<T>(awaitable);
+  }
 }
 
 }  // namespace coro
