@@ -461,12 +461,15 @@ coro::mutex mtx;
 bool ready = false;
 
 async<void> waiter() {
-    // 等待会释放互斥锁并暂停协程
-    co_await cv.wait(mtx);
-    // 等待返回后必须手动重新获取锁
-    co_await mtx.lock();
+    auto guard = co_await mtx.scoped_lock();
+    while (!ready) {
+        // 等待会释放已持有的互斥锁并暂停协程
+        co_await cv.wait(mtx);
+        // 重新获取锁后再检查条件
+        co_await mtx.lock();
+    }
 
-    // 或使用带谓词的版本，会自动重新获取锁
+    // 或在持有锁的前提下，用带谓词的版本替换上面的循环：
     // co_await cv.wait(mtx, [&]{ return ready; });
 }
 

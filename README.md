@@ -477,12 +477,15 @@ coro::mutex mtx;
 bool ready = false;
 
 async<void> waiter() {
-    // Wait releases the mutex and suspends the coroutine
-    co_await cv.wait(mtx);
-    // Must manually re-acquire the lock after wait returns
-    co_await mtx.lock();
+    auto guard = co_await mtx.scoped_lock();
+    while (!ready) {
+        // Wait releases the held mutex and suspends the coroutine
+        co_await cv.wait(mtx);
+        // Re-acquire the lock before checking the condition again
+        co_await mtx.lock();
+    }
 
-    // Or use predicate version which automatically re-acquires the lock
+    // Or replace the loop with the predicate version, while holding the lock:
     // co_await cv.wait(mtx, [&]{ return ready; });
 }
 
