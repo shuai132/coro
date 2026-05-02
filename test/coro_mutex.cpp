@@ -2,6 +2,7 @@
 #define CORO_DEBUG_PROMISE_LEAK
 // #define CORO_DISABLE_EXCEPTION
 #include <memory>
+#include <thread>
 
 #include "log.h"
 // #define CORO_DEBUG_LEAK_LOG LOG
@@ -111,14 +112,15 @@ async<void> mutex_test_sequential_tasks() {
 async<void> mutex_test_concurrent_tasks() {
   coro::mutex mtx;
 
-  // Launch multiple tasks that compete for the same mutex
-  co_await spawn_local(mutex_test_task(mtx, "A", 10));
-  co_await spawn_local(mutex_test_task(mtx, "B", 10));
-  co_await spawn_local(mutex_test_task(mtx, "C", 10));
+  auto* exec = co_await current_executor();
+  exec->post([] {
+    // A busy loop can make the parent's timer ready before the last worker finishes.
+    std::this_thread::sleep_for(250ms);
+  });
 
-  // Wait a bit more to ensure all tasks complete
-  co_await sleep(200ms);
-  LOG("All concurrent mutex test tasks should be complete");
+  co_await when_all(mutex_test_task(mtx, "A", 10), mutex_test_task(mtx, "B", 10), mutex_test_task(mtx, "C", 10));
+  ASSERT(!mtx.is_locked());
+  LOG("All concurrent mutex test tasks completed");
 }
 
 async<void> mutex_basic_test() {
@@ -161,14 +163,21 @@ async<void> mutex_unlock_schedules_waiter_test() {
   auto guard = co_await mtx.scoped_lock();
 
   co_await spawn_local(mutex_scheduled_waiter(mtx, step));
-  co_await sleep(1ms);
+  ASSERT(step == 0);
 
+  auto* exec = co_await current_executor();
+  exec->post([] {
+    std::this_thread::sleep_for(20ms);
+  });
   guard.unlock();
   ASSERT(step == 0);
 
   step = 1;
-  co_await sleep(1ms);
-  ASSERT(step == 2);
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (step != 2) {
+    ASSERT(std::chrono::steady_clock::now() < deadline);
+    co_await sleep(1ms);
+  }
 
   LOG("Mutex unlock schedules waiter test: OK");
 }
