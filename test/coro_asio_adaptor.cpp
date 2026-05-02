@@ -1077,7 +1077,7 @@ int main() {
   }
 
   // Check for coroutine leaks
-  debug_coro_promise::dump();
+  check_coro_leak();
 
   return 0;
 }
