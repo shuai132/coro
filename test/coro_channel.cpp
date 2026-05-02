@@ -50,6 +50,19 @@ async<void> test_reused_send_results() {
   }
 }
 
+template <typename CHANNEL>
+async<void> test_reused_receive_results() {
+  CHANNEL ch(2);
+  ASSERT(co_await ch.send(1));
+  ASSERT(co_await ch.send(2));
+  auto receiving = ch.recv();
+  ASSERT((co_await receiving) == 1);
+  ch.close();
+  ASSERT((co_await receiving) == 2);
+  ASSERT(!(co_await receiving));
+  ASSERT(!(co_await receiving));
+}
+
 uint64_t get_now_ms() {
   auto now = std::chrono::steady_clock::now();
   auto epoch = now.time_since_epoch();
@@ -281,6 +294,42 @@ async<void> test_failed_receive_extraction(bool queued_close) {
   }
   ASSERT(!(co_await receiving));
   ASSERT(state.live == 0);
+  ASSERT(!(co_await receiving));
+}
+
+template <typename CHANNEL>
+async<void> test_reused_receive_after_refill_failure(bool close_before_retry) {
+  transfer_state state;
+  CHANNEL ch(1);
+  co_await ch.send(throwing_channel_value{state, 1});
+  bool sender_completed = false;
+  auto sender = [](CHANNEL& ch, transfer_state& state, bool& completed, bool expected) -> async<void> {
+    ASSERT((co_await ch.send(throwing_channel_value{state, 42})) == expected);
+    completed = true;
+  };
+  co_await spawn_local(sender(ch, state, sender_completed, !close_before_retry));
+  ASSERT(!sender_completed);
+  auto receiving = ch.recv();
+  state.fail_value = 42;
+  bool caught = false;
+  try {
+    co_await receiving;
+  } catch (const std::runtime_error&) {
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(!sender_completed);
+  state.fail_value = -1;
+  if (close_before_retry) {
+    ch.close();
+    ASSERT(!(co_await receiving));
+  } else {
+    auto value = co_await receiving;
+    ASSERT(value && value->value == 42);
+  }
+  ASSERT(sender_completed);
+  ASSERT(state.live == 0);
+  ch.close();
   ASSERT(!(co_await receiving));
 }
 #endif
@@ -803,6 +852,8 @@ async<void> test_multiple_producers_consumers() {
 async<void> run_all_tests() {
   co_await test_reused_send_results<channel_mt<int>>();
   co_await test_reused_send_results<channel_st<int>>();
+  co_await test_reused_receive_results<channel_mt<int>>();
+  co_await test_reused_receive_results<channel_st<int>>();
   co_await test_buffered_receive_reservation<channel_mt<int>>();
   co_await test_buffered_receive_reservation<channel_st<int>>();
 #ifndef CORO_DISABLE_EXCEPTION
@@ -815,6 +866,10 @@ async<void> run_all_tests() {
   for (bool queued_close : {false, true}) {
     co_await test_failed_receive_extraction<channel_mt<throwing_channel_value>>(queued_close);
     co_await test_failed_receive_extraction<channel_st<throwing_channel_value>>(queued_close);
+  }
+  for (bool close_before_retry : {false, true}) {
+    co_await test_reused_receive_after_refill_failure<channel_mt<throwing_channel_value>>(close_before_retry);
+    co_await test_reused_receive_after_refill_failure<channel_st<throwing_channel_value>>(close_before_retry);
   }
 #endif
   co_await test_unbuffered_channel();

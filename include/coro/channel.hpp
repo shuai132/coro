@@ -210,7 +210,9 @@ struct channel {
 
     explicit recv_awaitable(std::shared_ptr<state> state) : state_(std::move(state)) {}
 
-    bool await_ready() const noexcept {
+    bool await_ready() noexcept {
+      // A previous await_suspend may have reserved a value before a buffer refill failed.
+      pending_value_.reset();
       // Check if channel is closed and no data available without suspending
       std::lock_guard<MUTEX> lock(state_->mutex_);
       return state_->closed_.load(std::memory_order_acquire) && state_->buffer_.empty();
