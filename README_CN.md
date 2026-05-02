@@ -738,6 +738,7 @@ async<void> setter() {
 
     // 检查事件是否已设置（非阻塞）
     bool is_set = evt.is_set();
+    co_return;
 }
 ```
 

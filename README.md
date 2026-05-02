@@ -758,6 +758,7 @@ async<void> setter() {
 
     // Check if the event is set (non-blocking)
     bool is_set = evt.is_set();
+    co_return;
 }
 ```
 
