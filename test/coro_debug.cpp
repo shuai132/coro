@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #ifndef CORO_DISABLE_EXCEPTION
 #include <new>
 #endif
@@ -71,8 +72,14 @@ async<int> debug_immediate() {
   co_return 7;
 }
 
-async<void> debug_all(int& result) {
-  auto values = co_await when_all(debug_leaf(), debug_immediate());
+async<int> debug_inspect_all(executor_loop& loop, std::function<void()> inspect) {
+  // The preceding child is paused before this child posts the metadata inspection.
+  loop.post(std::move(inspect));
+  co_return 7;
+}
+
+async<void> debug_all(int& result, executor_loop& loop, std::function<void()> inspect) {
+  auto values = co_await when_all(debug_leaf(), debug_inspect_all(loop, std::move(inspect)));
   result = std::get<0>(values) + std::get<1>(values);
 }
 
@@ -175,10 +182,7 @@ int main() {
   {
     executor_loop loop;
     int result = 0;
-    debug_all(result).detach_with_callback(loop, [&loop] {
-      loop.stop();
-    });
-    loop.post([&loop] {
+    debug_all(result, loop, [&loop] {
       auto* leaf = detail::async_debug_registry::head_;
       while (leaf && leaf->frame_ != debug_leaf_handle.address()) {
         leaf = leaf->next_;
@@ -198,6 +202,8 @@ int main() {
       loop.post([] {
         debug_leaf_handle.resume();
       });
+    }).detach_with_callback(loop, [&loop] {
+      loop.stop();
     });
     loop.run_loop();
     ASSERT(result == 49);
@@ -205,8 +211,7 @@ int main() {
   ASSERT(detail::async_debug_registry::head_ == nullptr);
   {
     executor_loop loop;
-    debug_any().detach_with_callback(loop, [] {});
-    loop.post([&loop] {
+    debug_any().detach_with_callback(loop, [&loop] {
       // The winning branch has destroyed when_any_impl; the loser is still alive.
       auto* node = detail::async_debug_registry::head_;
       while (node && node->frame_ != debug_leaf_handle.address()) {

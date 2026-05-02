@@ -341,6 +341,9 @@ async<void> timer_example() {
 
 ## Concurrency Operations
 
+When bound to an executor, nonempty `when_all()` and `when_any()` queue their initial child launch and the resumption
+of suspended callers. This keeps deeply nested combinations from growing the native call stack.
+
 ### when_all
 
 Wait for all tasks to complete:

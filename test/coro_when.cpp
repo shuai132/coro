@@ -3,6 +3,7 @@
 // #define CORO_DISABLE_EXCEPTION
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
@@ -17,6 +18,154 @@
 #include "utils.hpp"
 
 using namespace coro;
+
+struct nested_when_executor : executor_poll {
+  int dispatch_depth = 0;
+  int max_dispatch_depth = 0;
+
+  void dispatch(std::function<void()> task) override {
+    ++dispatch_depth;
+    if (dispatch_depth > max_dispatch_depth) {
+      max_dispatch_depth = dispatch_depth;
+    }
+    executor_poll::dispatch(std::move(task));
+    --dispatch_depth;
+  }
+};
+
+template <bool ANY, typename T>
+async<T> nested_when_task(int depth, bool delayed, bool fail, std::shared_ptr<int> frame_token) {
+  if (depth == 0) {
+    if (delayed) {
+      co_await sleep(0ms);
+    }
+#ifndef CORO_DISABLE_EXCEPTION
+    if (fail) {
+      throw std::runtime_error("nested child failed");
+    }
+#endif
+    if constexpr (std::is_void_v<T>) {
+      co_return;
+    } else {
+      co_return 42;
+    }
+  }
+  if constexpr (ANY) {
+    auto result = co_await when_any(nested_when_task<ANY, T>(depth - 1, delayed, fail, frame_token));
+    ASSERT(result.index == 0);
+    if constexpr (!std::is_void_v<T>) {
+      co_return result.template get<0>();
+    }
+  } else {
+    if constexpr (std::is_void_v<T>) {
+      co_await when_all(nested_when_task<ANY, T>(depth - 1, delayed, fail, frame_token));
+    } else {
+      co_return co_await when_all(nested_when_task<ANY, T>(depth - 1, delayed, fail, frame_token));
+    }
+  }
+}
+
+template <bool ANY, typename T>
+async<void> await_nested_when(bool delayed, bool fail, std::shared_ptr<int> frame_token) {
+#ifndef CORO_DISABLE_EXCEPTION
+  bool caught = false;
+  try {
+#endif
+    if constexpr (std::is_void_v<T>) {
+      co_await nested_when_task<ANY, T>(128, delayed, fail, frame_token);
+    } else {
+      ASSERT((co_await nested_when_task<ANY, T>(128, delayed, fail, frame_token)) == 42);
+    }
+#ifndef CORO_DISABLE_EXCEPTION
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "nested child failed");
+    caught = true;
+  }
+  ASSERT(caught == fail);
+#endif
+}
+
+template <bool ANY, typename T>
+void test_nested_when() {
+  for (bool delayed : {false, true}) {
+    for (bool fail : {false, true}) {
+#ifdef CORO_DISABLE_EXCEPTION
+      if (fail) {
+        continue;
+      }
+#endif
+      nested_when_executor executor;
+      auto frame_token = std::make_shared<int>(0);
+      bool completed = false;
+      await_nested_when<ANY, T>(delayed, fail, frame_token).detach_with_callback(executor, [&] {
+        completed = true;
+      });
+      for (int attempt = 0; !completed && attempt < 10000; ++attempt) {
+        executor.poll();
+      }
+      ASSERT(completed);
+      ASSERT(executor.max_dispatch_depth <= 8);
+      ASSERT(frame_token.use_count() == 1);
+      check_coro_leak();
+    }
+  }
+}
+
+#ifndef CORO_DISABLE_EXCEPTION
+struct rejected_when_executor : executor_poll {
+  bool reject_next_post = false;
+
+  void post(std::function<void()> task) override {
+    if (std::exchange(reject_next_post, false)) {
+      throw std::bad_alloc();
+    }
+    executor_poll::post(std::move(task));
+  }
+};
+
+async<int> when_launch_probe(bool& started, std::shared_ptr<int> frame_token) {
+  started = true;
+  co_return *frame_token;
+}
+
+template <bool ANY>
+async<void> await_rejected_when_launch(rejected_when_executor& executor, bool& completed) {
+  auto frame_token = std::make_shared<int>(42);
+  bool started = false;
+  bool caught = false;
+  executor.reject_next_post = true;
+  try {
+    if constexpr (ANY) {
+      co_await when_any(when_launch_probe(started, frame_token));
+    } else {
+      co_await when_all(when_launch_probe(started, frame_token));
+    }
+  } catch (const std::bad_alloc&) {
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(!started);
+  ASSERT(frame_token.use_count() == 1);
+  // An empty combiner has no children to schedule.
+  executor.reject_next_post = true;
+  co_await when_all();
+  ASSERT(executor.reject_next_post);
+  executor.reject_next_post = false;
+  completed = true;
+}
+
+template <bool ANY>
+void test_rejected_when_launch() {
+  rejected_when_executor executor;
+  bool completed = false;
+  spawn(executor, await_rejected_when_launch<ANY>(executor, completed));
+  for (int attempt = 0; !completed && attempt < 100; ++attempt) {
+    executor.poll();
+  }
+  ASSERT(completed);
+  check_coro_leak();
+}
+#endif
 
 struct reentrant_result_state {
   channel<int> signal;
@@ -314,13 +463,16 @@ async<void> test_when_any_values() {
   LOG("=== Testing when_any with value-returning tasks ===");
   TimeCount t;
   auto completed = std::make_shared<int>(0);
-  // A busy executor must not turn first-completion checks into timing failures.
-  (co_await current_executor())->post([] {
-    std::this_thread::sleep_for(100ms);
-  });
+  // Queue the stall from a child so the combiner launches all timers before the loop blocks.
+  auto busy_task = [](std::shared_ptr<int> completed) -> async<int> {
+    (co_await current_executor())->post([] {
+      std::this_thread::sleep_for(100ms);
+    });
+    co_return co_await delayed_value_task(1, 100, completed);
+  };
 
   // Launch 3 tasks with different delays
-  auto result = co_await when_any(delayed_value_task(1, 100, completed), delayed_value_task(2, 30, completed), delayed_value_task(3, 80, completed));
+  auto result = co_await when_any(busy_task(completed), delayed_value_task(2, 30, completed), delayed_value_task(3, 80, completed));
 
   auto elapsed = t.elapsed();
   LOG("First task completed after %d ms", (int)elapsed);
@@ -753,6 +905,14 @@ async<void> run_all_tests() {
 
 int main() {
   LOG("when_all/when_any test init");
+#ifndef CORO_DISABLE_EXCEPTION
+  test_rejected_when_launch<false>();
+  test_rejected_when_launch<true>();
+#endif
+  test_nested_when<false, void>();
+  test_nested_when<false, int>();
+  test_nested_when<true, void>();
+  test_nested_when<true, int>();
   test_when_all_reentrant_completion();
   test_when_any_reentrant_completion();
   test_when_any_result_publication();

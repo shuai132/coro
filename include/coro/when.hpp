@@ -129,7 +129,7 @@ struct when_all_state {
     if (count == total_count) {
       if (parent_handle) {
         lock.unlock();
-        detail::resume_via(parent_exec, parent_handle);
+        detail::post_resume_via(parent_exec, parent_handle);
       }
     }
   }
@@ -171,13 +171,20 @@ struct when_all_init_state_awaiter {
   }
 
   template <typename Promise>
-  bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
-    std::lock_guard<std::mutex> lock(state_->mtx);
-    state_->parent_exec = h.promise().executor_;
+  bool await_suspend(std::coroutine_handle<Promise> h) {
+    {
+      std::lock_guard<std::mutex> lock(state_->mtx);
+      state_->parent_exec = h.promise().executor_;
 #ifdef CORO_DEBUG_ASYNC_STACK
-    state_->debug_parent_id_ = h.promise().debug_node_.id_;
+      state_->debug_parent_id_ = h.promise().debug_node_.id_;
 #endif
-    return false;  // Don't actually suspend
+    }
+    if (state_->parent_exec && state_->total_count != 0) {
+      // Queue the launch so nested combiners cannot recursively dispatch their children.
+      detail::post_resume_via(state_->parent_exec, h);
+      return true;
+    }
+    return false;
   }
 
   void await_resume() noexcept {}
@@ -537,7 +544,7 @@ struct when_any_state_impl {
     completed.store(true, std::memory_order_release);
     if (parent_handle) {
       lock.unlock();
-      detail::resume_via(parent_exec, parent_handle);
+      detail::post_resume_via(parent_exec, parent_handle);
     }
   }
 
@@ -607,7 +614,7 @@ struct when_any_state_impl<true, Ts...> {
       completed.store(true, std::memory_order_release);
       if (parent_handle) {
         lock.unlock();
-        detail::resume_via(parent_exec, parent_handle);
+        detail::post_resume_via(parent_exec, parent_handle);
       }
     }
   }
@@ -622,7 +629,7 @@ struct when_any_state_impl<true, Ts...> {
       completed.store(true, std::memory_order_release);
       if (parent_handle) {
         lock.unlock();
-        detail::resume_via(parent_exec, parent_handle);
+        detail::post_resume_via(parent_exec, parent_handle);
       }
     }
   }
@@ -702,13 +709,20 @@ struct when_any_init_state_awaiter {
   }
 
   template <typename Promise>
-  bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
-    std::lock_guard<std::mutex> lock(state_->mtx);
-    state_->parent_exec = h.promise().executor_;
+  bool await_suspend(std::coroutine_handle<Promise> h) {
+    {
+      std::lock_guard<std::mutex> lock(state_->mtx);
+      state_->parent_exec = h.promise().executor_;
 #ifdef CORO_DEBUG_ASYNC_STACK
-    state_->debug_parent_id_ = h.promise().debug_node_.id_;
+      state_->debug_parent_id_ = h.promise().debug_node_.id_;
 #endif
-    return false;  // Don't actually suspend
+    }
+    if (state_->parent_exec) {
+      // Queue the launch so nested combiners cannot recursively dispatch their children.
+      detail::post_resume_via(state_->parent_exec, h);
+      return true;
+    }
+    return false;
   }
 
   void await_resume() noexcept {}
