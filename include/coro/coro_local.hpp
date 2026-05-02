@@ -7,6 +7,7 @@
 #include <coroutine>
 #include <memory>
 #include <optional>
+#include <type_traits>
 
 #include "coro/coro.hpp"
 
@@ -59,7 +60,7 @@ struct coro_local {
     }
 
     template <typename Promise>
-    bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
+    bool await_suspend(std::coroutine_handle<Promise> h) {
       T* ptr = self_->find_in_storage(h.promise());
       if (ptr) {
         result_ = *ptr;
@@ -67,7 +68,7 @@ struct coro_local {
       return false;  // Don't actually suspend
     }
 
-    T await_resume() noexcept {
+    T await_resume() noexcept(std::is_nothrow_move_constructible_v<T>) {
       return std::move(result_);
     }
   };
@@ -82,7 +83,7 @@ struct coro_local {
     }
 
     template <typename Promise>
-    bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
+    bool await_suspend(std::coroutine_handle<Promise> h) {
       T* ptr = self_->find_in_storage(h.promise());
       if (ptr) {
         result_ = *ptr;
@@ -90,7 +91,7 @@ struct coro_local {
       return false;
     }
 
-    std::optional<T> await_resume() noexcept {
+    std::optional<T> await_resume() noexcept(std::is_nothrow_move_constructible_v<T>) {
       return std::move(result_);
     }
   };
@@ -126,7 +127,7 @@ struct coro_local {
     }
 
     template <typename Promise>
-    bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
+    bool await_suspend(std::coroutine_handle<Promise> h) {
       auto& storage = h.promise().local_storage_;
       if (!storage) {
         storage = std::make_shared<detail::coro_local_map>();
@@ -189,7 +190,7 @@ struct coro_local {
 
   // Get the stored value, returns default-constructed T if not found
   // Usage: T value = co_await storage.get();
-  [[nodiscard]] auto get() const noexcept {
+  [[nodiscard]] auto get() const noexcept(std::is_nothrow_default_constructible_v<T>) {
     return get_awaiter{this};
   }
 
@@ -208,7 +209,7 @@ struct coro_local {
   // Set the value for the current coroutine
   // Usage: co_await storage.set(value);
   template <typename U>
-  auto set(U&& value) const noexcept {
+  auto set(U&& value) const noexcept(std::is_nothrow_constructible_v<U, U&&>) {
     return set_awaiter<U>{this, std::forward<U>(value)};
   }
 
@@ -236,7 +237,7 @@ struct inherit_coro_local_awaiter {
   }
 
   template <typename Promise>
-  bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
+  bool await_suspend(std::coroutine_handle<Promise> h) {
     // With single-pointer design, parent link is already set up in await_suspend
     // This just ensures we have our own local storage for copy-on-write
     auto& storage = h.promise().local_storage_;

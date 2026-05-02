@@ -2,7 +2,9 @@
 #define CORO_DEBUG_PROMISE_LEAK
 #include "coro/coro_local.hpp"
 
+#include <stdexcept>
 #include <string>
+#include <string_view>
 
 #include "coro.hpp"
 #include "detail/assert_def.h"
@@ -335,8 +337,107 @@ async<void> coro_local_overwrite_test() {
   co_return;
 }
 
+#ifndef CORO_DISABLE_EXCEPTION
+struct throwing_local_value {
+  inline static int live = 0;
+  inline static bool fail_copy = false;
+  inline static bool fail_move = false;
+  int value = 0;
+
+  explicit throwing_local_value(int v = 0) : value(v) {
+    if (v < 0) {
+      throw std::runtime_error("local conversion failed");
+    }
+    ++live;
+  }
+
+  throwing_local_value(const throwing_local_value& other) : value(other.value) {
+    if (fail_copy) {
+      throw std::runtime_error("local copy failed");
+    }
+    ++live;
+  }
+
+  throwing_local_value(throwing_local_value&& other) : value(other.value) {
+    if (fail_move) {
+      throw std::runtime_error("local move failed");
+    }
+    ++live;
+  }
+
+  throwing_local_value& operator=(const throwing_local_value& other) {
+    if (fail_copy) {
+      throw std::runtime_error("local copy failed");
+    }
+    value = other.value;
+    return *this;
+  }
+
+  ~throwing_local_value() {
+    --live;
+  }
+};
+
+async<void> coro_local_exception_test() {
+  static coro_local<throwing_local_value> storage;
+  ASSERT(throwing_local_value::live == 0);
+  co_await storage.set(7);
+  bool caught = false;
+  try {
+    co_await storage.set(-1);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "local conversion failed");
+    caught = true;
+  }
+  ASSERT(caught);
+
+  for (bool fail_copy : {true, false}) {
+    throwing_local_value::fail_copy = fail_copy;
+    throwing_local_value::fail_move = !fail_copy;
+    caught = false;
+    try {
+      [[maybe_unused]] auto value = co_await storage.get();
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == (fail_copy ? "local copy failed" : "local move failed"));
+      caught = true;
+    }
+    ASSERT(caught);
+    caught = false;
+    try {
+      [[maybe_unused]] auto value = co_await storage.get_optional();
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == (fail_copy ? "local copy failed" : "local move failed"));
+      caught = true;
+    }
+    ASSERT(caught);
+  }
+  throwing_local_value::fail_copy = false;
+  throwing_local_value::fail_move = false;
+  {
+    throwing_local_value value{5};
+    throwing_local_value::fail_move = true;
+    caught = false;
+    try {
+      co_await storage.set(std::move(value));
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == "local move failed");
+      caught = true;
+    }
+    ASSERT(caught);
+    throwing_local_value::fail_move = false;
+  }
+  auto* value = co_await storage.get_ptr();
+  ASSERT(value && value->value == 7);
+  co_await storage.erase();
+  ASSERT(throwing_local_value::live == 0);
+}
+#endif
+
 async<void> run_all_tests() {
   co_await coro_local_basic_test();
+#ifndef CORO_DISABLE_EXCEPTION
+  co_await coro_local_exception_test();
+#endif
   co_await coro_local_optional_test();
   co_await coro_local_ptr_test();
   co_await coro_local_string_test();
