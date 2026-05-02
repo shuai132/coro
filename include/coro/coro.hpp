@@ -224,11 +224,12 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
 #endif
 
   std::suspend_always initial_suspend() {
-#ifndef CORO_DISABLE_EXCEPTION
+    // Creation can throw even when propagation from the coroutine body is disabled.
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     try {
 #endif
       CORO_DEBUG_LIFECYCLE("promise: initial_suspend: p: %p, p.h: %p", this, parent_handle_.address());
-#ifndef CORO_DISABLE_EXCEPTION
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     } catch (...) {
       // Creation failure destroys the frame even if the compiler also destroys the return object.
       awaitable_->current_coro_handle_ = nullptr;
