@@ -552,6 +552,7 @@ Go 风格的 channel 实现，用于协程间通信：
 
 ```cpp
 #include "coro/channel.hpp"
+#include "coro/when.hpp"
 
 async<void> producer(channel<int>& ch) {
     co_await ch.send(42);  // 阻塞直到有接收者
@@ -573,8 +574,8 @@ async<void> consumer(channel<int>& ch) {
 async<void> example() {
     channel<int> ch;  // 无缓冲 channel
 
-    co_await spawn_local(producer(ch));
-    co_await spawn_local(consumer(ch));
+    // 等待两个任务结束，再销毁局部 channel。
+    co_await when_all(producer(ch), consumer(ch));
 }
 ```
 

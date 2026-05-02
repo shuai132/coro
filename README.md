@@ -572,6 +572,7 @@ Go-style channel implementation for inter-coroutine communication:
 
 ```cpp
 #include "coro/channel.hpp"
+#include "coro/when.hpp"
 
 async<void> producer(channel<int>& ch) {
     co_await ch.send(42);  // Blocks until receiver is ready
@@ -593,8 +594,8 @@ async<void> consumer(channel<int>& ch) {
 async<void> example() {
     channel<int> ch;  // Unbuffered channel
 
-    co_await spawn_local(producer(ch));
-    co_await spawn_local(consumer(ch));
+    // Keep the channel alive until both tasks finish.
+    co_await when_all(producer(ch), consumer(ch));
 }
 ```
 
