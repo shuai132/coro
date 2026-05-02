@@ -46,6 +46,25 @@ jobs:
           CXX: g++-10
         run: cmake -P test/cmake/run.cmake
 
+  gcc13-debug:
+    name: GCC 13 async debugger metadata
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        disable_exception: [OFF, ON]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GCC 13
+        run: sudo apt-get update && sudo apt-get install -y g++-13
+      - name: Configure async debugger metadata
+        env:
+          CXX: g++-13
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCORO_DEBUG_ASYNC_STACK=ON -DCORO_DISABLE_EXCEPTION=${{ matrix.disable_exception }}
+      - name: Build and test async debugger metadata
+        run: |
+          cmake --build build --target coro_debug -j
+          ./build/coro_debug
+
   build-and-test:
 
     name: ${{ matrix.toolchain }} ${{ matrix.build_type }} disable_exception:${{ matrix.disable_exception }} sanitize_address:${{ matrix.sanitize_address }} sanitize_thread:${{ matrix.sanitize_thread }}

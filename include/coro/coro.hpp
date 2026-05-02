@@ -215,7 +215,7 @@ struct final_awaitable {
 template <typename T>
 struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
 #ifdef CORO_DEBUG_ASYNC_STACK
-  awaitable<T> get_return_object(std::source_location location = std::source_location::current());
+  awaitable<T> get_return_object(detail::async_debug_location location = detail::async_debug_location::current());
   detail::async_debug_node debug_node_;
 #else
   awaitable<T> get_return_object();
@@ -429,7 +429,7 @@ struct awaitable {
 
 template <typename T>
 #ifdef CORO_DEBUG_ASYNC_STACK
-awaitable<T> awaitable_promise<T>::get_return_object(std::source_location location) {
+awaitable<T> awaitable_promise<T>::get_return_object(detail::async_debug_location location) {
 #else
 awaitable<T> awaitable_promise<T>::get_return_object() {
 #endif

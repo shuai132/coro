@@ -4,9 +4,36 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#if !defined(__GNUC__) || defined(__clang__) || __GNUC__ >= 14
 #include <source_location>
+#endif
 
 namespace coro::detail {
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 14
+// Older GCC cannot evaluate a consteval default argument in get_return_object().
+struct async_debug_location {
+  const char* function_;
+  const char* file_;
+  std::uint_least32_t line_;
+
+  static constexpr async_debug_location current(const char* function = __builtin_FUNCTION(), const char* file = __builtin_FILE(),
+                                                std::uint_least32_t line = __builtin_LINE()) noexcept {
+    return {function, file, line};
+  }
+  constexpr const char* function_name() const noexcept {
+    return function_;
+  }
+  constexpr const char* file_name() const noexcept {
+    return file_;
+  }
+  constexpr std::uint_least32_t line() const noexcept {
+    return line_;
+  }
+};
+#else
+using async_debug_location = std::source_location;
+#endif
 
 struct async_debug_node;
 
@@ -51,7 +78,7 @@ struct async_debug_node {
   async_debug_node(const async_debug_node&) = delete;
   async_debug_node& operator=(const async_debug_node&) = delete;
 
-  void register_frame(void* frame, std::source_location location) {
+  void register_frame(void* frame, async_debug_location location) {
     async_debug_guard lock;
     frame_ = frame;
     id_ = ++async_debug_registry::next_id_;

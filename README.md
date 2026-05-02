@@ -1210,6 +1210,8 @@ These are **logical async stacks**, complementary to native `bt`. Locations iden
 functions, not the current instruction or every suspension point. `[live]` means the frame has
 not reached final suspend; it does not distinguish running, suspended, and not yet started.
 `[completed]` frames remain listed until destroyed, with their parent link cleared.
+On GCC before version 14, source-location builtins avoid a compiler error in coroutine default
+arguments; function names in this configuration omit the full type signature.
 
 Both commands read memory without calling functions in the debugged process, acquiring its
 locks, or assuming a compiler's coroutine frame ABI. Stop **all threads** before using them.
