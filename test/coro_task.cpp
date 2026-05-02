@@ -431,7 +431,104 @@ void test_executor_queue_fairness() {
   }
 }
 
+struct forwarding_executor : executor {
+  executor& target_;
+  int dispatch_depth_ = 0;
+
+  explicit forwarding_executor(executor& target) : target_(target) {}
+
+  void dispatch(std::function<void()> fn) override {
+    ++dispatch_depth_;
+    // Distinct executor objects may dispatch inline on the same event loop.
+    ASSERT(dispatch_depth_ <= 8);
+    target_.dispatch(std::move(fn));
+    --dispatch_depth_;
+  }
+
+  void post(std::function<void()> fn) override {
+    target_.post(std::move(fn));
+  }
+
+  void post_delayed_ns(std::function<void()> fn, uint64_t delay_ns) override {
+    target_.post_delayed_ns(std::move(fn), delay_ns);
+  }
+
+  void stop() override {
+    target_.stop();
+  }
+};
+
+template <typename T>
+async<T> shared_loop_child(executor& expected_executor, [[maybe_unused]] std::shared_ptr<int> frame_token, bool delayed, [[maybe_unused]] bool fail) {
+  ASSERT(co_await current_executor() == &expected_executor);
+  if (delayed) {
+    co_await sleep(0ns);
+  }
+#ifndef CORO_DISABLE_EXCEPTION
+  if (fail) {
+    throw std::runtime_error("shared loop child failed");
+  }
+#endif
+  if constexpr (!std::is_void_v<T>) {
+    co_return 42;
+  }
+}
+
+template <typename T>
+async<void> await_shared_loop_children(executor& parent_executor, executor& child_executor, bool delayed, bool fail) {
+  auto frame_token = std::make_shared<int>(0);
+  for (int iteration = 0; iteration < 256; ++iteration) {
+    bool caught = false;
+#ifndef CORO_DISABLE_EXCEPTION
+    try {
+#endif
+      if constexpr (std::is_void_v<T>) {
+        co_await shared_loop_child<T>(child_executor, frame_token, delayed, fail).bind_executor(child_executor);
+      } else {
+        ASSERT((co_await shared_loop_child<T>(child_executor, frame_token, delayed, fail).bind_executor(child_executor)) == 42);
+      }
+#ifndef CORO_DISABLE_EXCEPTION
+    } catch (const std::runtime_error&) {
+      caught = true;
+    }
+#endif
+    ASSERT(caught == fail);
+    ASSERT(frame_token.use_count() == 1);
+    ASSERT(co_await current_executor() == &parent_executor);
+  }
+}
+
+template <typename T>
+void test_executors_sharing_loop() {
+  for (bool reverse : {false, true}) {
+    for (bool delayed : {false, true}) {
+      for (bool fail : {false, true}) {
+#ifdef CORO_DISABLE_EXCEPTION
+        if (fail) {
+          continue;
+        }
+#endif
+        executor_loop loop;
+        forwarding_executor alias(loop);
+        executor& parent = reverse ? static_cast<executor&>(alias) : loop;
+        executor& child = reverse ? static_cast<executor&>(loop) : alias;
+        bool completed = false;
+        await_shared_loop_children<T>(parent, child, delayed, fail).detach_with_callback(parent, [&] {
+          completed = true;
+          loop.stop();
+        });
+        loop.run_loop();
+        ASSERT(completed);
+        ASSERT(alias.dispatch_depth_ == 0);
+        check_coro_leak();
+      }
+    }
+  }
+}
+
 int main() {
+  test_executors_sharing_loop<int>();
+  test_executors_sharing_loop<void>();
   for (int wait_ms : {-1, 0, 5}) {
     test_delay_stop_finishes_with_executor<executor_loop>(wait_ms);
     test_delay_stop_finishes_with_executor<executor_poll>(wait_ms);

@@ -158,7 +158,8 @@ struct final_awaitable {
     // h.promise() is self
     if (h.promise().parent_handle_) {
       if (h.promise().parent_executor_ && h.promise().parent_executor_ != h.promise().executor_) {
-        detail::resume_via(h.promise().parent_executor_, h.promise().parent_handle_);
+        // Distinct executors can share a thread; dispatch would recurse on each completed child.
+        detail::post_resume_via(h.promise().parent_executor_, h.promise().parent_handle_);
         return std::noop_coroutine();
       }
       return h.promise().parent_handle_;
