@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <mutex>
 
 #include "coro/coro.hpp"
@@ -25,6 +26,7 @@ struct latch_t {
   // Construct a latch with the given count
   // count must be >= 0
   explicit latch_t(int count) : wg_() {
+    assert(count >= 0);
     if (count > 0) {
       wg_.add(count);
     }
@@ -38,7 +40,10 @@ struct latch_t {
   // Count down the latch by n (default 1)
   // When the count reaches zero, all waiting coroutines are resumed
   void count_down(int n = 1) {
-    wg_.add(-n);
+    assert(n >= 0);
+    if (n > 0) {
+      wg_.add(-n);
+    }
   }
 
   // Decrements the internal counter by 1 and blocks until it reaches 0

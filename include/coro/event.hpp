@@ -1,10 +1,11 @@
 #pragma once
 
+#include <cassert>
+#include <coroutine>
 #include <mutex>
 
 #include "coro/coro.hpp"
 #include "coro/dummy_mutex.hpp"
-#include "coro/wait_group.hpp"
 
 namespace coro {
 
@@ -22,10 +23,57 @@ namespace coro {
 //   - dummy_mutex: No lock overhead for single-threaded use
 template <typename MUTEX = std::mutex>
 struct event_t {
+ private:
+  struct waiter_node {
+    std::coroutine_handle<> handle;
+    executor* exec{};
+    waiter_node* next{};
+  };
+
+  struct wait_awaitable {
+    event_t* event_;
+    waiter_node node_{};
+
+    bool await_ready() {
+      std::lock_guard<MUTEX> lock(event_->mutex_);
+      return event_->set_;
+    }
+
+    template <typename Promise>
+    bool await_suspend(std::coroutine_handle<Promise> h) {
+      node_.handle = h;
+      node_.exec = h.promise().executor_;
+      node_.next = nullptr;
+
+      {
+        std::lock_guard<MUTEX> lock(event_->mutex_);
+        if (event_->set_) {
+          return false;
+        }
+
+        if (event_->tail_) {
+          event_->tail_->next = &node_;
+        } else {
+          event_->head_ = &node_;
+        }
+        event_->tail_ = &node_;
+      }
+
+      return true;
+    }
+
+    void await_resume() noexcept {}
+  };
+
  public:
   // Construct an event in the unset state
-  event_t() : wg_() {
-    wg_.add(1);  // Start with counter = 1 (unset state)
+  event_t() = default;
+
+  explicit event_t(bool initially_set) : set_(initially_set) {}
+
+  ~event_t() {
+    assert(head_ == nullptr);
+    assert(tail_ == nullptr);
   }
 
   event_t(const event_t&) = delete;
@@ -37,37 +85,74 @@ struct event_t {
   // All current and future waiters will proceed until clear() is called
   // Usage: evt.set();
   void set() {
-    wg_.done();  // Counter becomes 0, all waiters are resumed
+    waiter_node* nodes_to_resume = nullptr;
+
+    {
+      std::lock_guard<MUTEX> lock(mutex_);
+      if (set_) {
+        return;
+      }
+
+      set_ = true;
+      nodes_to_resume = head_;
+      head_ = nullptr;
+      tail_ = nullptr;
+    }
+
+    resume_all(nodes_to_resume);
   }
 
   // Clear the event
   // Future waits will block until set() is called again
   // Usage: evt.clear();
   void clear() {
-    wg_.add(1);  // Counter becomes 1 again (unset state)
+    std::lock_guard<MUTEX> lock(mutex_);
+    set_ = false;
   }
 
   // Wait for the event to be set
   // If already set, returns immediately without suspending
   // Usage: co_await evt.wait();
   auto wait() const {
-    return wg_.wait();
+    return wait_awaitable{const_cast<event_t*>(this)};
   }
 
   // Support direct co_await on event object
   // Usage: co_await evt;
   auto operator co_await() const noexcept {
-    return wg_.operator co_await();
+    return wait_awaitable{const_cast<event_t*>(this)};
   }
 
   // Check if the event is set (non-blocking)
   // Returns true if the event is set
-  bool is_set() const noexcept {
-    return wg_.get_count() == 0;
+  bool is_set() const {
+    std::lock_guard<MUTEX> lock(mutex_);
+    return set_;
   }
 
  private:
-  mutable wait_group_t<MUTEX> wg_;  // Internal wait group for synchronization
+  static void resume_all(waiter_node* node) {
+    while (node) {
+      auto next_handle = node->handle;
+      auto* next_exec = node->exec;
+      waiter_node* next_node = node->next;
+
+      if (next_exec) {
+        next_exec->dispatch([next_handle]() {
+          next_handle.resume();
+        });
+      } else {
+        next_handle.resume();
+      }
+
+      node = next_node;
+    }
+  }
+
+  mutable MUTEX mutex_;
+  bool set_{false};
+  waiter_node* head_{nullptr};
+  waiter_node* tail_{nullptr};
 };
 
 // Type aliases for convenience

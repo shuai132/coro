@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
+#include <climits>
 #include <coroutine>
 #include <mutex>
 
@@ -28,6 +30,12 @@ struct wait_group_t {
  public:
   wait_group_t() : counter_(0), head_(nullptr), tail_(nullptr) {}
 
+  ~wait_group_t() {
+    assert(counter_ == 0);
+    assert(head_ == nullptr);
+    assert(tail_ == nullptr);
+  }
+
   wait_group_t(const wait_group_t&) = delete;
   wait_group_t(wait_group_t&&) = delete;
   wait_group_t& operator=(const wait_group_t&) = delete;
@@ -40,7 +48,10 @@ struct wait_group_t {
 
     {
       std::lock_guard<MUTEX> lock(mutex_);
-      counter_ += delta;
+      const auto new_counter = static_cast<long long>(counter_) + delta;
+      assert(new_counter >= 0);
+      assert(new_counter <= INT_MAX);
+      counter_ = static_cast<int>(new_counter);
 
       // Check if counter reached zero and collect waiters
       if (counter_ == 0) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <coroutine>
 #include <mutex>
 
@@ -25,10 +26,17 @@ struct condition_variable_t {
     std::coroutine_handle<> handle;
     executor* exec{};
     waiter_node* next{};
+    bool ready_to_resume{};
+    bool notified{};
   };
 
  public:
   condition_variable_t() : head_(nullptr), tail_(nullptr) {}
+
+  ~condition_variable_t() {
+    assert(head_ == nullptr);
+    assert(tail_ == nullptr);
+  }
 
   condition_variable_t(const condition_variable_t&) = delete;
   condition_variable_t(condition_variable_t&&) = delete;
@@ -51,11 +59,16 @@ struct condition_variable_t {
     }
 
     template <typename Promise>
-    void await_suspend(std::coroutine_handle<Promise> h) {
+    bool await_suspend(std::coroutine_handle<Promise> h) {
+      auto* mtx = mtx_;
+      auto unlock_fn = unlock_fn_;
+
       // Initialize the node
       node_.handle = h;
       node_.exec = h.promise().executor_;
       node_.next = nullptr;
+      node_.ready_to_resume = false;
+      node_.notified = false;
 
       {
         // Lock internal mutex to protect queue
@@ -71,8 +84,18 @@ struct condition_variable_t {
         cv_->tail_ = &node_;
       }
 
-      // Release the user's mutex before suspending (type-erased call)
-      unlock_fn_(mtx_);
+      // Release the user's mutex before this waiter is allowed to resume.
+      unlock_fn(mtx);
+
+      {
+        std::lock_guard<MUTEX> lock(cv_->mutex_);
+        node_.ready_to_resume = true;
+        if (node_.notified) {
+          return false;
+        }
+      }
+
+      return true;
     }
 
     void await_resume() noexcept {
@@ -128,6 +151,10 @@ struct condition_variable_t {
 
         handle_to_resume = node->handle;
         exec_to_use = node->exec;
+        if (!node->ready_to_resume) {
+          node->notified = true;
+          node = nullptr;
+        }
       }
     }
 
@@ -146,19 +173,35 @@ struct condition_variable_t {
   // Notify all waiting coroutines
   // Similar to Go's cond.Broadcast()
   void notify_all() {
-    waiter_node* nodes_to_resume = nullptr;
+    waiter_node* ready_to_resume = nullptr;
+    waiter_node* ready_tail = nullptr;
 
     {
       std::lock_guard<MUTEX> lock(mutex_);
 
       // Take the entire list
-      nodes_to_resume = head_;
+      waiter_node* node = head_;
       head_ = nullptr;
       tail_ = nullptr;
+      while (node) {
+        waiter_node* next_node = node->next;
+        if (node->ready_to_resume) {
+          node->next = nullptr;
+          if (ready_tail) {
+            ready_tail->next = node;
+          } else {
+            ready_to_resume = node;
+          }
+          ready_tail = node;
+        } else {
+          node->notified = true;
+        }
+
+        node = next_node;
+      }
     }
 
-    // Resume all waiting coroutines outside the lock
-    waiter_node* node = nodes_to_resume;
+    waiter_node* node = ready_to_resume;
     while (node) {
       auto next_handle = node->handle;
       auto* next_exec = node->exec;

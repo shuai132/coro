@@ -24,8 +24,8 @@ struct mutex_t {
   mutex_t() : state_(unlocked_state()), waiters_(nullptr) {}
 
   ~mutex_t() {
-    // Check there are no waiters waiting to acquire the lock
-    assert(state_.load(std::memory_order_relaxed) == unlocked_state() || state_.load(std::memory_order_relaxed) == nullptr);
+    // Check the mutex is not locked and there are no waiters.
+    assert(state_.load(std::memory_order_relaxed) == unlocked_state());
     assert(waiters_ == nullptr);
   }
 

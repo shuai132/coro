@@ -103,7 +103,43 @@ async<void> event_clear_reset_test() {
   co_return;
 }
 
-// Test 4: Direct co_await on event
+// Test 4: Repeated set/clear are idempotent state changes
+async<void> event_idempotent_state_test() {
+  LOG("=== Idempotent State Test ===");
+  coro::event evt;
+
+  evt.set();
+  evt.set();
+  ASSERT(evt.is_set());
+
+  int completed = 0;
+  auto waiter = [&]() -> async<void> {
+    co_await evt;
+    completed++;
+    co_return;
+  };
+
+  co_await spawn_local(waiter());
+  co_await sleep(10ms);
+  ASSERT(completed == 1);
+
+  evt.clear();
+  evt.clear();
+  ASSERT(!evt.is_set());
+
+  co_await spawn_local(waiter());
+  co_await sleep(10ms);
+  ASSERT(completed == 1);
+
+  evt.set();
+  co_await sleep(10ms);
+  ASSERT(completed == 2);
+
+  LOG("Idempotent state test: OK");
+  co_return;
+}
+
+// Test 5: Direct co_await on event
 async<void> event_direct_await_test() {
   LOG("=== Direct co_await Test ===");
   coro::event evt;
@@ -128,7 +164,7 @@ async<void> event_direct_await_test() {
   co_return;
 }
 
-// Test 5: Multiple set/clear cycles
+// Test 6: Multiple set/clear cycles
 async<void> event_multiple_cycles_test() {
   LOG("=== Multiple Cycles Test ===");
   coro::event evt;
@@ -161,7 +197,7 @@ async<void> event_multiple_cycles_test() {
   co_return;
 }
 
-// Test 6: Many waiters stress test
+// Test 7: Many waiters stress test
 async<void> event_many_waiters_test() {
   LOG("=== Many Waiters Stress Test ===");
   coro::event evt;
@@ -195,6 +231,7 @@ async<void> run_all_tests() {
   co_await event_basic_test();
   co_await event_already_set_test();
   co_await event_clear_reset_test();
+  co_await event_idempotent_state_test();
   co_await event_direct_await_test();
   co_await event_multiple_cycles_test();
   co_await event_many_waiters_test();

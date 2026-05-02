@@ -425,6 +425,8 @@ async<void> critical_section() {
 }
 ```
 
+The mutex must be unlocked before it is destroyed, and waiting coroutines must remain alive until they are resumed.
+
 #### Manual lock/unlock
 
 ```cpp
@@ -482,6 +484,9 @@ async<void> notifier() {
 }
 ```
 
+Waiters must stay alive until they are notified. Notifications that race with the waiter's unlock path are handled, but
+the non-predicate `wait()` still returns without re-acquiring the user mutex.
+
 ### semaphore
 
 A counting semaphore for controlling access to a shared resource with a limited number of permits.
@@ -518,6 +523,10 @@ async<void> example() {
     // coro::binary_semaphore binary_sem(1);
 }
 ```
+
+`counting_semaphore(initial, max)` requires `0 <= initial <= max`. `acquire(n)` and `release(n)` require `n > 0`, and
+`release(n)` must not raise the available permits above `max`. When coroutines are queued, permits are granted to the
+front waiter first.
 
 ### channel
 
@@ -644,6 +653,8 @@ async<void> example() {
 }
 ```
 
+The counter must never become negative. Destroying a wait group with outstanding work or waiters is invalid.
+
 ### latch
 
 A countdown latch that allows coroutines to wait until a set number of operations complete.
@@ -669,6 +680,8 @@ async<void> example() {
     int current_count = latch.get_count();
 }
 ```
+
+The initial count must be non-negative, and `count_down(n)` must not reduce the count below zero.
 
 ### event
 
@@ -696,6 +709,9 @@ async<void> setter() {
     bool is_set = evt.is_set();
 }
 ```
+
+`event` is a manual-reset event: `set()` and `clear()` are idempotent state changes. `set()` releases all current waiters
+and lets future waiters pass until `clear()` is called.
 
 ## Coroutine-Local Storage
 

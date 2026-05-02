@@ -82,6 +82,8 @@ async<void> latch_try_wait_test() {
   ASSERT(!ltc.try_wait());
   ltc.count_down();
   ASSERT(!ltc.try_wait());
+  ltc.count_down(0);
+  ASSERT(!ltc.try_wait());
   ltc.count_down();
   ASSERT(ltc.try_wait());
 

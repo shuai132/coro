@@ -1,5 +1,7 @@
 /// config debug
 #define CORO_DEBUG_PROMISE_LEAK
+#include <vector>
+
 #include "coro.hpp"
 #include "detail/assert_def.h"
 #include "detail/log.h"
@@ -84,6 +86,51 @@ async<void> semaphore_multiple_waiters_test() {
   co_return;
 }
 
+// Test FIFO behavior when the head waiter needs multiple permits
+async<void> semaphore_fifo_waiter_test() {
+  LOG("=== FIFO Waiter Test ===");
+  counting_semaphore sem(0, 2);
+  wait_group wg;
+  std::vector<int> order;
+
+  auto first = [&]() -> async<void> {
+    co_await sem.acquire(2);
+    order.push_back(1);
+    sem.release(2);
+    wg.done();
+    co_return;
+  };
+
+  auto second = [&]() -> async<void> {
+    co_await sem.acquire();
+    order.push_back(2);
+    sem.release();
+    wg.done();
+    co_return;
+  };
+
+  wg.add(2);
+  co_await spawn_local(first());
+  co_await spawn_local(second());
+
+  co_await sleep(10ms);
+  sem.release();
+  co_await sleep(10ms);
+  ASSERT(order.empty());
+  ASSERT(sem.available() == 1);
+
+  sem.release();
+  co_await wg.wait();
+
+  ASSERT(order.size() == 2);
+  ASSERT(order[0] == 1);
+  ASSERT(order[1] == 2);
+  ASSERT(sem.available() == 2);
+
+  LOG("FIFO waiter test: OK");
+  co_return;
+}
+
 // Test binary semaphore
 async<void> binary_semaphore_test() {
   LOG("=== Binary Semaphore Test ===");
@@ -148,6 +195,7 @@ async<void> run_all_tests() {
   co_await semaphore_try_acquire_test();
   co_await binary_semaphore_test();
   co_await semaphore_multiple_waiters_test();
+  co_await semaphore_fifo_waiter_test();
   co_await semaphore_resource_pool_test();
 
   LOG("=== All Semaphore Tests Passed ===");

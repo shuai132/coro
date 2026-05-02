@@ -409,6 +409,8 @@ async<void> critical_section() {
 }
 ```
 
+互斥锁销毁前必须处于未加锁状态，等待中的协程也必须一直存活到被恢复。
+
 #### 手动 lock/unlock
 
 ```cpp
@@ -466,6 +468,9 @@ async<void> notifier() {
 }
 ```
 
+等待中的协程必须一直存活到被通知。`wait()` 与解锁路径并发发生的通知会被正确处理，但不带谓词的
+`wait()` 返回后仍然不会自动重新获取用户互斥锁。
+
 ### semaphore
 
 计数信号量，用于控制对有限数量资源的访问。
@@ -502,6 +507,9 @@ async<void> example() {
     // coro::binary_semaphore binary_sem(1);
 }
 ```
+
+`counting_semaphore(initial, max)` 要求 `0 <= initial <= max`。`acquire(n)` 和 `release(n)` 要求 `n > 0`，
+并且 `release(n)` 不能让可用许可数超过 `max`。当已有协程排队等待时，许可会优先授予队首等待者。
 
 ### channel
 
@@ -628,6 +636,8 @@ async<void> example() {
 }
 ```
 
+计数不能变成负数。还有未完成工作或等待协程时销毁 wait_group 是无效用法。
+
 ### latch
 
 倒计时门闩，允许协程等待直到指定数量的操作完成。
@@ -653,6 +663,8 @@ async<void> example() {
     int current_count = latch.get_count();
 }
 ```
+
+初始计数必须非负，`count_down(n)` 不能把计数减到 0 以下。
 
 ### event
 
@@ -680,6 +692,9 @@ async<void> setter() {
     bool is_set = evt.is_set();
 }
 ```
+
+`event` 是 manual-reset event：`set()` 和 `clear()` 都是幂等的状态切换。`set()` 会释放所有当前等待者，
+并让后续等待者直接通过，直到调用 `clear()`。
 
 ## 协程本地存储
 

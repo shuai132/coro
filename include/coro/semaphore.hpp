@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cassert>
+#include <climits>
 #include <coroutine>
 #include <mutex>
 
@@ -29,7 +31,16 @@ struct counting_semaphore_t {
   // Construct a semaphore with the given number of permits
   // least_max_value is typically the maximum value the semaphore will use
   explicit counting_semaphore_t(int desired, int least_max_value = INT_MAX)
-      : counter_(desired), max_value_(least_max_value), head_(nullptr), tail_(nullptr) {}
+      : counter_(desired), max_value_(least_max_value), head_(nullptr), tail_(nullptr) {
+    assert(least_max_value >= 0);
+    assert(desired >= 0);
+    assert(desired <= least_max_value);
+  }
+
+  ~counting_semaphore_t() {
+    assert(head_ == nullptr);
+    assert(tail_ == nullptr);
+  }
 
   counting_semaphore_t(const counting_semaphore_t&) = delete;
   counting_semaphore_t(counting_semaphore_t&&) = delete;
@@ -44,12 +55,14 @@ struct counting_semaphore_t {
     waiter_node node_{};
 
     explicit acquire_awaitable(counting_semaphore_t* sem, int n = 1) : sem_(sem), desired_(n) {
+      assert(n > 0);
+      assert(n <= sem_->max_value_);
       node_.desired = n;
     }
 
     bool await_ready() noexcept {
       std::lock_guard<MUTEX> lock(sem_->mutex_);
-      if (sem_->counter_ >= desired_) {
+      if (sem_->head_ == nullptr && sem_->counter_ >= desired_) {
         sem_->counter_ -= desired_;
         return true;  // Don't suspend
       }
@@ -66,7 +79,7 @@ struct counting_semaphore_t {
         std::lock_guard<MUTEX> lock(sem_->mutex_);
 
         // Double check after acquiring lock
-        if (sem_->counter_ >= desired_) {
+        if (sem_->head_ == nullptr && sem_->counter_ >= desired_) {
           sem_->counter_ -= desired_;
           return false;  // Don't suspend
         }
@@ -97,8 +110,10 @@ struct counting_semaphore_t {
   // Try to acquire n permits without blocking
   // Returns true if successful, false otherwise
   bool try_acquire(int n = 1) noexcept {
+    assert(n > 0);
+    assert(n <= max_value_);
     std::lock_guard<MUTEX> lock(mutex_);
-    if (counter_ >= n) {
+    if (head_ == nullptr && counter_ >= n) {
       counter_ -= n;
       return true;
     }
@@ -108,43 +123,33 @@ struct counting_semaphore_t {
   // Release n permits (default 1)
   // Wakes up waiting coroutines if possible
   void release(int n = 1) {
+    assert(n > 0);
+    assert(n <= max_value_);
     waiter_node* nodes_to_resume = nullptr;  // Head of resume list
+    waiter_node* nodes_to_resume_tail = nullptr;
 
     {
       std::lock_guard<MUTEX> lock(mutex_);
+      assert(counter_ <= max_value_ - n);
       counter_ += n;
 
-      // Wake up waiting coroutines that can now be satisfied
-      waiter_node* prev = nullptr;
-      waiter_node* node = head_;
-
-      while (node) {
-        if (counter_ >= node->desired) {
-          // This waiter can be satisfied
-          counter_ -= node->desired;
-
-          // Remove from waiting list
-          if (prev) {
-            prev->next = node->next;
-          } else {
-            head_ = node->next;
-          }
-
-          if (node == tail_) {
-            tail_ = prev;
-          }
-
-          waiter_node* next = node->next;
-
-          // Add to resume list (prepend for O(1))
-          node->next = nodes_to_resume;
-          nodes_to_resume = node;
-
-          node = next;
-        } else {
-          prev = node;
-          node = node->next;
+      // Wake up waiting coroutines in FIFO order while the head can be satisfied.
+      while (head_ && counter_ >= head_->desired) {
+        waiter_node* node = head_;
+        head_ = node->next;
+        if (!head_) {
+          tail_ = nullptr;
         }
+
+        counter_ -= node->desired;
+        node->next = nullptr;
+
+        if (nodes_to_resume_tail) {
+          nodes_to_resume_tail->next = node;
+        } else {
+          nodes_to_resume = node;
+        }
+        nodes_to_resume_tail = node;
       }
     }
 

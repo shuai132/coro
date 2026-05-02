@@ -5,11 +5,37 @@
 // #define CORO_DEBUG_LEAK_LOG LOG
 // #define CORO_DEBUG_LIFECYCLE LOG
 
+#include <coroutine>
+
 #include "assert_def.h"
 #include "coro.hpp"
 #include "utils.hpp"
 
 using namespace coro;
+
+struct ready_awaitable {
+  bool await_ready() noexcept {
+    return true;
+  }
+
+  void await_suspend(std::coroutine_handle<>) noexcept {}
+
+  void await_resume() noexcept {}
+};
+
+struct notify_on_unlock_mutex {
+  coro::condition_variable* cv{};
+  bool unlocked{};
+
+  void unlock() {
+    unlocked = true;
+    cv->notify_one();
+  }
+
+  ready_awaitable lock() noexcept {
+    return {};
+  }
+};
 
 // Test basic notify_one functionality
 async<void> cv_basic_test() {
@@ -47,6 +73,20 @@ async<void> cv_basic_test() {
   co_await when_all(waiter(), notifier());
   ASSERT(ready);
   LOG("Basic test passed: OK");
+}
+
+// Test notify racing with wait's unlock path
+async<void> cv_notify_during_unlock_test() {
+  coro::condition_variable cv;
+  notify_on_unlock_mutex mtx{&cv};
+  bool resumed = false;
+
+  co_await cv.wait(mtx);
+  resumed = true;
+
+  ASSERT(mtx.unlocked);
+  ASSERT(resumed);
+  LOG("Notify during unlock test passed: OK");
 }
 
 // Test notify_all functionality
@@ -327,6 +367,11 @@ async<void> run_all_tests() {
   {
     co_await cv_basic_test();
     LOG("Basic test completed\n");
+  }
+
+  {
+    co_await cv_notify_during_unlock_test();
+    LOG("Notify during unlock test completed\n");
   }
 
   {
