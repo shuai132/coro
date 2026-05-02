@@ -22,6 +22,41 @@ uint64_t get_now_ms() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(epoch).count();
 }
 
+async<void> reservation_handle_owner() {
+  co_return;
+}
+
+template <typename CHANNEL>
+async<void> reservation_receiver(CHANNEL& ch, int& result, bool& completed) {
+  auto value = co_await ch.recv();
+  ASSERT(value);
+  result = *value;
+  completed = true;
+}
+
+template <typename CHANNEL>
+async<void> test_buffered_receive_reservation() {
+  CHANNEL ch(1);
+  co_await ch.send(1);
+  auto first = ch.recv();
+  auto handle_owner = reservation_handle_owner();
+  ASSERT(!first.await_ready());
+  ASSERT(!first.await_suspend(handle_owner.current_coro_handle_));
+
+  // Interleave another receiver between the first await_suspend and await_resume.
+  // A ready receive must already own its value when it releases the channel lock.
+  bool second_completed = false;
+  int second_value = 0;
+  co_await spawn_local(reservation_receiver(ch, second_value, second_completed));
+  auto first_value = first.await_resume();
+  ASSERT(first_value && *first_value == 1);
+  ASSERT(!second_completed);
+  co_await ch.send(2);
+  ASSERT(second_completed);
+  ASSERT(second_value == 2);
+  ASSERT(ch.empty());
+}
+
 // Test basic unbuffered channel
 async<void> test_unbuffered_channel() {
   LOG("Starting unbuffered channel test");
@@ -538,6 +573,8 @@ async<void> test_multiple_producers_consumers() {
 }
 
 async<void> run_all_tests() {
+  co_await test_buffered_receive_reservation<channel_mt<int>>();
+  co_await test_buffered_receive_reservation<channel_st<int>>();
   co_await test_unbuffered_channel();
   LOG("Unbuffered channel test passed");
 

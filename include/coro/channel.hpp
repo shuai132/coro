@@ -206,14 +206,34 @@ struct channel {
     bool await_suspend(std::coroutine_handle<Promise> h) {
       std::unique_lock<MUTEX> lock(state_->mutex_);
 
-      if (state_->closed_.load(std::memory_order_relaxed)) {
-        // If channel is closed, don't suspend - just return false to allow await_resume to handle it
+      // Check buffer
+      if (!state_->buffer_.empty()) {
+        pending_value_.emplace(std::move(state_->buffer_.front()));
+        state_->buffer_.pop();
+
+        // After reading from buffer, check if there are waiting senders to move to buffer
+        if (state_->send_queue_head_ != nullptr && state_->buffer_.size() < state_->capacity_) {
+          auto* sender_awaiter = state_->send_queue_head_;
+          state_->send_queue_head_ = sender_awaiter->next_;
+          if (state_->send_queue_head_ == nullptr) {
+            state_->send_queue_tail_ = nullptr;
+          }
+          sender_awaiter->next_ = nullptr;
+          state_->buffer_.push(std::move(sender_awaiter->value_));
+          sender_awaiter->delivered_ = true;
+
+          // Resume the sender since its value is now in the buffer
+          auto sender_h = sender_awaiter->handle_;
+          auto sender_exec = sender_awaiter->exec_;
+          lock.unlock();
+          detail::resume_via(sender_exec, sender_h);
+        }
+
         return false;
       }
 
-      // Check if buffer has data
-      if (!state_->buffer_.empty()) {
-        // Data available in buffer, don't suspend
+      if (state_->closed_.load(std::memory_order_relaxed)) {
+        // If channel is closed, don't suspend - just return false to allow await_resume to handle it
         return false;
       }
 
@@ -259,32 +279,6 @@ struct channel {
       if (pending_value_.has_value()) {
         auto result = std::move(pending_value_.value());
         pending_value_.reset();
-        return result;
-      }
-
-      // Check buffer
-      if (!state_->buffer_.empty()) {
-        auto result = std::move(state_->buffer_.front());
-        state_->buffer_.pop();
-
-        // After reading from buffer, check if there are waiting senders to move to buffer
-        if (state_->send_queue_head_ != nullptr && state_->buffer_.size() < state_->capacity_) {
-          auto* sender_awaiter = state_->send_queue_head_;
-          state_->send_queue_head_ = sender_awaiter->next_;
-          if (state_->send_queue_head_ == nullptr) {
-            state_->send_queue_tail_ = nullptr;
-          }
-          sender_awaiter->next_ = nullptr;
-          state_->buffer_.push(std::move(sender_awaiter->value_));
-          sender_awaiter->delivered_ = true;
-
-          // Resume the sender since its value is now in the buffer
-          auto sender_h = sender_awaiter->handle_;
-          auto sender_exec = sender_awaiter->exec_;
-          lock.unlock();
-          detail::resume_via(sender_exec, sender_h);
-        }
-
         return result;
       }
 
