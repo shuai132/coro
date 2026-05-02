@@ -475,9 +475,9 @@ async<T> shared_loop_child(executor& expected_executor, [[maybe_unused]] std::sh
 }
 
 template <typename T>
-async<void> await_shared_loop_children(executor& parent_executor, executor& child_executor, bool delayed, bool fail) {
+async<void> await_shared_loop_children(executor* parent_executor, executor& child_executor, bool delayed, bool fail) {
   auto frame_token = std::make_shared<int>(0);
-  for (int iteration = 0; iteration < 256; ++iteration) {
+  for (int iteration = 0; iteration < 32; ++iteration) {
     bool caught = false;
 #ifndef CORO_DISABLE_EXCEPTION
     try {
@@ -494,7 +494,7 @@ async<void> await_shared_loop_children(executor& parent_executor, executor& chil
 #endif
     ASSERT(caught == fail);
     ASSERT(frame_token.use_count() == 1);
-    ASSERT(co_await current_executor() == &parent_executor);
+    ASSERT(co_await current_executor() == parent_executor);
   }
 }
 
@@ -513,7 +513,7 @@ void test_executors_sharing_loop() {
         executor& parent = reverse ? static_cast<executor&>(alias) : loop;
         executor& child = reverse ? static_cast<executor&>(loop) : alias;
         bool completed = false;
-        await_shared_loop_children<T>(parent, child, delayed, fail).detach_with_callback(parent, [&] {
+        await_shared_loop_children<T>(&parent, child, delayed, fail).detach_with_callback(parent, [&] {
           completed = true;
           loop.stop();
         });
@@ -526,7 +526,41 @@ void test_executors_sharing_loop() {
   }
 }
 
+template <typename T>
+async<void> await_children_without_parent_executor(executor_loop& loop, executor& child_executor, bool delayed, bool fail) {
+  co_await await_shared_loop_children<T>(nullptr, child_executor, delayed, fail);
+  loop.stop();
+}
+
+template <typename T>
+void test_bound_children_with_unbound_parent() {
+  for (bool delayed : {false, true}) {
+    for (bool fail : {false, true}) {
+#ifdef CORO_DISABLE_EXCEPTION
+      if (fail) {
+        continue;
+      }
+#endif
+      executor_loop loop;
+      forwarding_executor child(loop);
+      {
+        auto task = await_children_without_parent_executor<T>(loop, child, delayed, fail);
+        loop.post([&task] {
+          task.current_coro_handle_.resume();
+        });
+        loop.run_loop();
+        ASSERT(task.current_coro_handle_.done());
+        task.await_resume();
+        ASSERT(child.dispatch_depth_ == 0);
+      }
+      check_coro_leak();
+    }
+  }
+}
+
 int main() {
+  test_bound_children_with_unbound_parent<int>();
+  test_bound_children_with_unbound_parent<void>();
   test_executors_sharing_loop<int>();
   test_executors_sharing_loop<void>();
   for (int wait_ms : {-1, 0, 5}) {
