@@ -1,5 +1,13 @@
 #pragma once
 
+// This mutex implementation is derived from / inspired by async_simple::coro::Mutex,
+// which is based on work by Lewis Baker and licensed under the MIT License.
+// See: https://github.com/alibaba/async_simple/blob/main/async_simple/coro/Mutex.h
+//
+// Original copyright notice:
+// Copyright (c) Lewis Baker
+// Licensed under the MIT License.
+
 #include <atomic>
 #include <cassert>
 #include <coroutine>
