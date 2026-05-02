@@ -113,6 +113,59 @@ async<void> await_sleep_durations(recording_timer_executor& exec, bool& complete
   completed = true;
 }
 
+async<void> await_large_sleep_durations(recording_timer_executor& exec, bool& completed) {
+  constexpr auto max_ns = static_cast<uint64_t>(std::chrono::nanoseconds::max().count());
+  co_await sleep(std::chrono::seconds::max());
+  ASSERT(exec.last_delay == max_ns);
+  co_await std::chrono::hours::max();
+  ASSERT(exec.last_delay == max_ns);
+  co_await sleep(std::chrono::duration<uint64_t, std::nano>{std::numeric_limits<uint64_t>::max()});
+  ASSERT(exec.last_delay == max_ns);
+  co_await sleep(std::chrono::duration<double>{std::numeric_limits<double>::infinity()});
+  ASSERT(exec.last_delay == max_ns);
+  co_await sleep(std::chrono::duration<double>{std::numeric_limits<double>::quiet_NaN()});
+  ASSERT(exec.last_delay == 0);
+  // Preserve integral precision beyond the exact range of a double.
+  co_await sleep(std::chrono::nanoseconds{9007199254740993LL});
+  ASSERT(exec.last_delay == 9007199254740993ULL);
+  co_await sleep(std::chrono::duration<uint64_t, std::ratio<2, 3>>{10000000000ULL});
+  ASSERT(exec.last_delay == 6666666666666666666ULL);
+  // The intermediate product overflows uint64_t, but the final quotient fits.
+  co_await sleep(std::chrono::duration<uint64_t, std::ratio<1, 9223372036854775783LL>>{std::numeric_limits<uint64_t>::max()});
+  ASSERT(exec.last_delay == 2000000000ULL);
+  co_await sleep(std::chrono::duration<uint64_t, std::ratio<1, 9223372036854775783LL>>{9223372036854775782ULL});
+  ASSERT(exec.last_delay == 999999999ULL);
+  co_await sleep(std::chrono::duration<uint64_t, std::ratio<1, 9223372036854775783LL>>{4611686018427387891ULL});
+  ASSERT(exec.last_delay == 499999999ULL);
+  co_await sleep(std::chrono::duration<int64_t, std::pico>{std::numeric_limits<int64_t>::max()});
+  ASSERT(exec.last_delay == max_ns / 1000);
+  co_await sleep(std::chrono::nanoseconds{std::chrono::nanoseconds::max().count() - 1});
+  ASSERT(exec.last_delay == max_ns - 1);
+  for (double seconds : {0.3, 1.5, 12.3456789}) {
+    auto duration = std::chrono::duration<double>{seconds};
+    co_await sleep(duration);
+    ASSERT(exec.last_delay == static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count()));
+  }
+  auto float_duration = std::chrono::duration<float>{0.3f};
+  co_await sleep(float_duration);
+  ASSERT(exec.last_delay == static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(float_duration).count()));
+  auto long_double_duration = std::chrono::duration<long double>{0.3L};
+  co_await sleep(long_double_duration);
+  ASSERT(exec.last_delay == static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(long_double_duration).count()));
+  completed = true;
+}
+
+void test_large_sleep_duration_conversion() {
+  recording_timer_executor exec;
+  bool completed = false;
+  spawn(exec, await_large_sleep_durations(exec, completed));
+  for (int turn = 0; turn < 32 && !completed; ++turn) {
+    exec.poll();
+  }
+  ASSERT(completed);
+  check_coro_leak();
+}
+
 void test_sleep_duration_conversion() {
   recording_timer_executor exec;
   bool completed = false;
@@ -423,6 +476,7 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
 }
 
 int main() {
+  test_large_sleep_duration_conversion();
 #ifndef CORO_DISABLE_EXCEPTION
   for (bool asynchronous : {false, true}) {
     test_callback_storage_failure<false>(asynchronous);
