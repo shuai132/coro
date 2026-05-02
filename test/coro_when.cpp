@@ -3,6 +3,8 @@
 // #define CORO_DISABLE_EXCEPTION
 
 #include <atomic>
+#include <stdexcept>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <type_traits>
@@ -14,6 +16,122 @@
 #include "utils.hpp"
 
 using namespace coro;
+
+struct reentrant_result_state {
+  channel<int> signal;
+  bool close_on_move = false;
+  int live = 0;
+};
+
+struct reentrant_result {
+  reentrant_result_state* state;
+  int generation = 0;
+
+  explicit reentrant_result(reentrant_result_state& result_state) : state(&result_state) {
+    ++state->live;
+  }
+  reentrant_result(const reentrant_result&) = delete;
+  reentrant_result(reentrant_result&& other) : state(other.state), generation(other.generation + 1) {
+    ++state->live;
+    // The fourth move stores the wrapper's result in when_all's shared state.
+    if (state->close_on_move && generation == 4) {
+      state->signal.close();
+    }
+  }
+  ~reentrant_result() {
+    --state->live;
+    // The wrapper releases its moved-from result before publishing completion.
+    if (!state->close_on_move && generation == 3) {
+      state->signal.close();
+    }
+  }
+};
+
+async<void> wait_for_reentrant_signal(channel<int>& signal) {
+  ASSERT(!(co_await signal.recv()));
+}
+
+async<reentrant_result> make_reentrant_result(reentrant_result_state& state, bool delayed) {
+  if (delayed) {
+    co_await sleep(0ms);
+  }
+  co_return reentrant_result{state};
+}
+
+async<void> await_reentrant_result(reentrant_result_state& state, bool delayed) {
+  auto result = co_await when_all(wait_for_reentrant_signal(state.signal), make_reentrant_result(state, delayed));
+  ASSERT(result.state == &state);
+  ASSERT(state.signal.is_closed());
+}
+
+void run_reentrant_test(async<void> task) {
+  executor_loop executor;
+  std::atomic<bool> completed{false};
+  task.detach_with_callback(executor, [&] {
+    completed.store(true, std::memory_order_release);
+    executor.stop();
+  });
+  std::thread worker([&executor] {
+    executor.run_loop();
+  });
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (!completed.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(1ms);
+  }
+  ASSERT(completed.load(std::memory_order_acquire));
+  worker.join();
+  check_coro_leak();
+}
+
+#ifndef CORO_DISABLE_EXCEPTION
+struct reentrant_error {
+  channel<int>* signal;
+  ~reentrant_error() {
+    signal->close();
+  }
+};
+
+async<void> first_reentrant_error() {
+  throw std::runtime_error("first completion error");
+  co_return;
+}
+
+async<void> losing_reentrant_error(channel<int>& signal, bool delayed) {
+  if (delayed) {
+    co_await sleep(0ms);
+  }
+  throw reentrant_error{&signal};
+}
+
+async<void> await_reentrant_error(channel<int>& signal, bool delayed) {
+  bool caught = false;
+  try {
+    co_await when_all(first_reentrant_error(), wait_for_reentrant_signal(signal), losing_reentrant_error(signal, delayed));
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "first completion error");
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(signal.is_closed());
+}
+#endif
+
+void test_when_all_reentrant_completion() {
+  for (bool delayed : {false, true}) {
+    for (bool close_on_move : {false, true}) {
+      LOG("when_all reentrant result: move=%d delayed=%d", close_on_move, delayed);
+      reentrant_result_state state;
+      state.close_on_move = close_on_move;
+      run_reentrant_test(await_reentrant_result(state, delayed));
+      ASSERT(state.live == 0);
+    }
+#ifndef CORO_DISABLE_EXCEPTION
+    LOG("when_all reentrant error: delayed=%d", delayed);
+    channel<int> signal;
+    run_reentrant_test(await_reentrant_error(signal, delayed));
+#endif
+  }
+}
 
 // Hold the winning result's move constructor open while the parent checks readiness.
 struct publication_value {
@@ -562,6 +680,7 @@ async<void> run_all_tests() {
 
 int main() {
   LOG("when_all/when_any test init");
+  test_when_all_reentrant_completion();
   test_when_any_result_publication();
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {

@@ -99,34 +99,25 @@ struct when_all_state {
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
     bool expected = false;
-    std::unique_lock<std::mutex> lock(mtx);
-    if (exception_set.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-      exception = std::move(ex);
-    }
-    ex = nullptr;
-    size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
-    if (count == total_count) {
-      if (parent_handle) {
-        lock.unlock();
-        detail::resume_via(parent_exec, parent_handle);
+    {
+      std::lock_guard<std::mutex> lock(mtx);
+      if (exception_set.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        exception = std::move(ex);
       }
     }
+    // A discarded exception's destructor may complete a sibling inline.
+    ex = nullptr;
+    increment_completed();
   }
 #endif
 
   template <size_t Index, typename T>
   void set_result(std::optional<T>& value) {
-    std::unique_lock<std::mutex> lock(mtx);
+    // Each child owns one result slot. User value operations may complete a sibling inline.
     std::get<Index>(results).emplace(std::move(*value));
     // A moved-from result can still have a destructor that refers to the parent's data.
     value.reset();
-    size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
-    if (count == total_count) {
-      if (parent_handle) {
-        lock.unlock();
-        detail::resume_via(parent_exec, parent_handle);
-      }
-    }
+    increment_completed();
   }
 
   void increment_completed() {
