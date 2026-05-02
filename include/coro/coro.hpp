@@ -74,11 +74,11 @@ struct debug_coro_promise {
       count = state.promises_.size();
     }
     // User logging may create another coroutine; never call it while holding the tracking lock.
-#ifndef CORO_DISABLE_EXCEPTION
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     try {
 #endif
       CORO_DEBUG_LEAK_LOG("new promise: %p, num: %zu", this, count);
-#ifndef CORO_DISABLE_EXCEPTION
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     } catch (...) {
       std::lock_guard<std::mutex> lock(state.mutex_);
       state.promises_.erase(this);

@@ -1,4 +1,6 @@
 #define CORO_DEBUG_PROMISE_LEAK
+void test_leak_log(const char*, ...);
+#define CORO_DEBUG_LEAK_LOG test_leak_log
 void test_lifecycle_log(const char*, ...);
 #define CORO_DEBUG_LIFECYCLE test_lifecycle_log
 
@@ -17,6 +19,7 @@ void test_lifecycle_log(const char*, ...);
 namespace {
 bool body_unwound = false;
 bool fail_initial_log = false;
+bool fail_leak_log = false;
 struct creation_failure {};
 
 struct body_guard {
@@ -49,9 +52,10 @@ coro::async<T> initial_task([[maybe_unused]] std::shared_ptr<int> frame_token) {
 }
 
 template <typename T>
-void test_initial_failure() {
+void test_creation_failure(bool initial) {
   auto frame_token = std::make_shared<int>(0);
-  fail_initial_log = true;
+  fail_initial_log = initial;
+  fail_leak_log = !initial;
   bool caught = false;
   try {
     auto value = initial_task<T>(frame_token);
@@ -60,6 +64,7 @@ void test_initial_failure() {
   }
   ASSERT(caught);
   ASSERT(!fail_initial_log);
+  ASSERT(!fail_leak_log);
   ASSERT(!body_unwound);
   ASSERT(frame_token.use_count() == 1);
   check_coro_leak();
@@ -94,6 +99,13 @@ void expect_termination() {
 }
 }  // namespace
 
+void test_leak_log(const char* format, ...) {
+  if (fail_leak_log && std::strncmp(format, "new promise:", 12) == 0) {
+    fail_leak_log = false;
+    throw creation_failure{};
+  }
+}
+
 void test_lifecycle_log(const char* format, ...) {
   if (fail_initial_log && std::strncmp(format, "promise: initial_suspend:", 25) == 0) {
     fail_initial_log = false;
@@ -104,11 +116,19 @@ void test_lifecycle_log(const char* format, ...) {
 int main(int argc, char** argv) {
   ASSERT(argc == 2);
   if (std::strcmp(argv[1], "initial_void") == 0) {
-    test_initial_failure<void>();
+    test_creation_failure<void>(true);
     return 0;
   }
   if (std::strcmp(argv[1], "initial_value") == 0) {
-    test_initial_failure<int>();
+    test_creation_failure<int>(true);
+    return 0;
+  }
+  if (std::strcmp(argv[1], "leak_void") == 0) {
+    test_creation_failure<void>(false);
+    return 0;
+  }
+  if (std::strcmp(argv[1], "leak_value") == 0) {
+    test_creation_failure<int>(false);
     return 0;
   }
   if (std::strcmp(argv[1], "normal") == 0) {
