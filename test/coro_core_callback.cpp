@@ -195,6 +195,48 @@ void test_large_sleep_duration_conversion() {
   check_coro_leak();
 }
 
+#ifdef __SIZEOF_INT128__
+template <typename REP>
+async<void> await_wide_sleep_durations(recording_timer_executor& exec, bool& completed) {
+  constexpr auto max_ns = static_cast<uint64_t>(std::chrono::nanoseconds::max().count());
+  constexpr REP huge = REP{1} << 126;
+  co_await sleep(std::chrono::duration<REP>{0});
+  ASSERT(exec.last_delay == 0);
+  co_await sleep(std::chrono::duration<REP>{1});
+  ASSERT(exec.last_delay == 1000000000);
+  if constexpr (std::numeric_limits<REP>::is_signed) {
+    co_await sleep(std::chrono::duration<REP>{-huge});
+    ASSERT(exec.last_delay == 0);
+  }
+  co_await sleep(std::chrono::duration<REP>{huge});
+  ASSERT(exec.last_delay == max_ns);
+  co_await sleep(std::chrono::duration<REP, std::nano>{REP{max_ns} + 1});
+  ASSERT(exec.last_delay == max_ns);
+  co_await sleep(std::chrono::duration<REP, std::pico>{REP{max_ns} * 1000 - 1});
+  ASSERT(exec.last_delay == max_ns - 1);
+  co_await sleep(std::chrono::duration<REP, std::pico>{REP{max_ns} * 1000 + 999});
+  ASSERT(exec.last_delay == max_ns);
+  constexpr auto period_limit = std::numeric_limits<std::intmax_t>::max();
+  co_await sleep(std::chrono::duration<REP, std::ratio<period_limit>>{huge});
+  ASSERT(exec.last_delay == max_ns);
+  co_await sleep(std::chrono::duration<REP, std::ratio<1, period_limit>>{REP{1} << 70});
+  ASSERT(exec.last_delay == 128000000000ULL);
+  completed = true;
+}
+
+template <typename REP>
+void test_wide_sleep_duration_conversion() {
+  recording_timer_executor exec;
+  bool completed = false;
+  spawn(exec, await_wide_sleep_durations<REP>(exec, completed));
+  for (int turn = 0; turn < 16 && !completed; ++turn) {
+    exec.poll();
+  }
+  ASSERT(completed);
+  check_coro_leak();
+}
+#endif
+
 void test_sleep_duration_conversion() {
   recording_timer_executor exec;
   bool completed = false;
@@ -554,6 +596,10 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
 }
 
 int main() {
+#ifdef __SIZEOF_INT128__
+  test_wide_sleep_duration_conversion<__int128>();
+  test_wide_sleep_duration_conversion<unsigned __int128>();
+#endif
   test_large_sleep_duration_conversion();
 #ifndef CORO_DISABLE_EXCEPTION
   for (bool asynchronous : {false, true}) {

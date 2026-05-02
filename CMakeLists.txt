@@ -101,6 +101,8 @@ if (CORO_BUILD_TEST)
     # test core callback
     set(TARGET_NAME ${PROJECT_NAME}_core_callback)
     add_executable(${TARGET_NAME} test/coro_core_callback.cpp)
+    # Strict mode exposes differences in extended integer traits on some standard libraries.
+    set_target_properties(${TARGET_NAME} PROPERTIES CXX_EXTENSIONS OFF)
 
     # test core move-only result
     set(TARGET_NAME ${PROJECT_NAME}_core_move_only)

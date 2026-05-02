@@ -55,7 +55,7 @@ uint64_t sleep_duration_ns(std::chrono::duration<REP, PERIOD> duration) {
   constexpr auto divisor = std::gcd(PERIOD::den, std::nano::den);
   constexpr auto factor = std::nano::den / divisor;
   constexpr bool wide_ratio = PERIOD::num > std::numeric_limits<std::intmax_t>::max() / factor;
-  if constexpr (std::is_integral_v<REP>) {
+  if constexpr (std::numeric_limits<REP>::is_integer) {
     auto count = static_cast<std::common_type_t<REP, uint64_t>>(duration.count());
     if constexpr (wide_ratio) {
       // Split seconds and subsecond remainder without forming an overflowing ratio.
