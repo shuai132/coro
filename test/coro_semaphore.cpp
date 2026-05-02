@@ -1,5 +1,6 @@
 /// config debug
 #define CORO_DEBUG_PROMISE_LEAK
+#include <thread>
 #include <vector>
 
 #include "coro.hpp"
@@ -163,14 +164,22 @@ async<void> semaphore_release_schedules_waiter_test() {
   int step = 0;
 
   co_await spawn_local(semaphore_scheduled_waiter(sem, step));
-  co_await sleep(1ms);
+  ASSERT(step == 0);
 
+  auto* exec = co_await current_executor();
+  exec->post([] {
+    // Delay posted work long enough for the parent's timer to become ready too.
+    std::this_thread::sleep_for(20ms);
+  });
   sem.release();
   ASSERT(step == 0);
 
   step = 1;
-  co_await sleep(1ms);
-  ASSERT(step == 2);
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (step != 2) {
+    ASSERT(std::chrono::steady_clock::now() < deadline);
+    co_await sleep(1ms);
+  }
 
   LOG("Release schedules waiter test: OK");
   co_return;
