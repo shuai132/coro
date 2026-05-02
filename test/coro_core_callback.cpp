@@ -268,6 +268,86 @@ async<void> await_non_default_move_only_callback_value(int& result) {
 }
 
 #ifndef CORO_DISABLE_EXCEPTION
+struct callback_storage_state {
+  int live = 0;
+  bool escaped = false;
+  bool caught = false;
+};
+
+struct throwing_storage_value {
+  callback_storage_state* state;
+  int generation = 0;
+
+  explicit throwing_storage_value(callback_storage_state& value_state) : state(&value_state) {
+    ++state->live;
+  }
+
+  throwing_storage_value(const throwing_storage_value&) = delete;
+  throwing_storage_value(throwing_storage_value&& other) : state(other.state), generation(other.generation + 1) {
+    // The callback's argument moves once into its target, then into result storage.
+    if (generation == 2) {
+      throw std::runtime_error("callback result storage failed");
+    }
+    ++state->live;
+  }
+
+  ~throwing_storage_value() {
+    --state->live;
+  }
+};
+
+template <bool EXECUTOR_AWARE>
+async<void> await_throwing_callback_storage(executor& exec, callback_storage_state& state, bool asynchronous) {
+  auto registration = [&exec, &state, asynchronous](std::function<void(throwing_storage_value)> callback) {
+    auto invoke = [&state, callback = std::move(callback)] {
+      try {
+        callback(throwing_storage_value{state});
+      } catch (...) {
+        state.escaped = true;
+      }
+    };
+    if (asynchronous) {
+      exec.post(std::move(invoke));
+    } else {
+      invoke();
+    }
+  };
+  try {
+    auto awaiter = [&] {
+      if constexpr (EXECUTOR_AWARE) {
+        return callback_awaiter<throwing_storage_value>([registration](executor* exec, std::function<void(throwing_storage_value)> callback) {
+          ASSERT(exec);
+          registration(std::move(callback));
+        });
+      } else {
+        return callback_awaiter<throwing_storage_value>(registration);
+      }
+    }();
+    [[maybe_unused]] auto value = co_await std::move(awaiter);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "callback result storage failed");
+    state.caught = true;
+  }
+}
+
+template <bool EXECUTOR_AWARE>
+void test_callback_storage_failure(bool asynchronous) {
+  executor_poll exec;
+  callback_storage_state state;
+  bool completed = false;
+  {
+    auto task = await_throwing_callback_storage<EXECUTOR_AWARE>(exec, state, asynchronous).bind_executor(exec);
+    task.current_coro_handle_.resume();
+    exec.poll();
+    completed = task.current_coro_handle_.done();
+  }
+  ASSERT(state.live == 0);
+  check_coro_leak();
+  ASSERT(completed);
+  ASSERT(state.caught);
+  ASSERT(!state.escaped);
+}
+
 struct extraction_state {
   int live = 0;
   bool fail_move = false;
@@ -338,6 +418,12 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
 }
 
 int main() {
+#ifndef CORO_DISABLE_EXCEPTION
+  for (bool asynchronous : {false, true}) {
+    test_callback_storage_failure<false>(asynchronous);
+    test_callback_storage_failure<true>(asynchronous);
+  }
+#endif
   test_concurrent_detach_completion();
   test_sleep_duration_conversion();
   test_callback_completion_during_handoff<false>();

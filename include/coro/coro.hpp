@@ -383,16 +383,32 @@ struct callback_awaiter_base {
   using callback_function_with_executor = std::function<void(executor*, std::function<void(T)>)>;
 
   T await_resume() noexcept(std::is_nothrow_move_constructible_v<T>) {
+#ifndef CORO_DISABLE_EXCEPTION
+    if (exception_) {
+      std::rethrow_exception(exception_);
+    }
+#endif
     assert(result_.has_value());
     return std::move(*result_);
   }
 
   template <typename U>
   void set_result(U&& value) {
-    result_.emplace(std::forward<U>(value));
+#ifndef CORO_DISABLE_EXCEPTION
+    try {
+#endif
+      result_.emplace(std::forward<U>(value));
+#ifndef CORO_DISABLE_EXCEPTION
+    } catch (...) {
+      exception_ = std::current_exception();
+    }
+#endif
   }
 
   std::optional<T> result_;
+#ifndef CORO_DISABLE_EXCEPTION
+  std::exception_ptr exception_;
+#endif
 };
 
 template <>

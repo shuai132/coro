@@ -856,6 +856,8 @@ async<void> concurrent_example() {
 
 Use `callback_awaiter` to convert callback-style APIs to coroutines:
 
+With exceptions enabled, failures while storing or extracting the callback result are rethrown at `co_await`.
+
 ```cpp
 // Basic usage (without executor)
 async<int> async_operation() {

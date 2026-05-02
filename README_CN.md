@@ -838,6 +838,8 @@ async<void> concurrent_example() {
 
 使用 `callback_awaiter` 将回调式 API 转换为协程：
 
+启用异常时，存储或取出回调结果期间发生的异常会在 `co_await` 处重新抛出。
+
 ```cpp
 // 基本用法（无执行器）
 async<int> async_operation() {
