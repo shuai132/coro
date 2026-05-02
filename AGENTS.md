@@ -203,6 +203,14 @@ int main() {
 
 测试结束时调用 `check_coro_leak()` 验证无泄漏。
 
+## 提交规范
+
+- 提交信息必须使用英文。
+- 使用 Conventional Commits 格式：`<type>: <summary>`，例如 `feat: add latch timeout support`、`fix: avoid resuming destroyed waiter`、`docs: update mutex usage notes`。
+- 常用类型包括：`feat`、`fix`、`docs`、`test`、`refactor`、`perf`、`build`、`ci`、`chore`。
+- `summary` 使用简短祈使句或动词短语，首字母小写，末尾不加句号。
+- 纯文档、注释、许可归属等非行为变更优先使用 `docs:` 或 `chore:`。
+
 ## 添加新功能
 
 添加新功能时需要同时更新三个文件：
