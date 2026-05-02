@@ -188,6 +188,10 @@ target_link_libraries(your_target coro)
 
 `async<T>` supports both expressions and braced initialization in `co_return`, including move-only aggregate results.
 
+A completed task can be awaited again without restarting its body. Non-void results are moved out on each successful
+await, so later awaits observe their moved-from state; retain the extracted result when it is needed again. Stored
+exceptions are rethrown on each await. A task supports one active awaiter at a time.
+
 ```cpp
 #include <iostream>
 #include "coro/coro.hpp"

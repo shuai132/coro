@@ -315,7 +315,7 @@ struct awaitable {
   /// co_await
   [[nodiscard]] bool await_ready() const noexcept {
     CORO_DEBUG_LIFECYCLE("awaitable: await_ready: %p, h: %p", this, current_coro_handle_.address());
-    return false;
+    return current_coro_handle_.done();
   }
 
   template <typename Promise>

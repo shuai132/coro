@@ -169,6 +169,9 @@ target_link_libraries(your_target coro)
 
 `async<T>` 的 `co_return` 同时支持表达式和列表初始化，包括只能移动的聚合返回值。
 
+已完成的任务可以再次等待，协程体不会重新执行。每次成功等待都会移出非 `void` 结果，因此后续等待看到的是移动后的值；
+需要重复使用结果时，请保留首次取出的值。已保存的异常会在每次等待时重新抛出。同一任务只能有一个活动的等待者。
+
 ```cpp
 #include <iostream>
 #include "coro/coro.hpp"

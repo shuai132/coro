@@ -4,15 +4,140 @@
 #include <stdexcept>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 
 #include "assert_def.h"
 #include "coro/coro.hpp"
 #include "coro/executor_loop.hpp"
+#include "coro/time.hpp"
 #include "coro/when.hpp"
 #include "log.h"
 #include "utils.hpp"
 
 using namespace coro;
+
+template <typename T>
+async<T> completed_task(int& runs, bool delayed) {
+  ++runs;
+  if (delayed) {
+    co_await sleep(0ns);
+  }
+  if constexpr (std::is_void_v<T>) {
+    co_return;
+  } else if constexpr (std::is_same_v<T, std::unique_ptr<int>>) {
+    co_return std::make_unique<int>(42);
+  } else {
+    co_return 42;
+  }
+}
+
+async<void> await_completed_tasks(bool delayed) {
+  int void_runs = 0;
+  auto empty = completed_task<void>(void_runs, delayed);
+  ASSERT(!empty.await_ready());
+  co_await empty;
+  ASSERT(empty.await_ready());
+  co_await empty;
+  ASSERT(void_runs == 1);
+
+  int value_runs = 0;
+  auto number = completed_task<int>(value_runs, delayed);
+  ASSERT((co_await number) == 42);
+  ASSERT(number.await_ready());
+  ASSERT((co_await number) == 42);
+  // A completed frame can also be moved into a combiner without starting again.
+  ASSERT((co_await when_all(std::move(number))) == 42);
+  ASSERT(value_runs == 1);
+
+  int unique_runs = 0;
+  auto unique = completed_task<std::unique_ptr<int>>(unique_runs, delayed);
+  auto first = co_await unique;
+  ASSERT(first && *first == 42);
+  ASSERT(unique.await_ready());
+  // Each await moves the stored result; a second await observes the moved-from value.
+  ASSERT(!(co_await unique));
+  ASSERT(unique_runs == 1);
+}
+
+#ifndef CORO_DISABLE_EXCEPTION
+template <typename T>
+async<T> completed_failure(int& runs, bool delayed) {
+  ++runs;
+  if (delayed) {
+    co_await sleep(0ns);
+  }
+  throw std::runtime_error("completed task failed");
+}
+
+template <typename T>
+async<void> await_completed_failure(bool delayed) {
+  int runs = 0;
+  auto task = completed_failure<T>(runs, delayed);
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    bool caught = false;
+    try {
+      co_await task;
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == "completed task failed");
+      caught = true;
+    }
+    ASSERT(caught);
+    ASSERT(task.await_ready());
+  }
+  ASSERT(runs == 1);
+}
+
+struct retry_result_state {
+  bool fail_move = true;
+  int live = 0;
+};
+
+struct retry_result {
+  retry_result_state* state;
+  int generation = 0;
+
+  explicit retry_result(retry_result_state& value_state) : state(&value_state) {
+    ++state->live;
+  }
+  retry_result(const retry_result&) = delete;
+  retry_result(retry_result&& other) : state(other.state), generation(other.generation + 1) {
+    if (state->fail_move && generation == 2) {
+      throw std::runtime_error("result extraction failed");
+    }
+    ++state->live;
+  }
+  ~retry_result() {
+    --state->live;
+  }
+};
+
+async<retry_result> completed_retry_result(retry_result_state& state, bool delayed) {
+  if (delayed) {
+    co_await sleep(0ns);
+  }
+  co_return retry_result{state};
+}
+
+async<void> retry_completed_result(bool delayed) {
+  retry_result_state state;
+  {
+    auto task = completed_retry_result(state, delayed);
+    bool caught = false;
+    try {
+      co_await task;
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == "result extraction failed");
+      caught = true;
+    }
+    ASSERT(caught);
+    ASSERT(task.await_ready());
+    state.fail_move = false;
+    auto value = co_await task;
+    ASSERT(value.state == &state);
+  }
+  ASSERT(state.live == 0);
+}
+#endif
 
 struct move_only_value {
   explicit move_only_value(int v) : value(v) {}
@@ -183,6 +308,14 @@ async<void> consume_exception_ptr_value() {
 #endif
 
 async<void> run_all_tests(int& unique_result, int& when_all_sum, int& mixed_result, int& when_any_result) {
+  for (bool delayed : {false, true}) {
+    co_await await_completed_tasks(delayed);
+#ifndef CORO_DISABLE_EXCEPTION
+    co_await await_completed_failure<void>(delayed);
+    co_await await_completed_failure<int>(delayed);
+    co_await retry_completed_result(delayed);
+#endif
+  }
   co_await consume_braced_results();
   co_await consume_unique_value(unique_result);
   co_await consume_when_all_move_only_values(when_all_sum);
