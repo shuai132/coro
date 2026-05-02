@@ -938,7 +938,8 @@ io_ctx.run();
 
 ### await_asio
 
-`await_asio()` allows coro coroutines to `co_await` ASIO awaitables:
+`await_asio()` allows coro coroutines to `co_await` ASIO awaitables. The awaiting coro task must be bound to or inherit an
+`asio_executor`:
 
 Stopping the `io_context` pauses queued continuations. After `restart()` and another `run()`, the awaiting coro task can continue.
 Keep the executor and the task's referenced data alive until the task finishes.
@@ -968,7 +969,8 @@ coro::async<void> coro_task() {
 
 ### await_coro
 
-`await_coro()` allows ASIO coroutines to `co_await` coro asyncs:
+`await_coro()` allows ASIO coroutines to `co_await` coro asyncs. The ASIO coroutine must run on an `asio::io_context`
+executor or a strand backed by that context; other contexts such as `asio::thread_pool` are not supported:
 
 Cancelling the ASIO wait reports `asio::error::operation_aborted` if the coro task has not completed.
 The detached coro task continues running, so its referenced data must remain alive until it finishes.

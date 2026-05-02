@@ -918,7 +918,7 @@ io_ctx.run();
 
 ### await_asio
 
-`await_asio()` 允许 coro 协程 `co_await` ASIO 的可等待对象：
+`await_asio()` 允许 coro 协程 `co_await` ASIO 的可等待对象。等待中的 coro 任务必须绑定或继承 `asio_executor`：
 
 停止 `io_context` 会暂停已入队的后续执行；调用 `restart()` 并再次 `run()` 后，等待中的 coro 任务可以继续。
 执行器和任务引用的数据都必须存活到任务结束。
@@ -948,7 +948,8 @@ coro::async<void> coro_task() {
 
 ### await_coro
 
-`await_coro()` 允许 ASIO 协程 `co_await` coro 的异步任务：
+`await_coro()` 允许 ASIO 协程 `co_await` coro 的异步任务。ASIO 协程必须运行在 `asio::io_context` 的执行器或基于该上下文的 strand 上；
+不支持 `asio::thread_pool` 等其他上下文：
 
 取消 ASIO 等待时，如果 coro 任务尚未完成，会报告 `asio::error::operation_aborted`。
 已分离的 coro 任务会继续执行，因此它引用的数据必须存活到任务结束。
