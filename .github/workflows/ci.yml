@@ -122,6 +122,24 @@ jobs:
         run: |
           ./coro_task${{ matrix.env.BIN_SUFFIX }}
 
+      - name: Test core_lifetime
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_core_lifetime${{ matrix.env.BIN_SUFFIX }}
+
+      - name: Test core_callback
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_core_callback${{ matrix.env.BIN_SUFFIX }}
+
+      - name: Test core_move_only
+        if: always()
+        working-directory: build
+        run: |
+          ./coro_core_move_only${{ matrix.env.BIN_SUFFIX }}
+
       - name: Test mutex
         if: always()
         working-directory: build

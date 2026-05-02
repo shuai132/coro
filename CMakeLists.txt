@@ -75,6 +75,18 @@ if (CORO_BUILD_TEST)
     add_executable(${TARGET_NAME} test/coro_task.cpp)
     target_compile_definitions(${TARGET_NAME} PUBLIC CORO_DEBUG_LEAK_LOG=LOG CORO_DEBUG_LIFECYCLE=LOG)
 
+    # test core lifetime
+    set(TARGET_NAME ${PROJECT_NAME}_core_lifetime)
+    add_executable(${TARGET_NAME} test/coro_core_lifetime.cpp)
+
+    # test core callback
+    set(TARGET_NAME ${PROJECT_NAME}_core_callback)
+    add_executable(${TARGET_NAME} test/coro_core_callback.cpp)
+
+    # test core move-only result
+    set(TARGET_NAME ${PROJECT_NAME}_core_move_only)
+    add_executable(${TARGET_NAME} test/coro_core_move_only.cpp)
+
     # test mutex
     set(TARGET_NAME ${PROJECT_NAME}_mutex)
     add_executable(${TARGET_NAME} test/coro_mutex.cpp)
