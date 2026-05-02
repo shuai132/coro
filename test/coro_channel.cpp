@@ -2,6 +2,8 @@
 #define CORO_DEBUG_PROMISE_LEAK
 // #define CORO_DISABLE_EXCEPTION
 #include <array>
+#include <atomic>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <thread>
@@ -56,6 +58,78 @@ uint64_t get_now_ms() {
 
 async<void> reservation_handle_owner() {
   co_return;
+}
+
+struct receive_reentrancy_state {
+  std::function<void()> on_move;
+  std::function<void()> on_destroy;
+  int live = 0;
+};
+
+struct reentrant_channel_value {
+  receive_reentrancy_state* state;
+
+  explicit reentrant_channel_value(receive_reentrancy_state& value_state) : state(&value_state) {
+    ++state->live;
+  }
+  reentrant_channel_value(const reentrant_channel_value&) = delete;
+  reentrant_channel_value(reentrant_channel_value&& other) : state(other.state) {
+    ++state->live;
+    if (state->on_move) {
+      state->on_move();
+    }
+  }
+  ~reentrant_channel_value() {
+    --state->live;
+    if (state->on_destroy) {
+      state->on_destroy();
+    }
+  }
+};
+
+template <typename CHANNEL>
+void test_receive_result_reentrancy() {
+  for (bool on_move : {false, true}) {
+    receive_reentrancy_state state;
+    {
+      CHANNEL ch(1);
+      auto owner = reservation_handle_owner();
+      auto sending = ch.send(reentrant_channel_value{state});
+      ASSERT(!sending.await_ready());
+      ASSERT(!sending.await_suspend(owner.current_coro_handle_));
+      ASSERT(sending.await_resume());
+      auto receiving = ch.recv();
+      ASSERT(!receiving.await_ready());
+      ASSERT(!receiving.await_suspend(owner.current_coro_handle_));
+
+      // The receive now owns its value; extracting it may inspect or close the channel.
+      int calls = 0;
+      auto& hook = on_move ? state.on_move : state.on_destroy;
+      hook = [&] {
+        ASSERT(ch.empty());
+        ch.close();
+        ++calls;
+      };
+      std::atomic<bool> completed{false};
+      std::thread worker([&] {
+        auto result = receiving.await_resume();
+        ASSERT(result && result->state == &state);
+        completed.store(true, std::memory_order_release);
+      });
+      auto deadline = std::chrono::steady_clock::now() + 5s;
+      while (!completed.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(1ms);
+      }
+      ASSERT(completed.load(std::memory_order_acquire));
+      worker.join();
+      ASSERT(calls > 0);
+      ASSERT(ch.is_closed());
+      ASSERT(!receiving.pending_value_);
+      hook = {};
+    }
+    ASSERT(state.live == 0);
+    check_coro_leak();
+  }
 }
 
 template <typename CHANNEL>
@@ -740,6 +814,8 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_receive_result_reentrancy<channel_mt<reentrant_channel_value>>();
+  test_receive_result_reentrancy<channel_st<reentrant_channel_value>>();
   LOG("Channel test init");
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {

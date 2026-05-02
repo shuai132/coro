@@ -286,16 +286,15 @@ struct channel {
     }
 
     std::optional<T> await_resume() {
-      std::unique_lock<MUTEX> lock(state_->mutex_);
-
-      // Check if we have a pending value from direct transfer
+      // A delivered value belongs exclusively to this receiver, which is no longer queued.
+      // User value operations may reenter the channel, so do not hold its mutex here.
       if (pending_value_.has_value()) {
         auto result = std::move(pending_value_.value());
         pending_value_.reset();
         return result;
       }
 
-      bool is_closed = state_->closed_.load(std::memory_order_relaxed);
+      bool is_closed = state_->closed_.load(std::memory_order_acquire);
       if (is_closed) {
         return std::nullopt;  // Channel is closed and no data available
       }
