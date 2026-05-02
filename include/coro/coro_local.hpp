@@ -89,6 +89,8 @@ struct coro_local {
       T* ptr = self_->find_in_storage(h.promise());
       if (ptr) {
         result_.emplace(*ptr);
+      } else {
+        result_.reset();
       }
       return false;
     }

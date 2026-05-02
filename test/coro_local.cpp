@@ -49,17 +49,27 @@ async<void> coro_local_basic_test() {
 async<void> coro_local_optional_test() {
   LOG("=== Optional Local Storage Test ===");
 
+  auto getting = double_storage.get_optional();
   // get_optional should return nullopt when not set
-  auto opt = co_await double_storage.get_optional();
+  auto opt = co_await getting;
   ASSERT(!opt.has_value());
 
   // Set a value
   co_await double_storage.set(3.14);
 
   // Now get_optional should return the value
-  opt = co_await double_storage.get_optional();
+  opt = co_await getting;
   ASSERT(opt.has_value());
   ASSERT(opt.value() == 3.14);
+
+  co_await double_storage.erase();
+  opt = co_await getting;
+  ASSERT(!opt.has_value());
+
+  co_await double_storage.set(2.71);
+  opt = co_await getting;
+  ASSERT(opt.has_value());
+  ASSERT(opt.value() == 2.71);
 
   LOG("Optional test: OK");
   co_return;
