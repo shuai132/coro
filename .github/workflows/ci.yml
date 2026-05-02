@@ -11,6 +11,18 @@ on:
       - 'docs/**'
 
 jobs:
+  gcc10-cmake:
+    name: GCC 10 CMake integration
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GCC 10
+        run: sudo apt-get update && sudo apt-get install -y g++-10
+      - name: Test CMake integration
+        env:
+          CXX: g++-10
+        run: cmake -P test/cmake/run.cmake
+
   build-and-test:
 
     name: ${{ matrix.toolchain }} ${{ matrix.build_type }} disable_exception:${{ matrix.disable_exception }} sanitize_address:${{ matrix.sanitize_address }} sanitize_thread:${{ matrix.sanitize_thread }}

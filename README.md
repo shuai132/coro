@@ -150,6 +150,8 @@ I have also learned about some well-known C++20 coroutine open-source libraries,
 - C++20 compatible compiler (GCC 10+, Clang 10+, MSVC 19.28+)
 - CMake 3.15+ (optional, for building tests)
 
+GCC 10 also requires `-fcoroutines`; the CMake `coro` target supplies this option automatically.
+
 ## Installation
 
 ### Option 1: Direct Include

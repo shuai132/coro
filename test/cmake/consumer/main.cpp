@@ -5,8 +5,10 @@
 #include "log.h"
 #include "utils.hpp"
 
+extern "C" int c_value(void);
+
 coro::async<int> value() {
-  co_return 42;
+  co_return c_value();
 }
 
 int main() {

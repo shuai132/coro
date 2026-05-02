@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(coro_consumer CXX)
+project(coro_consumer C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,7 +10,10 @@ if (TARGET coro_task)
     message(FATAL_ERROR "Subproject tests should be disabled by default")
 endif ()
 
-add_executable(consumer main.cpp)
+add_executable(consumer main.cpp helper.c)
+if (NOT MSVC)
+    target_compile_options(consumer PRIVATE "$<$<COMPILE_LANGUAGE:C>:-Werror>")
+endif ()
 target_link_libraries(consumer PRIVATE coro)
 target_include_directories(consumer PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../detail")
 
