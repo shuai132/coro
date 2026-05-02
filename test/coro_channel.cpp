@@ -249,6 +249,40 @@ async<void> test_failed_receive_keeps_sender(bool buffered) {
   ASSERT(sender_completed);
   ASSERT(state.live == 0);
 }
+
+template <typename CHANNEL>
+async<void> test_failed_receive_extraction(bool queued_close) {
+  transfer_state state;
+  CHANNEL ch(1);
+  co_await ch.send(throwing_channel_value{state, 42});
+  auto receiving = ch.recv();
+  auto owner = reservation_handle_owner();
+  ASSERT(!receiving.await_ready());
+  ASSERT(!receiving.await_suspend(owner.current_coro_handle_));
+
+  // Fail after delivery has reserved the value, while extracting it for the caller.
+  state.fail_value = 42;
+  bool caught = false;
+  try {
+    receiving.await_resume();
+  } catch (const std::runtime_error&) {
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(state.live == 0);
+  state.fail_value = -1;
+  if (queued_close) {
+    auto* exec = co_await current_executor();
+    exec->post([&ch] {
+      ch.close();
+    });
+  } else {
+    ch.close();
+  }
+  ASSERT(!(co_await receiving));
+  ASSERT(state.live == 0);
+  ASSERT(!(co_await receiving));
+}
 #endif
 
 // Test basic unbuffered channel
@@ -778,6 +812,10 @@ async<void> run_all_tests() {
   co_await test_failed_receive_keeps_sender<channel_st<throwing_channel_value>>(false);
   co_await test_failed_receive_keeps_sender<channel_mt<throwing_channel_value>>(true);
   co_await test_failed_receive_keeps_sender<channel_st<throwing_channel_value>>(true);
+  for (bool queued_close : {false, true}) {
+    co_await test_failed_receive_extraction<channel_mt<throwing_channel_value>>(queued_close);
+    co_await test_failed_receive_extraction<channel_st<throwing_channel_value>>(queued_close);
+  }
 #endif
   co_await test_unbuffered_channel();
   LOG("Unbuffered channel test passed");

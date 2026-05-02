@@ -289,9 +289,14 @@ struct channel {
       // A delivered value belongs exclusively to this receiver, which is no longer queued.
       // User value operations may reenter the channel, so do not hold its mutex here.
       if (pending_value_.has_value()) {
-        auto result = std::move(pending_value_.value());
-        pending_value_.reset();
-        return result;
+        struct result_cleanup {
+          std::optional<T>& value_;
+          ~result_cleanup() {
+            value_.reset();
+          }
+        } cleanup{pending_value_};
+        // A failed extraction consumes this delivery too; never expose it on a later await.
+        return std::move(pending_value_);
       }
 
       bool is_closed = state_->closed_.load(std::memory_order_acquire);
