@@ -906,7 +906,7 @@ async<void> test_multiple_producers_consumers() {
   bool consumer2_completed = false;
 
   // Producer that sends values 0-4
-  auto producer = [&ch](int offset, bool* completed) -> async<void> {
+  auto producer = [](channel<int>& ch, int offset, bool* completed) -> async<void> {
     for (int i = 0; i < 5; ++i) {
       bool ok = co_await ch.send(offset * 10 + i);
       ASSERT(ok);
@@ -918,7 +918,7 @@ async<void> test_multiple_producers_consumers() {
   };
 
   // Consumer that receives 5 values
-  auto consumer = [&ch](int id, bool* completed) -> async<void> {
+  auto consumer = [](channel<int>& ch, int id, bool* completed) -> async<void> {
     for (int i = 0; i < 5; ++i) {
       auto val_opt = co_await ch.recv();
       ASSERT(val_opt.has_value());
@@ -932,17 +932,9 @@ async<void> test_multiple_producers_consumers() {
     co_return;
   };
 
-  // Start 2 producers and 2 consumers
-  co_await spawn_local(producer(1, &producer1_completed));
-  co_await spawn_local(producer(2, &producer2_completed));
-  co_await spawn_local(consumer(1, &consumer1_completed));
-  co_await spawn_local(consumer(2, &consumer2_completed));
-
-#ifdef CORO_TEST_RUNNER_VERY_SLOW
-  co_await sleep(300ms);
-#else
-  co_await sleep(100ms);
-#endif
+  // Wait for all workers and their coroutine frames before inspecting shared state.
+  co_await when_all(producer(ch, 1, &producer1_completed), producer(ch, 2, &producer2_completed), consumer(ch, 1, &consumer1_completed),
+                    consumer(ch, 2, &consumer2_completed));
 
   LOG("Verify that all coroutines have completed");
   ASSERT(producer1_completed);
