@@ -1,11 +1,21 @@
 /// config debug
 #define CORO_DEBUG_PROMISE_LEAK
+#include <thread>
+
 #include "coro.hpp"
 #include "detail/assert_def.h"
 #include "detail/log.h"
 #include "detail/utils.hpp"
 
 using namespace coro;
+
+async<void> wait_for_event_waiters(const int& completed, int expected) {
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (completed != expected && std::chrono::steady_clock::now() < deadline) {
+    co_await sleep(1ms);
+  }
+  ASSERT(completed == expected);
+}
 
 // Test 1: Basic event - set wakes all waiters
 async<void> event_basic_test() {
@@ -25,15 +35,18 @@ async<void> event_basic_test() {
   co_await spawn_local(waiter());
   co_await spawn_local(waiter());
 
-  co_await sleep(10ms);
   ASSERT(completed == 0);
 
   LOG("Setting event...");
+  auto* exec = co_await current_executor();
+  exec->post([] {
+    // A busy executor must not make a timer stand in for waiter completion.
+    std::this_thread::sleep_for(20ms);
+  });
   evt.set();
   ASSERT(evt.is_set());
 
-  co_await sleep(10ms);
-  ASSERT(completed == 3);
+  co_await wait_for_event_waiters(completed, 3);
 
   LOG("Basic test: OK");
   co_return;
@@ -59,7 +72,6 @@ async<void> event_already_set_test() {
   co_await spawn_local(waiter());
   co_await spawn_local(waiter());
 
-  co_await sleep(10ms);
   ASSERT(completed == 3);
 
   LOG("Already set test: OK");
@@ -91,13 +103,11 @@ async<void> event_clear_reset_test() {
 
   co_await spawn_local(waiter());
 
-  co_await sleep(10ms);
   ASSERT(completed == 0);
 
   LOG("Setting event again...");
   evt.set();
-  co_await sleep(10ms);
-  ASSERT(completed == 1);
+  co_await wait_for_event_waiters(completed, 1);
 
   LOG("Clear and reset test: OK");
   co_return;
@@ -120,7 +130,6 @@ async<void> event_idempotent_state_test() {
   };
 
   co_await spawn_local(waiter());
-  co_await sleep(10ms);
   ASSERT(completed == 1);
 
   evt.clear();
@@ -128,12 +137,10 @@ async<void> event_idempotent_state_test() {
   ASSERT(!evt.is_set());
 
   co_await spawn_local(waiter());
-  co_await sleep(10ms);
   ASSERT(completed == 1);
 
   evt.set();
-  co_await sleep(10ms);
-  ASSERT(completed == 2);
+  co_await wait_for_event_waiters(completed, 2);
 
   LOG("Idempotent state test: OK");
   co_return;
@@ -153,12 +160,10 @@ async<void> event_direct_await_test() {
 
   co_await spawn_local(task());
 
-  co_await sleep(10ms);
   ASSERT(completed == 0);
 
   evt.set();
-  co_await sleep(10ms);
-  ASSERT(completed == 1);
+  co_await wait_for_event_waiters(completed, 1);
 
   LOG("Direct await test: OK");
   co_return;
@@ -182,12 +187,10 @@ async<void> event_multiple_cycles_test() {
     co_await spawn_local(waiter());
     co_await spawn_local(waiter());
 
-    co_await sleep(10ms);
     ASSERT(completed == 0);
 
     evt.set();
-    co_await sleep(10ms);
-    ASSERT(completed == 2);
+    co_await wait_for_event_waiters(completed, 2);
 
     evt.clear();
     ASSERT(!evt.is_set());
@@ -215,13 +218,11 @@ async<void> event_many_waiters_test() {
     co_await spawn_local(waiter());
   }
 
-  co_await sleep(10ms);
   ASSERT(completed == 0);
 
   LOG("Setting event to wake %d waiters...", NUM_WAITERS);
   evt.set();
-  co_await sleep(50ms);
-  ASSERT(completed == NUM_WAITERS);
+  co_await wait_for_event_waiters(completed, NUM_WAITERS);
 
   LOG("Many waiters test: OK");
   co_return;
