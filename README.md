@@ -252,6 +252,8 @@ Two executor implementations are provided:
 
 The built-in executors and `asio_executor` saturate unrepresentable `post_delayed_ns()` deadlines at the steady clock's maximum time point.
 
+The built-in executors service both ready timers and posted tasks, so a continuously replenished queue cannot starve the other.
+
 ### executor_loop
 
 Condition variable based event loop, suitable for main thread:

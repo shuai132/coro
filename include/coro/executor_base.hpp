@@ -32,6 +32,7 @@ class executor_base : public coro::executor {
   std::priority_queue<DelayedTask, std::vector<DelayedTask>, DelayedTaskCompare> delayed_task_queue_;
   std::atomic<size_t> running_thread_id_{0};
   std::atomic<bool> stop_{false};
+  bool prefer_delayed_{true};  // Protected by queue_mutex_.
 
  protected:
   std::optional<std::function<void()>> get_next_task() {
@@ -40,13 +41,21 @@ class executor_base : public coro::executor {
     }
 
     std::lock_guard<std::mutex> lock(queue_mutex_);
-    if (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at <= std::chrono::steady_clock::now()) {
+    return get_next_task_locked();
+  }
+
+  // Alternate ready queues so neither can starve the other by replenishing itself.
+  std::optional<std::function<void()>> get_next_task_locked() {
+    if (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at <= std::chrono::steady_clock::now() &&
+        (task_queue_.empty() || prefer_delayed_)) {
       auto task = std::move(const_cast<DelayedTask&>(delayed_task_queue_.top()).task);
       delayed_task_queue_.pop();
+      prefer_delayed_ = false;
       return task;
     } else if (!task_queue_.empty()) {
       auto task = std::move(task_queue_.front());
       task_queue_.pop();
+      prefer_delayed_ = true;
       return task;
     }
     return std::nullopt;

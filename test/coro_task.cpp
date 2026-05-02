@@ -7,11 +7,13 @@
 
 #include <atomic>
 #include <ctime>
+#include <functional>
 #include <future>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include "TimeCount.hpp"
@@ -338,8 +340,58 @@ void test_post_racing_with_stop(bool delayed) {
   }
 }
 
+template <typename EXECUTOR>
+void test_executor_queue_fairness() {
+  for (bool delayed_chain : {false, true}) {
+    EXECUTOR exec;
+    constexpr int limit = 32;
+    int repeated = 0;
+    int observed = -1;
+    auto schedule = [&](std::function<void()> fn, bool delayed) {
+      if (delayed) {
+        exec.post_delayed_ns(std::move(fn), 0);
+      } else {
+        exec.post(std::move(fn));
+      }
+    };
+    auto finish = [&] {
+      if (repeated == limit && observed >= 0) {
+        exec.stop();
+      }
+    };
+    std::function<void()> repeat;
+    repeat = [&] {
+      ++repeated;
+      if (repeated < limit) {
+        schedule(repeat, delayed_chain);
+      }
+      finish();
+    };
+    schedule(repeat, delayed_chain);
+    schedule(
+        [&] {
+          observed = repeated;
+          finish();
+        },
+        !delayed_chain);
+    if constexpr (std::is_same_v<EXECUTOR, executor_poll>) {
+      for (int turn = 0; turn < limit * 2 && !exec.stopped(); ++turn) {
+        exec.poll();
+      }
+    } else {
+      exec.run_loop();
+    }
+    ASSERT(repeated == limit);
+    ASSERT(observed >= 0);
+    // An endlessly replenished queue must not prevent the other queue from running.
+    ASSERT(observed < limit);
+  }
+}
+
 int main() {
   LOG("init");
+  test_executor_queue_fairness<executor_poll>();
+  test_executor_queue_fairness<executor_loop>();
   test_poll_moves_delayed_callback();
   test_post_racing_with_stop(false);
   test_post_racing_with_stop(true);

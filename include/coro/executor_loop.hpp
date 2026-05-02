@@ -40,12 +40,8 @@ class executor_loop : public executor_base {
           return;
         }
 
-        if (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at <= std::chrono::steady_clock::now()) {
-          task = std::move(const_cast<DelayedTask&>(delayed_task_queue_.top()).task);
-          delayed_task_queue_.pop();
-        } else if (!task_queue_.empty()) {
-          task = std::move(task_queue_.front());
-          task_queue_.pop();
+        if (auto next = get_next_task_locked()) {
+          task = std::move(*next);
         } else {
           if (delayed_task_queue_.empty()) {
             condition_.wait(lock, [this] {
@@ -58,17 +54,7 @@ class executor_loop : public executor_base {
             });
           }
 
-          if (stop_.load(std::memory_order_acquire) && task_queue_.empty() && delayed_task_queue_.empty()) {
-            return;
-          }
-
-          if (!task_queue_.empty()) {
-            task = std::move(task_queue_.front());
-            task_queue_.pop();
-          } else if (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at <= std::chrono::steady_clock::now()) {
-            task = std::move(const_cast<DelayedTask&>(delayed_task_queue_.top()).task);
-            delayed_task_queue_.pop();
-          }
+          continue;
         }
       }
 
