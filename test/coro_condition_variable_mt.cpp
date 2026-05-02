@@ -16,13 +16,22 @@
 using namespace coro;
 using namespace std::chrono_literals;
 
+void wait_for_count(const std::atomic<int>& count, int expected) {
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (count.load(std::memory_order_acquire) != expected && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(1ms);
+  }
+  ASSERT(count.load(std::memory_order_acquire) == expected);
+}
+
 // Test concurrent notify_one from multiple threads
-void test_concurrent_notify() {
+void test_concurrent_notify(std::chrono::milliseconds startup_delay = 0ms) {
   LOG("=== Testing concurrent notify_one ===");
 
   coro::mutex mtx;
   coro::condition_variable cv;
   std::atomic<int> wakeup_count{0};
+  std::atomic<int> waiting_count{0};
   const int num_waiters = 10;
   const int num_notifiers = 3;
 
@@ -36,10 +45,15 @@ void test_concurrent_notify() {
     auto* exec_ptr = exec.get();
 
     // Create waiter with proper parameter passing
-    auto waiter = [](coro::mutex& mtx, coro::condition_variable& cv, std::atomic<int>& wakeup_count, int id) -> async<void> {
+    auto waiter = [](coro::mutex& mtx, coro::condition_variable& cv, executor& exec, std::atomic<int>& waiting_count, std::atomic<int>& wakeup_count,
+                     int id) -> async<void> {
       LOG("Waiter %d: starting", id);
       co_await mtx.lock();
       LOG("Waiter %d: acquired lock, waiting", id);
+      // This marker runs after the current task has registered its wait.
+      exec.post([&waiting_count] {
+        ++waiting_count;
+      });
       co_await cv.wait(mtx);
       LOG("Waiter %d: wait returned, trying to reacquire lock", id);
       co_await mtx.lock();
@@ -49,18 +63,18 @@ void test_concurrent_notify() {
       LOG("Waiter %d: finished", id);
     };
 
-    waiter(mtx, cv, wakeup_count, i).detach(*exec_ptr);
+    waiter(mtx, cv, *exec_ptr, waiting_count, wakeup_count, i).detach(*exec_ptr);
 
     // Each executor runs in its own thread
-    threads.emplace_back([exec_ptr]() {
+    threads.emplace_back([exec_ptr, delay = i == num_waiters - 1 ? startup_delay : 0ms]() {
+      std::this_thread::sleep_for(delay);
       exec_ptr->run_loop();
     });
 
     executors.push_back(std::move(exec));
   }
 
-  // Give waiters time to start and enter wait state
-  std::this_thread::sleep_for(200ms);
+  wait_for_count(waiting_count, num_waiters);
 
   // Notifier threads - multiple threads calling notify_one concurrently
   for (int i = 0; i < num_notifiers; i++) {
@@ -86,8 +100,7 @@ void test_concurrent_notify() {
     threads[i].join();
   }
 
-  // Give time for all coroutines to finish
-  std::this_thread::sleep_for(100ms);
+  wait_for_count(wakeup_count, num_waiters);
 
   // Stop all executors
   for (auto& exec : executors) {
@@ -105,12 +118,13 @@ void test_concurrent_notify() {
 }
 
 // Test concurrent wait from multiple threads
-void test_concurrent_wait() {
+void test_concurrent_wait(std::chrono::milliseconds startup_delay = 0ms) {
   LOG("=== Testing concurrent wait ===");
 
   coro::mutex mtx;  // Shared mutex (like Go's sync.Cond)
   coro::condition_variable cv;
   std::atomic<int> ready_count{0};
+  std::atomic<int> waiting_count{0};
   const int num_threads = 3;  // Reduced for stability
   const int waiters_per_thread = 2;
   const int total_waiters = num_threads * waiters_per_thread;
@@ -126,9 +140,14 @@ void test_concurrent_wait() {
     for (int wid = 0; wid < waiters_per_thread; wid++) {
       int unique_id = tid * waiters_per_thread + wid;
 
-      auto waiter = [](coro::mutex& mtx, coro::condition_variable& cv, std::atomic<int>& ready_count, int unique_id) -> async<void> {
+      auto waiter = [](coro::mutex& mtx, coro::condition_variable& cv, executor& exec, std::atomic<int>& waiting_count, std::atomic<int>& ready_count,
+                       int unique_id) -> async<void> {
         co_await mtx.lock();
         LOG("Waiter %d: waiting", unique_id);
+        // This marker runs after the current task has registered its wait.
+        exec.post([&waiting_count] {
+          ++waiting_count;
+        });
         co_await cv.wait(mtx);
         co_await mtx.lock();
         int count = ++ready_count;
@@ -136,26 +155,25 @@ void test_concurrent_wait() {
         mtx.unlock();
       };
 
-      waiter(mtx, cv, ready_count, unique_id).detach(*exec_ptr);
+      waiter(mtx, cv, *exec_ptr, waiting_count, ready_count, unique_id).detach(*exec_ptr);
     }
 
-    threads.emplace_back([exec_ptr]() {
+    threads.emplace_back([exec_ptr, delay = tid == num_threads - 1 ? startup_delay : 0ms]() {
+      std::this_thread::sleep_for(delay);
       exec_ptr->run_loop();
     });
 
     executors.push_back(std::move(exec));
   }
 
-  // Give waiters time to start and enter wait state
   LOG("Waiting for waiters to be ready...");
-  std::this_thread::sleep_for(500ms);
+  wait_for_count(waiting_count, total_waiters);
 
   // Notify all from main thread
   LOG("Notifying all waiters...");
   cv.notify_all();
 
-  // Give time for all coroutines to finish
-  std::this_thread::sleep_for(500ms);
+  wait_for_count(ready_count, total_waiters);
 
   // Stop all executors
   for (auto& exec : executors) {
@@ -176,6 +194,8 @@ int main() {
   LOG("Multi-threaded Condition Variable test init");
   test_concurrent_notify();
   test_concurrent_wait();
+  test_concurrent_notify(400ms);
+  test_concurrent_wait(600ms);
   LOG("\n=== All multi-threaded tests passed ===");
   check_coro_leak();
   return 0;
