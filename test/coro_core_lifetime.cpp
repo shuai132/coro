@@ -2,6 +2,8 @@
 #ifndef CORO_DISABLE_EXCEPTION
 void test_leak_log(const char*, ...);
 #define CORO_DEBUG_LEAK_LOG test_leak_log
+void test_lifecycle_log(const char*, ...);
+#define CORO_DEBUG_LIFECYCLE test_lifecycle_log
 #endif
 
 #include <cstdint>
@@ -27,6 +29,14 @@ async<int> lazy_value() {
 
 #ifndef CORO_DISABLE_EXCEPTION
 bool fail_leak_log = false;
+thread_local bool fail_initial_log = false;
+
+void test_lifecycle_log(const char* format, ...) {
+  if (fail_initial_log && std::string_view(format).starts_with("promise: initial_suspend:")) {
+    fail_initial_log = false;
+    throw std::runtime_error("initial suspend logger failed");
+  }
+}
 
 void test_leak_log(const char*, ...) {
   if (std::exchange(fail_leak_log, false)) {
@@ -79,6 +89,46 @@ struct frame_parameter {
     }
   }
 };
+
+#ifndef CORO_DISABLE_EXCEPTION
+template <typename T>
+async<T> initial_suspend_logged_task([[maybe_unused]] frame_parameter parameter) {
+  if constexpr (!std::is_void_v<T>) {
+    co_return 42;
+  } else {
+    co_return;
+  }
+}
+
+template <typename T>
+void test_initial_suspend_log_failure() {
+  int live = 0;
+  bool caught = false;
+  fail_initial_log = true;
+  try {
+    auto task = initial_suspend_logged_task<T>(frame_parameter{live});
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "initial suspend logger failed");
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(live == 0);
+  check_coro_leak();
+  {
+    auto task = initial_suspend_logged_task<T>(frame_parameter{live});
+    ASSERT(live == 1);
+    task.current_coro_handle_.resume();
+    ASSERT(task.current_coro_handle_.done());
+    if constexpr (std::is_void_v<T>) {
+      task.await_resume();
+    } else {
+      ASSERT(task.await_resume() == 42);
+    }
+  }
+  ASSERT(live == 0);
+  check_coro_leak();
+}
+#endif
 
 template <typename T>
 async<T> child_with_frame_parameter([[maybe_unused]] frame_parameter parameter, bool delayed, [[maybe_unused]] bool fail) {
@@ -435,6 +485,8 @@ int main() {
 #endif
 #ifndef CORO_DISABLE_EXCEPTION
   test_debug_log_failure();
+  test_initial_suspend_log_failure<int>();
+  test_initial_suspend_log_failure<void>();
 #endif
   test_alignment_argument();
 #ifdef CORO_TEST_ALIGNED_COROUTINE_ALLOCATION

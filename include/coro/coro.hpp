@@ -184,7 +184,17 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
   awaitable<T> get_return_object();
 
   std::suspend_always initial_suspend() {
-    CORO_DEBUG_LIFECYCLE("promise: initial_suspend: p: %p, p.h: %p", this, parent_handle_.address());
+#ifndef CORO_DISABLE_EXCEPTION
+    try {
+#endif
+      CORO_DEBUG_LIFECYCLE("promise: initial_suspend: p: %p, p.h: %p", this, parent_handle_.address());
+#ifndef CORO_DISABLE_EXCEPTION
+    } catch (...) {
+      // Creation failure destroys the frame even if the compiler also destroys the return object.
+      awaitable_->current_coro_handle_ = nullptr;
+      throw;
+    }
+#endif
     return {};
   }
 
