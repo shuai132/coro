@@ -319,11 +319,12 @@ struct awaitable {
   void detach(auto& executor) {
     auto* exec_to_use = current_coro_handle_.promise().executor_ ? current_coro_handle_.promise().executor_ : &executor;
     exec_to_use->dispatch([coro = std::make_shared<awaitable<T>>(std::move(*this)), exec_to_use]() mutable {
+      // Keep ownership until logging succeeds, so a failure still releases the unstarted frame.
+      CORO_DEBUG_LIFECYCLE("awaitable: resume begin: %p, h: %p", coro.get(), coro->current_coro_handle_.address());
       auto handle = std::exchange(coro->current_coro_handle_, {});
       handle.promise().awaitable_ = nullptr;
       handle.promise().executor_ = exec_to_use;
       handle.promise().started_ = true;
-      CORO_DEBUG_LIFECYCLE("awaitable: resume begin: %p, h: %p", coro.get(), handle.address());
       handle.resume();
       CORO_DEBUG_LIFECYCLE("awaitable: resume end: %p, h: %p", coro.get(), handle.address());
     });

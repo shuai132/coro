@@ -30,11 +30,16 @@ async<int> lazy_value() {
 #ifndef CORO_DISABLE_EXCEPTION
 bool fail_leak_log = false;
 thread_local bool fail_initial_log = false;
+thread_local bool fail_detach_log = false;
 
 void test_lifecycle_log(const char* format, ...) {
   if (fail_initial_log && std::string_view(format).starts_with("promise: initial_suspend:")) {
     fail_initial_log = false;
     throw std::runtime_error("initial suspend logger failed");
+  }
+  if (fail_detach_log && std::string_view(format).starts_with("awaitable: resume begin:")) {
+    fail_detach_log = false;
+    throw std::runtime_error("detach logger failed");
   }
 }
 
@@ -127,6 +132,37 @@ void test_initial_suspend_log_failure() {
   }
   ASSERT(live == 0);
   check_coro_leak();
+}
+
+template <typename T>
+void test_detach_log_failure() {
+  for (bool immediate : {false, true}) {
+    executor_poll executor;
+    if (immediate) {
+      executor.poll();
+    }
+    int live = 0;
+    auto task = initial_suspend_logged_task<T>(frame_parameter{live});
+    ASSERT(live == 1);
+    fail_detach_log = true;
+    bool caught = false;
+    try {
+      task.detach(executor);
+      if (!immediate) {
+        executor.poll();
+      }
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == "detach logger failed");
+      caught = true;
+    }
+    ASSERT(caught);
+    ASSERT(live == 0);
+    check_coro_leak();
+    initial_suspend_logged_task<T>(frame_parameter{live}).detach(executor);
+    executor.poll();
+    ASSERT(live == 0);
+    check_coro_leak();
+  }
 }
 #endif
 
@@ -487,6 +523,8 @@ int main() {
   test_debug_log_failure();
   test_initial_suspend_log_failure<int>();
   test_initial_suspend_log_failure<void>();
+  test_detach_log_failure<int>();
+  test_detach_log_failure<void>();
 #endif
   test_alignment_argument();
 #ifdef CORO_TEST_ALIGNED_COROUTINE_ALLOCATION
