@@ -97,11 +97,11 @@ struct channel {
 
         delivered_ = true;
 
-        // Resume receiver immediately with the value
+        // Queue bound receivers so channel pipelines cannot recurse through dispatch.
         auto recv_handle = recv_awaiter->handle_;
         auto recv_exec = recv_awaiter->exec_;
         lock.unlock();
-        detail::resume_via(recv_exec, recv_handle);
+        detail::post_resume_via(recv_exec, recv_handle);
 
         // Return false to continue execution without suspension
         return false;
@@ -255,7 +255,7 @@ struct channel {
           auto sender_h = sender_awaiter->handle_;
           auto sender_exec = sender_awaiter->exec_;
           lock.unlock();
-          detail::resume_via(sender_exec, sender_h);
+          detail::post_resume_via(sender_exec, sender_h);
         }
 
         return false;
@@ -277,11 +277,11 @@ struct channel {
         send_awaiter->next_ = nullptr;
         send_awaiter->delivered_ = true;
 
-        // Resume sender immediately so it can continue
+        // Queue bound senders so channel pipelines cannot recurse through dispatch.
         auto send_handle = send_awaiter->handle_;
         auto send_exec = send_awaiter->exec_;
         lock.unlock();
-        detail::resume_via(send_exec, send_handle);
+        detail::post_resume_via(send_exec, send_handle);
 
         // Return false to continue execution without suspension
         return false;
@@ -367,7 +367,7 @@ struct channel {
       auto exec = send_current->exec_;
       auto* next = send_current->next_;
       send_current->next_ = nullptr;  // Clear the link for safety
-      detail::resume_via(exec, h);
+      detail::post_resume_via(exec, h);
       send_current = next;
     }
 
@@ -378,7 +378,7 @@ struct channel {
       auto exec = recv_current->exec_;
       auto* next = recv_current->next_;
       recv_current->next_ = nullptr;  // Clear the link for safety
-      detail::resume_via(exec, h);
+      detail::post_resume_via(exec, h);
       recv_current = next;
     }
   }

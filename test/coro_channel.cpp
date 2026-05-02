@@ -21,6 +21,119 @@
 
 using namespace coro;
 
+struct channel_chain_executor : executor_poll {
+  int depth = 0;
+  int max_depth = 0;
+
+  void dispatch(std::function<void()> task) override {
+    ++depth;
+    if (depth > max_depth) {
+      max_depth = depth;
+    }
+    executor_poll::dispatch(std::move(task));
+    --depth;
+  }
+};
+
+enum class channel_chain_mode { forward, reverse, buffered, close_receivers, close_senders };
+
+template <typename CHANNEL>
+async<void> channel_chain_stage(CHANNEL& input, CHANNEL& output, channel_chain_mode mode) {
+  if (mode == channel_chain_mode::close_receivers) {
+    ASSERT(!(co_await input.recv()));
+    output.close();
+  } else if (mode == channel_chain_mode::close_senders) {
+    ASSERT(!(co_await output.send(42)));
+    input.close();
+  } else if (mode == channel_chain_mode::forward) {
+    auto value = co_await input.recv();
+    ASSERT(value && *value == 42);
+    ASSERT(co_await output.send(*value));
+  } else {
+    ASSERT(co_await output.send(42));
+    auto value = co_await input.recv();
+    ASSERT(value && *value == 42);
+  }
+}
+
+template <typename CHANNEL>
+async<void> channel_chain_endpoint(CHANNEL& ch, bool sending, bool closing) {
+  if (sending) {
+    ASSERT((co_await ch.send(42)) == !closing);
+  } else {
+    auto value = co_await ch.recv();
+    if (closing) {
+      ASSERT(!value);
+    } else {
+      ASSERT(value && *value == 42);
+    }
+  }
+}
+
+template <typename CHANNEL>
+async<void> fill_channel_chain(std::vector<std::unique_ptr<CHANNEL>>& channels) {
+  for (auto& ch : channels) {
+    ASSERT(co_await ch->send(42));
+  }
+}
+
+template <typename CHANNEL>
+void test_channel_wakeup_chain() {
+  constexpr int stages = 128;
+  for (auto mode : {channel_chain_mode::forward, channel_chain_mode::reverse, channel_chain_mode::buffered, channel_chain_mode::close_receivers,
+                    channel_chain_mode::close_senders}) {
+    channel_chain_executor executor;
+    std::vector<std::unique_ptr<CHANNEL>> channels;
+    for (int index = 0; index <= stages; ++index) {
+      channels.push_back(std::make_unique<CHANNEL>(mode == channel_chain_mode::buffered ? 1 : 0));
+    }
+    if (mode == channel_chain_mode::buffered) {
+      bool filled = false;
+      fill_channel_chain(channels).detach_with_callback(executor, [&] {
+        filled = true;
+      });
+      executor.poll();
+      ASSERT(filled);
+    }
+    int completed = 0;
+    auto on_completed = [&] {
+      ++completed;
+    };
+    for (int index = 0; index < stages; ++index) {
+      channel_chain_stage(*channels[index], *channels[index + 1], mode).detach_with_callback(executor, on_completed);
+    }
+    const bool forward = mode == channel_chain_mode::forward || mode == channel_chain_mode::close_receivers;
+    const bool closing = mode == channel_chain_mode::close_receivers || mode == channel_chain_mode::close_senders;
+    channel_chain_endpoint(forward ? *channels.back() : *channels.front(), !forward, closing).detach_with_callback(executor, on_completed);
+    // Every stage must reach its first wait before the transfer or close begins.
+    for (int index = 0; index <= stages; ++index) {
+      executor.poll();
+    }
+    ASSERT(completed == 0);
+    int expected = stages + 1;
+    if (closing) {
+      executor.post([&] {
+        (forward ? channels.front() : channels.back())->close();
+      });
+    } else {
+      ++expected;
+      channel_chain_endpoint(forward ? *channels.front() : *channels.back(), forward, false).detach_with_callback(executor, on_completed);
+    }
+    for (int attempt = 0; completed != expected && attempt < 10000; ++attempt) {
+      executor.poll();
+    }
+    ASSERT(completed == expected);
+    ASSERT(executor.max_depth <= 8);
+    if (mode == channel_chain_mode::buffered) {
+      for (auto& ch : channels) {
+        ASSERT(ch->size() == 1);
+      }
+    }
+    channels.clear();
+    check_coro_leak();
+  }
+}
+
 thread_local size_t* channel_allocation_bytes = nullptr;
 
 void* operator new(std::size_t size) {
@@ -72,11 +185,11 @@ void test_unbuffered_channel_does_not_allocate_message_storage() {
 }
 
 template <typename CHANNEL>
-async<void> reused_queued_sender(CHANNEL& ch, bool& completed) {
+async<void> reused_queued_sender(CHANNEL& ch, event& completed) {
   auto sending = ch.send(42);
   ASSERT(co_await sending);
   ASSERT(!(co_await sending));
-  completed = true;
+  completed.set();
 }
 
 template <typename CHANNEL>
@@ -94,11 +207,12 @@ async<void> test_reused_send_results() {
   }
   {
     CHANNEL ch(1);
-    bool completed = false;
+    event completed;
     co_await spawn_local(reused_queued_sender(ch, completed));
-    ASSERT(!completed);
+    ASSERT(!completed.is_set());
     ch.close();
-    ASSERT(completed);
+    co_await completed;
+    ASSERT(completed.is_set());
   }
 }
 
@@ -198,11 +312,11 @@ void test_receive_result_reentrancy() {
 }
 
 template <typename CHANNEL>
-async<void> reservation_receiver(CHANNEL& ch, int& result, bool& completed) {
+async<void> reservation_receiver(CHANNEL& ch, int& result, event& completed) {
   auto value = co_await ch.recv();
   ASSERT(value);
   result = *value;
-  completed = true;
+  completed.set();
 }
 
 template <typename CHANNEL>
@@ -216,14 +330,15 @@ async<void> test_buffered_receive_reservation() {
 
   // Interleave another receiver between the first await_suspend and await_resume.
   // A ready receive must already own its value when it releases the channel lock.
-  bool second_completed = false;
+  event second_completed;
   int second_value = 0;
   co_await spawn_local(reservation_receiver(ch, second_value, second_completed));
   auto first_value = first.await_resume();
   ASSERT(first_value && *first_value == 1);
-  ASSERT(!second_completed);
+  ASSERT(!second_completed.is_set());
   co_await ch.send(2);
-  ASSERT(second_completed);
+  co_await second_completed;
+  ASSERT(second_completed.is_set());
   ASSERT(second_value == 2);
   ASSERT(ch.empty());
 }
@@ -256,24 +371,24 @@ struct throwing_channel_value {
 };
 
 template <typename CHANNEL>
-async<void> transfer_receiver(CHANNEL& ch, bool& completed) {
+async<void> transfer_receiver(CHANNEL& ch, event& completed) {
   auto value = co_await ch.recv();
   ASSERT(!value);
-  completed = true;
+  completed.set();
 }
 
 template <typename CHANNEL>
-async<void> transfer_sender(CHANNEL& ch, transfer_state& state, int value, bool& completed) {
+async<void> transfer_sender(CHANNEL& ch, transfer_state& state, int value, event& completed) {
   bool delivered = co_await ch.send(throwing_channel_value{state, value});
   ASSERT(!delivered);
-  completed = true;
+  completed.set();
 }
 
 template <typename CHANNEL>
 async<void> test_failed_send_keeps_receiver() {
   transfer_state state;
   CHANNEL ch;
-  bool receiver_completed = false;
+  event receiver_completed;
   co_await spawn_local(transfer_receiver(ch, receiver_completed));
   {
     auto sending = ch.send(throwing_channel_value{state, 42});
@@ -287,7 +402,8 @@ async<void> test_failed_send_keeps_receiver() {
     state.fail_value = -1;
     ASSERT(caught);
     ch.close();
-    ASSERT(receiver_completed);
+    co_await receiver_completed;
+    ASSERT(receiver_completed.is_set());
   }
   ASSERT(state.live == 0);
 }
@@ -299,7 +415,7 @@ async<void> test_failed_receive_keeps_sender(bool buffered) {
   if (buffered) {
     co_await ch.send(throwing_channel_value{state, 1});
   }
-  bool sender_completed = false;
+  event sender_completed;
   co_await spawn_local(transfer_sender(ch, state, 42, sender_completed));
   state.fail_value = 42;
   bool caught = false;
@@ -311,7 +427,8 @@ async<void> test_failed_receive_keeps_sender(bool buffered) {
   state.fail_value = -1;
   ASSERT(caught);
   ch.close();
-  ASSERT(sender_completed);
+  co_await sender_completed;
+  ASSERT(sender_completed.is_set());
   ASSERT(state.live == 0);
 }
 
@@ -354,13 +471,13 @@ async<void> test_reused_receive_after_refill_failure(bool close_before_retry) {
   transfer_state state;
   CHANNEL ch(1);
   co_await ch.send(throwing_channel_value{state, 1});
-  bool sender_completed = false;
-  auto sender = [](CHANNEL& ch, transfer_state& state, bool& completed, bool expected) -> async<void> {
+  event sender_completed;
+  auto sender = [](CHANNEL& ch, transfer_state& state, event& completed, bool expected) -> async<void> {
     ASSERT((co_await ch.send(throwing_channel_value{state, 42})) == expected);
-    completed = true;
+    completed.set();
   };
   co_await spawn_local(sender(ch, state, sender_completed, !close_before_retry));
-  ASSERT(!sender_completed);
+  ASSERT(!sender_completed.is_set());
   auto receiving = ch.recv();
   state.fail_value = 42;
   bool caught = false;
@@ -370,7 +487,7 @@ async<void> test_reused_receive_after_refill_failure(bool close_before_retry) {
     caught = true;
   }
   ASSERT(caught);
-  ASSERT(!sender_completed);
+  ASSERT(!sender_completed.is_set());
   state.fail_value = -1;
   if (close_before_retry) {
     ch.close();
@@ -379,7 +496,8 @@ async<void> test_reused_receive_after_refill_failure(bool close_before_retry) {
     auto value = co_await receiving;
     ASSERT(value && value->value == 42);
   }
-  ASSERT(sender_completed);
+  co_await sender_completed;
+  ASSERT(sender_completed.is_set());
   ASSERT(state.live == 0);
   ch.close();
   ASSERT(!(co_await receiving));
@@ -392,14 +510,14 @@ async<void> test_failed_refill_preserves_sender_order(size_t capacity, bool clos
   for (size_t i = 0; i < capacity; ++i) {
     ASSERT(co_await ch.send(throwing_channel_value{state, static_cast<int>(i)}));
   }
-  auto sender = [](CHANNEL& ch, transfer_state& state, int value, bool expected, bool& completed) -> async<void> {
+  auto sender = [](CHANNEL& ch, transfer_state& state, int value, bool expected, event& completed) -> async<void> {
     ASSERT((co_await ch.send(throwing_channel_value{state, value})) == expected);
-    completed = true;
+    completed.set();
   };
-  bool first_completed = false;
-  bool second_completed = false;
+  event first_completed;
+  event second_completed;
   co_await spawn_local(sender(ch, state, 42, !close_before_receive, first_completed));
-  ASSERT(!first_completed);
+  ASSERT(!first_completed.is_set());
   state.fail_value = 42;
   bool caught = false;
   try {
@@ -413,8 +531,8 @@ async<void> test_failed_refill_preserves_sender_order(size_t capacity, bool clos
 
   // A failed refill leaves a free slot, but a new sender must not bypass an older waiter.
   co_await spawn_local(sender(ch, state, 43, !close_before_receive, second_completed));
-  ASSERT(!first_completed);
-  ASSERT(!second_completed);
+  ASSERT(!first_completed.is_set());
+  ASSERT(!second_completed.is_set());
   ASSERT(ch.size() == capacity - 1);
   if (close_before_receive) {
     ch.close();
@@ -430,8 +548,10 @@ async<void> test_failed_refill_preserves_sender_order(size_t capacity, bool clos
     }
     ch.close();
   }
-  ASSERT(first_completed);
-  ASSERT(second_completed);
+  co_await first_completed;
+  ASSERT(first_completed.is_set());
+  co_await second_completed;
+  ASSERT(second_completed.is_set());
   ASSERT(!(co_await ch.recv()));
   ASSERT(state.live == 0);
 }
@@ -748,9 +868,10 @@ async<void> test_channel_drain_buffer_after_close() {
   LOG("Channel drain buffer after close test completed");
 }
 
-async<void> queued_sender(channel<int>& ch, int value, int& waiting_count, bool& send_result) {
+async<void> queued_sender(channel<int>& ch, int value, int& waiting_count, bool& send_result, wait_group& completed) {
   ++waiting_count;
   send_result = co_await ch.send(value);
+  completed.done();
 }
 
 async<void> test_unbuffered_channel_fifo_senders() {
@@ -758,11 +879,13 @@ async<void> test_unbuffered_channel_fifo_senders() {
 
   channel<int> ch;
   int waiting_count = 0;
+  wait_group completed;
+  completed.add(3);
   std::array<bool, 3> send_results{false, false, false};
 
-  co_await spawn_local(queued_sender(ch, 1, waiting_count, send_results[0]));
-  co_await spawn_local(queued_sender(ch, 2, waiting_count, send_results[1]));
-  co_await spawn_local(queued_sender(ch, 3, waiting_count, send_results[2]));
+  co_await spawn_local(queued_sender(ch, 1, waiting_count, send_results[0], completed));
+  co_await spawn_local(queued_sender(ch, 2, waiting_count, send_results[1], completed));
+  co_await spawn_local(queued_sender(ch, 3, waiting_count, send_results[2], completed));
 
   ASSERT(waiting_count == 3);
 
@@ -776,6 +899,7 @@ async<void> test_unbuffered_channel_fifo_senders() {
   ASSERT(*first == 1);
   ASSERT(*second == 2);
   ASSERT(*third == 3);
+  co_await completed;
   ASSERT(send_results[0]);
   ASSERT(send_results[1]);
   ASSERT(send_results[2]);
@@ -784,12 +908,13 @@ async<void> test_unbuffered_channel_fifo_senders() {
 }
 
 async<void> queued_receiver(channel<int>& ch, size_t index, int& waiting_count, std::array<int, 3>& received_values,
-                            std::array<bool, 3>& receiver_completed) {
+                            std::array<bool, 3>& receiver_completed, wait_group& completed) {
   ++waiting_count;
   auto value = co_await ch.recv();
   ASSERT(value.has_value());
   received_values[index] = *value;
   receiver_completed[index] = true;
+  completed.done();
 }
 
 async<void> test_unbuffered_channel_fifo_receivers() {
@@ -797,12 +922,14 @@ async<void> test_unbuffered_channel_fifo_receivers() {
 
   channel<int> ch;
   int waiting_count = 0;
+  wait_group completed;
+  completed.add(3);
   std::array<int, 3> received_values{0, 0, 0};
   std::array<bool, 3> receiver_completed{false, false, false};
 
-  co_await spawn_local(queued_receiver(ch, 0, waiting_count, received_values, receiver_completed));
-  co_await spawn_local(queued_receiver(ch, 1, waiting_count, received_values, receiver_completed));
-  co_await spawn_local(queued_receiver(ch, 2, waiting_count, received_values, receiver_completed));
+  co_await spawn_local(queued_receiver(ch, 0, waiting_count, received_values, receiver_completed, completed));
+  co_await spawn_local(queued_receiver(ch, 1, waiting_count, received_values, receiver_completed, completed));
+  co_await spawn_local(queued_receiver(ch, 2, waiting_count, received_values, receiver_completed, completed));
 
   ASSERT(waiting_count == 3);
 
@@ -810,6 +937,7 @@ async<void> test_unbuffered_channel_fifo_receivers() {
   ASSERT(co_await ch.send(20));
   ASSERT(co_await ch.send(30));
 
+  co_await completed;
   ASSERT(receiver_completed[0]);
   ASSERT(receiver_completed[1]);
   ASSERT(receiver_completed[2]);
@@ -1008,6 +1136,8 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_channel_wakeup_chain<channel_mt<int>>();
+  test_channel_wakeup_chain<channel_st<int>>();
   test_unbuffered_channel_does_not_allocate_message_storage<channel_mt>();
   test_unbuffered_channel_does_not_allocate_message_storage<channel_st>();
   test_receive_result_reentrancy<channel_mt<reentrant_channel_value>>();

@@ -184,6 +184,7 @@ async<void> test_broadcast_vs_send() {
   int receiver2_value = 0;
   bool receiver1_done = false;
   bool receiver2_done = false;
+  event first_received;
   wait_group receivers;
   receivers.add(2);
 
@@ -198,17 +199,20 @@ async<void> test_broadcast_vs_send() {
   };
 
   // Start 2 receivers
-  co_await spawn_local(receiver(ch, 1, &receiver1_value, &receiver1_done).with_callback([&receivers] {
+  co_await spawn_local(receiver(ch, 1, &receiver1_value, &receiver1_done).with_callback([&receivers, &first_received] {
     receivers.done();
+    first_received.set();
   }));
-  co_await spawn_local(receiver(ch, 2, &receiver2_value, &receiver2_done).with_callback([&receivers] {
+  co_await spawn_local(receiver(ch, 2, &receiver2_value, &receiver2_done).with_callback([&receivers, &first_received] {
     receivers.done();
+    first_received.set();
   }));
 
   // First, use send() - should only go to ONE receiver
   LOG("Using send(100) - should go to only one receiver");
   bool send_ok = co_await ch.send(100);
   ASSERT(send_ok);
+  co_await first_received;
 
   // Exactly one receiver should have received the value
   int received_count = (receiver1_value == 100 ? 1 : 0) + (receiver2_value == 100 ? 1 : 0);
