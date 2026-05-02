@@ -25,7 +25,7 @@ struct async_debug_registry {
 struct async_debug_guard {
   std::lock_guard<std::mutex> lock_{async_debug_registry::mutex()};
 
-  async_debug_guard() noexcept {
+  async_debug_guard() {
     async_debug_registry::updating_ = true;
     std::atomic_signal_fence(std::memory_order_seq_cst);
   }
@@ -51,7 +51,7 @@ struct async_debug_node {
   async_debug_node(const async_debug_node&) = delete;
   async_debug_node& operator=(const async_debug_node&) = delete;
 
-  void register_frame(void* frame, std::source_location location) noexcept {
+  void register_frame(void* frame, std::source_location location) {
     async_debug_guard lock;
     frame_ = frame;
     id_ = ++async_debug_registry::next_id_;

@@ -1,6 +1,10 @@
 #define CORO_DEBUG_PROMISE_LEAK
 
+#include <cstdlib>
 #include <cstring>
+#ifndef CORO_DISABLE_EXCEPTION
+#include <new>
+#endif
 #include <thread>
 #include <vector>
 
@@ -12,6 +16,31 @@
 #include "utils.hpp"
 
 using namespace coro;
+
+#ifndef CORO_DISABLE_EXCEPTION
+namespace {
+bool fail_debug_mutex_allocation = false;
+}
+
+void* operator new(std::size_t size) {
+  if (fail_debug_mutex_allocation && size == sizeof(std::mutex)) {
+    fail_debug_mutex_allocation = false;
+    throw std::bad_alloc();
+  }
+  if (auto* memory = std::malloc(size ? size : 1)) {
+    return memory;
+  }
+  throw std::bad_alloc();
+}
+
+void operator delete(void* memory) noexcept {
+  std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t) noexcept {
+  std::free(memory);
+}
+#endif
 
 std::coroutine_handle<> debug_leaf_handle;
 
@@ -76,6 +105,22 @@ void test_async_debug_static_lifetime() {
   check_coro_leak();
 }
 
+#ifndef CORO_DISABLE_EXCEPTION
+void test_debug_registration_failure() {
+  fail_debug_mutex_allocation = true;
+  bool caught = false;
+  try {
+    auto task = debug_immediate();
+  } catch (const std::bad_alloc&) {
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(!fail_debug_mutex_allocation);
+  ASSERT(detail::async_debug_registry::head_ == nullptr);
+  ASSERT(debug_coro_promise::debug_coro_leak.empty());
+}
+#endif
+
 // Stable breakpoint for debugger integration tests, with all three frames alive.
 extern "C" void coro_debug_checkpoint() {
   ASSERT(debug_leaf_handle);
@@ -83,6 +128,9 @@ extern "C" void coro_debug_checkpoint() {
 
 int main() {
   ASSERT(detail::async_debug_registry::head_ == nullptr);
+#ifndef CORO_DISABLE_EXCEPTION
+  test_debug_registration_failure();
+#endif
   {
     auto lazy = debug_immediate();
     auto id = lazy.current_coro_handle_.promise().debug_node_.id_;
