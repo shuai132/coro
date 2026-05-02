@@ -555,6 +555,64 @@ void test_strand_interoperability(int worker_count) {
   ASSERT(debug_coro_promise::debug_coro_leak.empty());
 }
 
+#ifndef CORO_DISABLE_EXCEPTION
+template <typename T>
+async<T> cancellable_wait_child(std::function<void()>& release, bool& completed) {
+  co_await callback_awaiter<void>([&release](auto callback) {
+    release = std::move(callback);
+  });
+  completed = true;
+  if constexpr (!std::is_void_v<T>) {
+    co_return 42;
+  }
+}
+
+template <typename T>
+asio::awaitable<void> await_cancelled_child(std::function<void()>& release, bool& completed) {
+  co_await await_coro(cancellable_wait_child<T>(release, completed));
+}
+
+template <typename T>
+void test_cancelled_await_coro() {
+  asio::io_context context;
+  asio::cancellation_signal cancellation;
+  std::function<void()> release;
+  bool child_completed = false;
+  bool parent_completed = false;
+  std::exception_ptr exception;
+  asio::co_spawn(context, await_cancelled_child<T>(release, child_completed),
+                 asio::bind_cancellation_slot(cancellation.slot(), [&](std::exception_ptr error) {
+                   exception = error;
+                   parent_completed = true;
+                 }));
+  context.poll();
+  ASSERT(release);
+  ASSERT(!parent_completed);
+  cancellation.emit(asio::cancellation_type::terminal);
+  context.poll();
+  bool cancelled_before_child_completed = parent_completed && !child_completed;
+
+  // Cancelling the ASIO wait does not cancel the detached coro task.
+  release();
+  release = nullptr;
+  context.restart();
+  context.run_for(1s);
+  ASSERT(child_completed);
+  ASSERT(cancelled_before_child_completed);
+  bool cancelled = false;
+  if (exception) {
+    try {
+      std::rethrow_exception(exception);
+    } catch (const asio::system_error& error) {
+      cancelled = error.code() == asio::error::operation_aborted;
+    } catch (...) {
+    }
+  }
+  ASSERT(cancelled);
+  ASSERT(debug_coro_promise::debug_coro_leak.empty());
+}
+#endif
+
 /// ============================================================================
 /// Main test runner
 /// ============================================================================
@@ -601,6 +659,10 @@ async<void> run_all_tests() {
 }
 
 int main() {
+#ifndef CORO_DISABLE_EXCEPTION
+  test_cancelled_await_coro<void>();
+  test_cancelled_await_coro<int>();
+#endif
   test_strand_interoperability(1);
   test_strand_interoperability(4);
   test_large_asio_delayed_post();

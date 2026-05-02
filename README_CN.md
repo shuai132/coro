@@ -923,6 +923,9 @@ coro::async<void> coro_task() {
 
 `await_coro()` 允许 ASIO 协程 `co_await` coro 的异步任务：
 
+取消 ASIO 等待时，如果 coro 任务尚未完成，会报告 `asio::error::operation_aborted`。
+已分离的 coro 任务会继续执行，因此它引用的数据必须存活到任务结束。
+
 ```cpp
 #include "coro/adaptor/asio_adaptor.hpp"
 

@@ -260,6 +260,7 @@ template <typename T>
   struct state : asio_executor {
     std::mutex signal_mutex_;
     std::optional<T> result;
+    bool completed = false;
 #ifndef CORO_DISABLE_EXCEPTION
     std::exception_ptr exception;
 #endif
@@ -276,6 +277,7 @@ template <typename T>
       [st, signal_timer](T value) {
         std::lock_guard<std::mutex> lock(st->signal_mutex_);
         st->result.emplace(std::move(value));
+        st->completed = true;
         signal_timer->expires_at(asio::steady_timer::time_point::min());
       },
       [st, signal_timer]([[maybe_unused]] std::exception_ptr ep) {
@@ -283,6 +285,7 @@ template <typename T>
 #ifndef CORO_DISABLE_EXCEPTION
         st->exception = ep;
 #endif
+        st->completed = true;
         signal_timer->expires_at(asio::steady_timer::time_point::min());
       });
 
@@ -293,6 +296,9 @@ template <typename T>
   std::lock_guard<std::mutex> lock(st->signal_mutex_);
 
 #ifndef CORO_DISABLE_EXCEPTION
+  if (!st->completed) {
+    throw asio::system_error(ec);
+  }
   if (st->exception) {
     std::rethrow_exception(st->exception);
   }
@@ -316,6 +322,7 @@ template <>
   struct state : asio_executor {
     std::mutex signal_mutex_;
     std::exception_ptr exception;
+    bool completed = false;
     state(asio::io_context& ctx, asio::any_io_executor exec) : asio_executor(ctx, std::move(exec)) {}
   };
   auto st = std::make_shared<state>(io_ctx, std::move(executor));
@@ -324,11 +331,13 @@ template <>
       *st,
       [st, signal_timer]() {
         std::lock_guard<std::mutex> lock(st->signal_mutex_);
+        st->completed = true;
         signal_timer->expires_at(asio::steady_timer::time_point::min());
       },
       [st, signal_timer](const std::exception_ptr& ep) {
         std::lock_guard<std::mutex> lock(st->signal_mutex_);
         st->exception = ep;
+        st->completed = true;
         signal_timer->expires_at(asio::steady_timer::time_point::min());
       });
 
@@ -338,6 +347,9 @@ template <>
   co_await detail::wait_coro_signal(st, signal_timer, ec);
   std::lock_guard<std::mutex> lock(st->signal_mutex_);
 
+  if (!st->completed) {
+    throw asio::system_error(ec);
+  }
   if (st->exception) {
     std::rethrow_exception(st->exception);
   }

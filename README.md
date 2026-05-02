@@ -943,6 +943,9 @@ coro::async<void> coro_task() {
 
 `await_coro()` allows ASIO coroutines to `co_await` coro asyncs:
 
+Cancelling the ASIO wait reports `asio::error::operation_aborted` if the coro task has not completed.
+The detached coro task continues running, so its referenced data must remain alive until it finishes.
+
 ```cpp
 #include "coro/adaptor/asio_adaptor.hpp"
 
