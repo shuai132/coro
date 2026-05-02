@@ -41,10 +41,9 @@ class executor_base : public coro::executor {
 
     std::lock_guard<std::mutex> lock(queue_mutex_);
     if (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at <= std::chrono::steady_clock::now()) {
-      // Create a mutable copy to safely extract the task
-      DelayedTask delayed_task = delayed_task_queue_.top();
+      auto task = std::move(const_cast<DelayedTask&>(delayed_task_queue_.top()).task);
       delayed_task_queue_.pop();
-      return std::move(delayed_task.task);
+      return task;
     } else if (!task_queue_.empty()) {
       auto task = std::move(task_queue_.front());
       task_queue_.pop();

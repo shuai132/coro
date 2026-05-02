@@ -10,6 +10,7 @@
 #include <future>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -195,6 +196,50 @@ void test_large_delayed_post() {
   }
 }
 
+struct timer_copy_state {
+  bool reject_copies = false;
+  bool called = false;
+};
+
+struct copy_sensitive_timer {
+  timer_copy_state* state;
+
+  explicit copy_sensitive_timer(timer_copy_state& value) : state(&value) {}
+  copy_sensitive_timer(copy_sensitive_timer&&) noexcept = default;
+  copy_sensitive_timer(const copy_sensitive_timer& other) : state(other.state) {
+#ifndef CORO_DISABLE_EXCEPTION
+    if (state->reject_copies) {
+      throw std::runtime_error("queued timer callback copied");
+    }
+#else
+    ASSERT(!state->reject_copies);
+#endif
+  }
+
+  void operator()() {
+    state->called = true;
+  }
+};
+
+void test_poll_moves_delayed_callback() {
+  executor_poll executor;
+  timer_copy_state state;
+  executor.post_delayed_ns(copy_sensitive_timer{state}, 0);
+  state.reject_copies = true;
+  bool copy_failed = false;
+#ifndef CORO_DISABLE_EXCEPTION
+  try {
+#endif
+    executor.poll();
+#ifndef CORO_DISABLE_EXCEPTION
+  } catch (const std::runtime_error&) {
+    copy_failed = true;
+  }
+#endif
+  ASSERT(!copy_failed);
+  ASSERT(state.called);
+}
+
 void test_stop_wakes_idle_loop() {
   for (int iteration = 0; iteration < 256; ++iteration) {
     executor_loop executor;
@@ -295,6 +340,7 @@ void test_post_racing_with_stop(bool delayed) {
 
 int main() {
   LOG("init");
+  test_poll_moves_delayed_callback();
   test_post_racing_with_stop(false);
   test_post_racing_with_stop(true);
   test_stopped_loop_waits_for_timer();
