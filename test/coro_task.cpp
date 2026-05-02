@@ -394,6 +394,118 @@ void test_stop_wakes_idle_loop() {
   }
 }
 
+void test_loop_releases_thread_context() {
+  executor_loop executor;
+  executor.post([&] {
+    executor.stop();
+  });
+  executor.run_loop();
+  auto token = std::make_shared<int>(42);
+  std::weak_ptr<int> retained = token;
+  executor.post_continuation([token] {
+    ASSERT(false);
+  });
+  token.reset();
+  // A loop that has finished draining must reject and release new continuations.
+  ASSERT(retained.expired());
+}
+
+void test_nested_loop_preserves_thread_context() {
+  executor_loop executor;
+  int completed = 0;
+  executor.post([&] {
+    executor.post([&] {
+      executor.stop();
+    });
+    executor.run_loop();
+    // The enclosing run_loop is still executing this accepted callback.
+    executor.post_continuation([&] {
+      ++completed;
+    });
+    ++completed;
+  });
+  executor.run_loop();
+  ASSERT(completed == 2);
+}
+
+void test_nested_distinct_loop_context() {
+  executor_loop outer;
+  executor_loop inner;
+  int dispatched = 0;
+  outer.post([&] {
+    inner.post([&] {
+      outer.dispatch([&] {
+        ++dispatched;
+      });
+      ASSERT(dispatched == 1);
+      inner.stop();
+    });
+    inner.run_loop();
+    outer.dispatch([&] {
+      ++dispatched;
+    });
+    ASSERT(dispatched == 2);
+    outer.stop();
+  });
+  outer.run_loop();
+  ASSERT(dispatched == 2);
+}
+
+void test_concurrent_loop_thread_context() {
+  executor_loop executor;
+  std::atomic<int> entered{0};
+  std::atomic<int> completed{0};
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  auto task = [&] {
+    entered.fetch_add(1, std::memory_order_release);
+    while (entered.load(std::memory_order_acquire) != 2 && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::yield();
+    }
+    ASSERT(entered.load(std::memory_order_acquire) == 2);
+    executor.stop();
+    executor.post_continuation([&] {
+      completed.fetch_add(1, std::memory_order_relaxed);
+    });
+  };
+  executor.post(task);
+  executor.post(task);
+  std::thread first([&] {
+    executor.run_loop();
+  });
+  std::thread second([&] {
+    executor.run_loop();
+  });
+  first.join();
+  second.join();
+  ASSERT(completed.load(std::memory_order_relaxed) == 2);
+}
+
+#ifndef CORO_DISABLE_EXCEPTION
+void test_loop_exception_releases_thread_context() {
+  executor_loop executor;
+  executor.post([] {
+    throw std::runtime_error("queued callback failed");
+  });
+  bool caught = false;
+  try {
+    executor.run_loop();
+  } catch (const std::runtime_error&) {
+    caught = true;
+  }
+  ASSERT(caught);
+  bool called = false;
+  executor.dispatch([&] {
+    called = true;
+  });
+  ASSERT(!called);
+  executor.post([&] {
+    executor.stop();
+  });
+  executor.run_loop();
+  ASSERT(called);
+}
+#endif
+
 void test_stopped_loop_waits_for_timer() {
   executor_loop executor;
   bool called = false;
@@ -709,6 +821,13 @@ int main() {
   test_poll_moves_delayed_callback();
   test_post_racing_with_stop(false);
   test_post_racing_with_stop(true);
+  test_loop_releases_thread_context();
+  test_nested_loop_preserves_thread_context();
+  test_nested_distinct_loop_context();
+  test_concurrent_loop_thread_context();
+#ifndef CORO_DISABLE_EXCEPTION
+  test_loop_exception_releases_thread_context();
+#endif
   test_stopped_loop_waits_for_timer();
   test_stop_wakes_idle_loop();
   test_large_delayed_post();

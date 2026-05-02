@@ -289,6 +289,9 @@ executor.run_loop();
 
 After `stop()`, `run_loop()` finishes already queued tasks, including timers, before returning.
 
+`dispatch()` runs inline only while its calling thread is inside this executor's `run_loop()`, including nested calls.
+After the loop returns or throws, that thread is no longer treated as an active loop context.
+
 ### executor_poll
 
 Non-blocking polling mode, suitable for integration with existing event loops:
