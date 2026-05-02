@@ -30,7 +30,7 @@ struct coro_local_map {
   // Set a value locally (does not affect parent)
   template <typename T, typename U>
   void set(const void* key, U&& value) {
-    data[key] = T(std::forward<U>(value));
+    data.insert_or_assign(key, T(std::forward<U>(value)));
   }
 
   // Check if key exists locally or in parent chain

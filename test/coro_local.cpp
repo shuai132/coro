@@ -378,6 +378,52 @@ struct throwing_local_value {
   }
 };
 
+async<void> coro_local_failed_shadow(coro_local<throwing_local_value>& storage) {
+  throwing_local_value::fail_move = true;
+  bool caught = false;
+  try {
+    co_await storage.set(53);
+  } catch (const std::runtime_error&) {
+    caught = true;
+  }
+  throwing_local_value::fail_move = false;
+  ASSERT(caught);
+  auto* inherited = co_await storage.get_ptr();
+  ASSERT(inherited && inherited->value == 42);
+}
+
+async<void> coro_local_failed_set_test() {
+  static coro_local<throwing_local_value> storage;
+  throwing_local_value::fail_move = true;
+  bool caught = false;
+  try {
+    co_await storage.set(7);
+  } catch (const std::runtime_error&) {
+    caught = true;
+  }
+  throwing_local_value::fail_move = false;
+  ASSERT(caught);
+  ASSERT(!(co_await storage.has()));
+  ASSERT((co_await storage.get_ptr()) == nullptr);
+  ASSERT(throwing_local_value::live == 0);
+
+  co_await storage.set(42);
+  co_await coro_local_failed_shadow(storage);
+  throwing_local_value::fail_move = true;
+  caught = false;
+  try {
+    co_await storage.set(99);
+  } catch (const std::runtime_error&) {
+    caught = true;
+  }
+  throwing_local_value::fail_move = false;
+  ASSERT(caught);
+  auto* previous = co_await storage.get_ptr();
+  ASSERT(previous && previous->value == 42);
+  co_await storage.erase();
+  ASSERT(throwing_local_value::live == 0);
+}
+
 async<void> coro_local_exception_test() {
   static coro_local<throwing_local_value> storage;
   ASSERT(throwing_local_value::live == 0);
@@ -437,6 +483,7 @@ async<void> run_all_tests() {
   co_await coro_local_basic_test();
 #ifndef CORO_DISABLE_EXCEPTION
   co_await coro_local_exception_test();
+  co_await coro_local_failed_set_test();
 #endif
   co_await coro_local_optional_test();
   co_await coro_local_ptr_test();
