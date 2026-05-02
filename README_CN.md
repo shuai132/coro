@@ -725,14 +725,22 @@ async<void> setter() {
 
 ### 基本用法
 
+在包含任何 coro 头文件前启用 `CORO_ENABLE_LOCAL_STORAGE`，并确保所有编译单元的配置一致。
+使用 CMake 时，配置 `-DCORO_ENABLE_LOCAL_STORAGE=ON` 并链接 `coro` 目标即可传递此定义。
+
 ```cpp
+#ifndef CORO_ENABLE_LOCAL_STORAGE
+#define CORO_ENABLE_LOCAL_STORAGE
+#endif
+#include <iostream>
+#include <string>
 #include "coro/coro_local.hpp"
 
 // 定义存储键（类似 thread_local，通常为 static）
 static coro::coro_local<int> request_id;
 static coro::coro_local<std::string> user_name;
 
-async<void> process_request() {
+coro::async<void> process_request() {
     // 为当前协程设置值
     co_await request_id.set(42);
     co_await user_name.set("Alice");

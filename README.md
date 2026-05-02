@@ -742,14 +742,22 @@ unique key for storing values, similar to `thread_local` but for coroutines.
 
 ### Basic Usage
 
+Enable `CORO_ENABLE_LOCAL_STORAGE` before including any coro header, consistently across all translation units.
+With CMake, configure `-DCORO_ENABLE_LOCAL_STORAGE=ON` and link the `coro` target to propagate this definition.
+
 ```cpp
+#ifndef CORO_ENABLE_LOCAL_STORAGE
+#define CORO_ENABLE_LOCAL_STORAGE
+#endif
+#include <iostream>
+#include <string>
 #include "coro/coro_local.hpp"
 
 // Define a storage key (like thread_local, typically static)
 static coro::coro_local<int> request_id;
 static coro::coro_local<std::string> user_name;
 
-async<void> process_request() {
+coro::async<void> process_request() {
     // Set value for current coroutine
     co_await request_id.set(42);
     co_await user_name.set("Alice");
