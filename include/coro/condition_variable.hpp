@@ -109,7 +109,7 @@ struct condition_variable_t {
   // Usage:
   //   co_await cv.wait(mtx);
   //   co_await mtx.lock();  // Must re-lock manually
-  // Works with any mutex type (mutex, mutex_mt, mutex_st)
+  // Works with coro::mutex and compatible types providing unlock().
   template <typename MutexType>
   auto wait(MutexType& mtx) {
     return wait_awaitable{this, static_cast<void*>(&mtx), [](void* m) {

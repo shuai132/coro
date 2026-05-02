@@ -101,7 +101,7 @@
 | `coro::condition_variable`                   | 协程安全的条件变量，用于同步操作                   |
 | `coro::event`                                | 事件同步原语                             |
 | `coro::latch`                                | 倒计时门闩，用于同步操作                       |
-| `coro::semaphore`                            | 计数信号量，用于资源控制                       |
+| `coro::counting_semaphore`                   | 计数信号量，用于资源控制                       |
 | `coro::wait_group`                           | 等待组，用于协调多个协程                       |
 | `coro::channel<T>`                           | Go 风格的 channel，用于协程间通信             |
 | `coro::executor`                             | 执行器基类接口                            |

@@ -116,7 +116,7 @@ I have also learned about some well-known C++20 coroutine open-source libraries,
 | `coro::condition_variable`                   | Coroutine-safe condition variable for synchronization |
 | `coro::event`                                | Event synchronization primitive                       |
 | `coro::latch`                                | Countdown latch for synchronization                   |
-| `coro::semaphore`                            | Counting semaphore for resource control               |
+| `coro::counting_semaphore`                   | Counting semaphore for resource control               |
 | `coro::wait_group`                           | Wait group for coordinating multiple coroutines       |
 | `coro::channel<T>`                           | Go-style channel for inter-coroutine communication    |
 | `coro::executor`                             | Executor base class interface                         |
