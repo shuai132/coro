@@ -435,6 +435,126 @@ void test_large_asio_delayed_post() {
   }
 }
 
+using test_strand = asio::strand<asio::io_context::executor_type>;
+
+asio::awaitable<int> asio_strand_value(test_strand& strand, [[maybe_unused]] bool fail = false) {
+  ASSERT(strand.running_in_this_thread());
+  auto exec = co_await asio::this_coro::executor;
+  asio::steady_timer timer(exec);
+  timer.expires_after(0ns);
+  co_await timer.async_wait(asio::use_awaitable);
+  ASSERT(strand.running_in_this_thread());
+#ifndef CORO_DISABLE_EXCEPTION
+  if (fail) {
+    throw std::runtime_error("strand asio failure");
+  }
+#endif
+  co_return 42;
+}
+
+asio::awaitable<void> asio_strand_void(test_strand& strand, bool fail = false) {
+  ASSERT(strand.running_in_this_thread());
+  int value = co_await asio_strand_value(strand, fail);
+  ASSERT(value == 42);
+}
+
+async<int> coro_strand_value(test_strand& strand, bool nested, [[maybe_unused]] bool fail) {
+  ASSERT(strand.running_in_this_thread());
+  co_await sleep(0ns);
+  ASSERT(strand.running_in_this_thread());
+  if (nested) {
+    int value = co_await await_asio(asio_strand_value(strand));
+    ASSERT(value == 42);
+    ASSERT(strand.running_in_this_thread());
+    co_await await_asio(asio_strand_void(strand));
+    ASSERT(strand.running_in_this_thread());
+#ifndef CORO_DISABLE_EXCEPTION
+    for (bool void_result : {false, true}) {
+      bool caught = false;
+      try {
+        if (void_result) {
+          co_await await_asio(asio_strand_void(strand, true));
+        } else {
+          co_await await_asio(asio_strand_value(strand, true));
+        }
+      } catch (const std::runtime_error& error) {
+        ASSERT(std::string_view(error.what()) == "strand asio failure");
+        caught = true;
+      }
+      ASSERT(caught);
+      ASSERT(strand.running_in_this_thread());
+    }
+#endif
+  }
+#ifndef CORO_DISABLE_EXCEPTION
+  if (fail) {
+    throw std::runtime_error("strand task failure");
+  }
+#endif
+  co_return 42;
+}
+
+async<void> coro_strand_void(test_strand& strand, bool nested, bool fail) {
+  int value = co_await coro_strand_value(strand, nested, fail);
+  ASSERT(value == 42);
+  ASSERT(strand.running_in_this_thread());
+}
+
+asio::awaitable<void> await_strand_coro(test_strand& strand, std::atomic<int>& completed) {
+  for (bool nested : {false, true}) {
+#ifndef CORO_DISABLE_EXCEPTION
+    for (bool fail : {false, true}) {
+#else
+    for (bool fail : {false}) {
+#endif
+      for (bool void_result : {false, true}) {
+        ASSERT(strand.running_in_this_thread());
+        bool caught = false;
+#ifndef CORO_DISABLE_EXCEPTION
+        try {
+#endif
+          if (void_result) {
+            co_await await_coro(coro_strand_void(strand, nested, fail));
+          } else {
+            int value = co_await await_coro(coro_strand_value(strand, nested, fail));
+            ASSERT(value == 42);
+          }
+#ifndef CORO_DISABLE_EXCEPTION
+        } catch (const std::runtime_error& error) {
+          ASSERT(std::string_view(error.what()) == "strand task failure");
+          caught = true;
+        }
+#endif
+        ASSERT(caught == fail);
+        ASSERT(strand.running_in_this_thread());
+      }
+    }
+  }
+  completed.fetch_add(1, std::memory_order_relaxed);
+}
+
+void test_strand_interoperability(int worker_count) {
+  asio::io_context context;
+  auto strand = asio::make_strand(context);
+  std::atomic<int> completed{0};
+  for (int task = 0; task < 16; ++task) {
+    asio::co_spawn(strand, await_strand_coro(strand, completed), [](std::exception_ptr exception) {
+      ASSERT(!exception);
+    });
+  }
+  std::vector<std::thread> workers;
+  for (int worker = 0; worker < worker_count; ++worker) {
+    workers.emplace_back([&context] {
+      context.run_for(5s);
+    });
+  }
+  for (auto& worker : workers) {
+    worker.join();
+  }
+  ASSERT(completed.load(std::memory_order_relaxed) == 16);
+  ASSERT(debug_coro_promise::debug_coro_leak.empty());
+}
+
 /// ============================================================================
 /// Main test runner
 /// ============================================================================
@@ -481,6 +601,8 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_strand_interoperability(1);
+  test_strand_interoperability(4);
   test_large_asio_delayed_post();
   LOG("=== coro-asio adaptor test ===");
   test_multithreaded_await_coro();

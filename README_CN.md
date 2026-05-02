@@ -873,6 +873,8 @@ async<void> async_void_operation() {
 
 两个适配器均支持只能移动的返回值，无需默认构造或赋值能力。
 
+从 ASIO strand 中等待的未绑定 coro 任务会继承该 strand，嵌套 `await_asio()` 调用也保留这一调度约束。
+
 ### asio_executor
 
 `asio_executor` 将 `asio::io_context` 适配为 `coro::executor` 接口，使 coro 协程可以在 ASIO 事件循环上运行：

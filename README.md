@@ -892,6 +892,8 @@ mix coro and ASIO coroutines seamlessly.
 
 Both adaptors support move-only results without requiring default construction or assignment.
 
+Unbound coro tasks awaited from an ASIO strand inherit that strand, including nested calls through `await_asio()`.
+
 ### asio_executor
 
 `asio_executor` adapts `asio::io_context` to the `coro::executor` interface, enabling coro coroutines to run on an ASIO

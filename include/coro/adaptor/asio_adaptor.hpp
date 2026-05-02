@@ -39,18 +39,18 @@ namespace coro {
 /// This allows coro coroutines to run on an asio event loop
 class asio_executor : public executor {
  public:
-  explicit asio_executor(asio::io_context& io_context) : io_context_(io_context) {}
+  explicit asio_executor(asio::io_context& io_context) : asio_executor(io_context, io_context.get_executor()) {}
 
   void dispatch(std::function<void()> fn) override {
-    asio::dispatch(io_context_, std::move(fn));
+    asio::dispatch(asio_exec_, std::move(fn));
   }
 
   void post(std::function<void()> fn) override {
-    asio::post(io_context_, std::move(fn));
+    asio::post(asio_exec_, std::move(fn));
   }
 
   void post_delayed_ns(std::function<void()> fn, uint64_t delay_ns) override {
-    auto timer = std::make_shared<asio::steady_timer>(io_context_);
+    auto timer = std::make_shared<asio::steady_timer>(asio_exec_);
     timer->expires_at(detail::delayed_deadline(delay_ns));
     timer->async_wait([timer, fn = std::move(fn)](const asio::error_code& ec) mutable {
       timer = nullptr;
@@ -68,19 +68,19 @@ class asio_executor : public executor {
     return io_context_;
   }
 
+  const asio::any_io_executor& get_asio_executor() const noexcept {
+    return asio_exec_;
+  }
+
+ protected:
+  asio_executor(asio::io_context& io_context, asio::any_io_executor exec) : io_context_(io_context), asio_exec_(std::move(exec)) {}
+
  private:
   asio::io_context& io_context_;
+  asio::any_io_executor asio_exec_;
 };
 
 namespace detail {
-
-/// Helper to get io_context from executor (works with asio_executor)
-inline asio::io_context* get_io_context_from_executor(executor* exec) {
-  if (auto* asio_exec = dynamic_cast<asio_executor*>(exec)) {
-    return &asio_exec->get_io_context();
-  }
-  return nullptr;
-}
 
 // use_awaitable initiates lazily, so the lock must cover async_wait's actual
 // initiation rather than only the creation of its returned awaitable.
@@ -124,32 +124,34 @@ struct asio_awaitable_awaiter {
     auto* exec = handle.promise().executor_;
     assert(exec && "executor must be set");
 
-    auto* io_ctx = get_io_context_from_executor(exec);
-    assert(io_ctx && "asio_executor required for await_asio");
+    auto* asio_exec = dynamic_cast<asio_executor*>(exec);
+    assert(asio_exec && "asio_executor required for await_asio");
+    auto* io_ctx = &asio_exec->get_io_context();
 
     auto state = state_;  // Copy shared_ptr for the lambda
 
     // Spawn the asio awaitable and resume when complete
-    asio::co_spawn(*io_ctx, store_result(std::move(asio_awaitable_), state), [state, handle, io_ctx]([[maybe_unused]] std::exception_ptr ep) {
-      // If io_context is stopped, don't resume the coroutine as it may have been
-      // destroyed or its captured references may be invalid
-      if (io_ctx->stopped()) {
-        return;
-      }
+    asio::co_spawn(asio_exec->get_asio_executor(), store_result(std::move(asio_awaitable_), state),
+                   [state, handle, io_ctx, exec]([[maybe_unused]] std::exception_ptr ep) {
+                     // If io_context is stopped, don't resume the coroutine as it may have been
+                     // destroyed or its captured references may be invalid
+                     if (io_ctx->stopped()) {
+                       return;
+                     }
 #ifndef CORO_DISABLE_EXCEPTION
-      if (ep) {
-        state->exception = ep;
-      }
+                     if (ep) {
+                       state->exception = ep;
+                     }
 #endif
-      // Use asio::post to schedule the resume. Check stopped() again inside
-      // the posted handler since io_context may be stopped between now and
-      // when the handler executes.
-      asio::post(*io_ctx, [handle, io_ctx]() {
-        if (!io_ctx->stopped()) {
-          handle.resume();
-        }
-      });
-    });
+                     // Post through the coroutine's executor to preserve its strand. Check stopped() again inside
+                     // the posted handler since io_context may be stopped between now and
+                     // when the handler executes.
+                     exec->post([handle, io_ctx]() {
+                       if (!io_ctx->stopped()) {
+                         handle.resume();
+                       }
+                     });
+                   });
   }
 
   T await_resume() {
@@ -190,34 +192,35 @@ struct asio_awaitable_awaiter<void> {
     auto* exec = handle.promise().executor_;
     assert(exec && "executor must be set");
 
-    auto* io_ctx = get_io_context_from_executor(exec);
-    assert(io_ctx && "asio_executor required for await_asio");
+    auto* asio_exec = dynamic_cast<asio_executor*>(exec);
+    assert(asio_exec && "asio_executor required for await_asio");
+    auto* io_ctx = &asio_exec->get_io_context();
 
 #ifndef CORO_DISABLE_EXCEPTION
     auto state = state_;  // Copy shared_ptr for the lambda
 
-    asio::co_spawn(*io_ctx, std::move(asio_awaitable_), [state, handle, io_ctx](std::exception_ptr ep) {
+    asio::co_spawn(asio_exec->get_asio_executor(), std::move(asio_awaitable_), [state, handle, io_ctx, exec](std::exception_ptr ep) {
       // If io_context is stopped, don't resume the coroutine as it may have been
       // destroyed or its captured references may be invalid
       if (io_ctx->stopped()) {
         return;
       }
       state->exception = ep;
-      // Use asio::post to schedule the resume. Check stopped() again inside
+      // Post through the coroutine's executor to preserve its strand. Check stopped() again inside
       // the posted handler since io_context may be stopped between now and
       // when the handler executes.
-      asio::post(*io_ctx, [handle, io_ctx]() {
+      exec->post([handle, io_ctx]() {
         if (!io_ctx->stopped()) {
           handle.resume();
         }
       });
     });
 #else
-    asio::co_spawn(*io_ctx, std::move(asio_awaitable_), [handle, io_ctx](std::exception_ptr) {
+    asio::co_spawn(asio_exec->get_asio_executor(), std::move(asio_awaitable_), [handle, io_ctx, exec](std::exception_ptr) {
       if (io_ctx->stopped()) {
         return;
       }
-      asio::post(*io_ctx, [handle, io_ctx]() {
+      exec->post([handle, io_ctx]() {
         if (!io_ctx->stopped()) {
           handle.resume();
         }
@@ -254,23 +257,22 @@ template <typename T>
 
   // Use a shared state to communicate between callbacks
   // Also stores asio_executor to keep it alive during coro execution
-  struct state {
-    asio_executor exec;
+  struct state : asio_executor {
     std::mutex signal_mutex_;
     std::optional<T> result;
 #ifndef CORO_DISABLE_EXCEPTION
     std::exception_ptr exception;
 #endif
-    explicit state(asio::io_context& ctx) : exec(ctx) {}
+    state(asio::io_context& ctx, asio::any_io_executor exec) : asio_executor(ctx, std::move(exec)) {}
   };
-  auto st = std::make_shared<state>(io_ctx);
+  auto st = std::make_shared<state>(io_ctx, std::move(executor));
 
   // Create a deferred timer that we'll use to signal completion
-  auto signal_timer = std::make_shared<asio::steady_timer>(io_ctx);
+  auto signal_timer = std::make_shared<asio::steady_timer>(st->get_asio_executor());
   signal_timer->expires_at(asio::steady_timer::time_point::max());
 
   aw.detach_with_callback(
-      st->exec,
+      *st,
       [st, signal_timer](T value) {
         std::lock_guard<std::mutex> lock(st->signal_mutex_);
         st->result.emplace(std::move(value));
@@ -305,22 +307,21 @@ template <>
   auto& io_ctx = static_cast<asio::io_context&>(executor.context());
 
   // Create a deferred timer that we'll use to signal completion
-  auto signal_timer = std::make_shared<asio::steady_timer>(io_ctx);
+  auto signal_timer = std::make_shared<asio::steady_timer>(executor);
   signal_timer->expires_at(asio::steady_timer::time_point::max());
 
 #ifndef CORO_DISABLE_EXCEPTION
   // Use a shared state to communicate exception between callbacks
   // Also stores asio_executor to keep it alive during coro execution
-  struct state {
-    asio_executor exec;
+  struct state : asio_executor {
     std::mutex signal_mutex_;
     std::exception_ptr exception;
-    explicit state(asio::io_context& ctx) : exec(ctx) {}
+    state(asio::io_context& ctx, asio::any_io_executor exec) : asio_executor(ctx, std::move(exec)) {}
   };
-  auto st = std::make_shared<state>(io_ctx);
+  auto st = std::make_shared<state>(io_ctx, std::move(executor));
 
   aw.detach_with_callback(
-      st->exec,
+      *st,
       [st, signal_timer]() {
         std::lock_guard<std::mutex> lock(st->signal_mutex_);
         signal_timer->expires_at(asio::steady_timer::time_point::min());
@@ -342,15 +343,14 @@ template <>
   }
 #else
   // Without exceptions, asio_executor can be stored in shared state
-  struct state {
-    asio_executor exec;
+  struct state : asio_executor {
     std::mutex signal_mutex_;
-    explicit state(asio::io_context& ctx) : exec(ctx) {}
+    state(asio::io_context& ctx, asio::any_io_executor exec) : asio_executor(ctx, std::move(exec)) {}
   };
-  auto st = std::make_shared<state>(io_ctx);
+  auto st = std::make_shared<state>(io_ctx, std::move(executor));
 
   aw.detach_with_callback(
-      st->exec,
+      *st,
       [st, signal_timer]() {
         std::lock_guard<std::mutex> lock(st->signal_mutex_);
         signal_timer->expires_at(asio::steady_timer::time_point::min());
