@@ -1049,6 +1049,8 @@ add_definitions(-DCORO_DISABLE_EXCEPTION)
 
 ### 调试协程泄漏
 
+泄漏追踪会保留编译器请求的分配对齐。Clang 编译过度对齐的协程状态时，可能需要启用 `-fcoro-aligned-allocation`。
+
 ```cpp
 #define CORO_DEBUG_PROMISE_LEAK
 #define CORO_DEBUG_LEAK_LOG printf  // 或其他日志函数

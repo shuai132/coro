@@ -1,6 +1,8 @@
 #define CORO_DEBUG_PROMISE_LEAK
 
 #include <cstdint>
+#include <new>
+#include <vector>
 
 #include "assert_def.h"
 #include "coro/coro.hpp"
@@ -22,7 +24,44 @@ async<void> spawn_local_without_executor(int& value) {
   co_await spawn_local(child_without_executor(value));
 }
 
+async<void> alignment_argument([[maybe_unused]] std::align_val_t alignment) {
+  co_return;
+}
+
+void test_alignment_argument() {
+  auto task = alignment_argument(std::align_val_t{0});
+  task.current_coro_handle_.resume();
+  ASSERT(task.current_coro_handle_.done());
+}
+
+#ifdef CORO_TEST_ALIGNED_COROUTINE_ALLOCATION
+struct alignas(256) aligned_result {
+  int value;
+};
+
+async<aligned_result> aligned_value() {
+  co_return aligned_result{42};
+}
+
+void test_aligned_promise() {
+  std::vector<async<aligned_result>> tasks;
+  for (int index = 0; index < 128; ++index) {
+    tasks.push_back(aligned_value());
+  }
+  for (auto& task : tasks) {
+    ASSERT(reinterpret_cast<std::uintptr_t>(&task.current_coro_handle_.promise()) % alignof(awaitable_promise<aligned_result>) == 0);
+    task.current_coro_handle_.resume();
+    ASSERT(task.current_coro_handle_.done());
+    ASSERT(task.await_resume().value == 42);
+  }
+}
+#endif
+
 int main() {
+  test_alignment_argument();
+#ifdef CORO_TEST_ALIGNED_COROUTINE_ALLOCATION
+  test_aligned_promise();
+#endif
   ASSERT(reinterpret_cast<std::uintptr_t>(&L_O_G_NS_MUTEX::mutex()) % alignof(std::mutex) == 0);
   ASSERT(debug_coro_promise::debug_coro_leak.empty());
 

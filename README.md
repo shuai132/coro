@@ -1069,6 +1069,8 @@ add_definitions(-DCORO_DISABLE_EXCEPTION)
 
 ### Debug Coroutine Leaks
 
+Leak tracking preserves aligned allocations requested by the compiler. Clang builds with over-aligned coroutine state may require `-fcoro-aligned-allocation`.
+
 ```cpp
 #define CORO_DEBUG_PROMISE_LEAK
 #define CORO_DEBUG_LEAK_LOG printf  // Or other log function

@@ -35,9 +35,7 @@
 /// compiler check and debug config
 #if defined(CORO_DEBUG_PROMISE_LEAK)
 #include <cstdio>
-#include <cstdlib>
 #include <mutex>
-#include <new>
 #include <unordered_set>
 struct debug_coro_promise {
   inline static std::unordered_set<void*> debug_coro_leak;
@@ -48,30 +46,16 @@ struct debug_coro_promise {
     CORO_DEBUG_LEAK_LOG("debug: debug_coro_leak.size: %zu", debug_coro_leak.size());
   }
 
-  void* operator new(std::size_t size) {
-    void* ptr = std::malloc(size);
-    if (!ptr) {
-#ifndef CORO_DISABLE_EXCEPTION
-      throw std::bad_alloc();
-#else
-      std::abort();
-#endif
-    }
-    {
-      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
-      debug_coro_leak.insert(ptr);
-      CORO_DEBUG_LEAK_LOG("new: %p, size: %zu, num: %zu", ptr, size, debug_coro_leak.size());
-    }
-    return ptr;
+  debug_coro_promise() {
+    std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
+    debug_coro_leak.insert(this);
+    CORO_DEBUG_LEAK_LOG("new promise: %p, num: %zu", this, debug_coro_leak.size());
   }
 
-  void operator delete(void* ptr, [[maybe_unused]] std::size_t size) {
-    {
-      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
-      debug_coro_leak.erase(ptr);
-      CORO_DEBUG_LEAK_LOG("free: %p, size: %zu, num: %zu", ptr, size, debug_coro_leak.size());
-    }
-    std::free(ptr);
+  ~debug_coro_promise() {
+    std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
+    debug_coro_leak.erase(this);
+    CORO_DEBUG_LEAK_LOG("free promise: %p, num: %zu", this, debug_coro_leak.size());
   }
 };
 #else
