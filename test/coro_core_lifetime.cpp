@@ -14,7 +14,10 @@ void test_leak_log(const char*, ...);
 #include "assert_def.h"
 #include "coro/coro.hpp"
 #include "coro/executor_poll.hpp"
+#include "coro/time.hpp"
+#include "coro/when.hpp"
 #include "log.h"
+#include "utils.hpp"
 
 using namespace coro;
 
@@ -62,6 +65,79 @@ async<void> alignment_argument([[maybe_unused]] std::align_val_t alignment) {
   co_return;
 }
 
+struct frame_parameter {
+  int* live;
+
+  explicit frame_parameter(int& count) : live(&count) {
+    ++*live;
+  }
+  frame_parameter(frame_parameter&& other) noexcept : live(std::exchange(other.live, nullptr)) {}
+  frame_parameter(const frame_parameter&) = delete;
+  ~frame_parameter() {
+    if (live) {
+      --*live;
+    }
+  }
+};
+
+template <typename T>
+async<T> child_with_frame_parameter([[maybe_unused]] frame_parameter parameter, bool delayed, [[maybe_unused]] bool fail) {
+  if (delayed) {
+    co_await sleep(0ns);
+  }
+#ifndef CORO_DISABLE_EXCEPTION
+  if (fail) {
+    throw std::runtime_error("child frame failure");
+  }
+#endif
+  if constexpr (!std::is_void_v<T>) {
+    co_return 42;
+  }
+}
+
+template <bool ANY, typename T>
+async<void> await_child_frame_cleanup(bool delayed, bool fail, bool& completed) {
+  int live = 0;
+  bool caught = false;
+#ifndef CORO_DISABLE_EXCEPTION
+  try {
+#endif
+    if constexpr (ANY) {
+      co_await when_any(child_with_frame_parameter<T>(frame_parameter{live}, delayed, fail));
+    } else {
+      co_await when_all(child_with_frame_parameter<T>(frame_parameter{live}, delayed, fail));
+    }
+#ifndef CORO_DISABLE_EXCEPTION
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "child frame failure");
+    caught = true;
+  }
+#endif
+  ASSERT(caught == fail);
+  ASSERT(live == 0);
+  completed = true;
+}
+
+template <bool ANY, typename T>
+void test_child_frame_cleanup() {
+  for (bool delayed : {false, true}) {
+    for (bool fail : {false, true}) {
+#ifdef CORO_DISABLE_EXCEPTION
+      if (fail) {
+        continue;
+      }
+#endif
+      executor_poll executor;
+      bool completed = false;
+      spawn(executor, await_child_frame_cleanup<ANY, T>(delayed, fail, completed));
+      while (!completed) {
+        executor.poll();
+      }
+      check_coro_leak();
+    }
+  }
+}
+
 void test_alignment_argument() {
   auto task = alignment_argument(std::align_val_t{0});
   task.current_coro_handle_.resume();
@@ -92,6 +168,10 @@ void test_aligned_promise() {
 #endif
 
 int main() {
+  test_child_frame_cleanup<false, int>();
+  test_child_frame_cleanup<false, void>();
+  test_child_frame_cleanup<true, int>();
+  test_child_frame_cleanup<true, void>();
 #ifndef CORO_DISABLE_EXCEPTION
   test_debug_log_failure();
 #endif

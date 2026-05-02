@@ -126,10 +126,11 @@ awaitable<void> when_all_task(awaitable<T> task, std::shared_ptr<State> state) {
   try {
 #endif
     if constexpr (std::is_void_v<T>) {
-      co_await std::move(task);
+      // Consume a temporary so the child's frame is released before notifying the parent.
+      co_await awaitable<T>{std::move(task)};
       state->increment_completed();
     } else {
-      auto result = co_await std::move(task);
+      auto result = co_await awaitable<T>{std::move(task)};
       state->template set_result<Index>(std::move(result));
     }
 #ifndef CORO_DISABLE_EXCEPTION
@@ -553,10 +554,11 @@ awaitable<void> when_any_task(awaitable<T> task, std::shared_ptr<State> state) {
   try {
 #endif
     if constexpr (std::is_void_v<T>) {
-      co_await std::move(task);
+      // Consume a temporary so the child's frame is released before notifying the parent.
+      co_await awaitable<T>{std::move(task)};
       state->template set_completed_at<Index>();
     } else {
-      auto result = co_await std::move(task);
+      auto result = co_await awaitable<T>{std::move(task)};
       state->template set_result<Index>(std::move(result));
     }
 #ifndef CORO_DISABLE_EXCEPTION
