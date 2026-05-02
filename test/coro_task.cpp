@@ -558,7 +558,22 @@ void test_bound_children_with_unbound_parent() {
   }
 }
 
+void test_time_count_duration() {
+  TimeCount<std::chrono::nanoseconds> timer;
+  std::this_thread::sleep_for(2ms);
+  auto before = timer.elapsed<std::chrono::nanoseconds>();
+  auto default_elapsed = timer.elapsed();
+  auto after = timer.elapsed<std::chrono::nanoseconds>();
+  ASSERT(before <= default_elapsed && default_elapsed <= after);
+
+  before = timer.elapsed();
+  auto microseconds = timer.elapsed<std::chrono::microseconds>();
+  after = timer.elapsed();
+  ASSERT(before / 1000 <= microseconds && microseconds <= after / 1000);
+}
+
 int main() {
+  test_time_count_duration();
   test_bound_children_with_unbound_parent<int>();
   test_bound_children_with_unbound_parent<void>();
   test_executors_sharing_loop<int>();

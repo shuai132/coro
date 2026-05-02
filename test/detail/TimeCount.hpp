@@ -12,7 +12,7 @@ class TimeCount {
   void operator=(const TimeCount &) = delete;
   TimeCount(TimeCount &&) noexcept = default;
 
-  template <class D = std::chrono::milliseconds>
+  template <class D = Duration>
   uint64_t elapsed() const {
     return std::chrono::duration_cast<D>(std::chrono::steady_clock::now() - start_).count();
   }
