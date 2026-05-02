@@ -315,6 +315,7 @@ Inherit from `coro::executor` interface to implement custom executors:
 ```cpp
 struct my_executor : coro::executor {
     void dispatch(std::function<void()> fn) override;      // Execute immediately or later
+    // Optional: override post_continuation(fn) to queue already accepted work while draining after stop().
     void post(std::function<void()> fn) override;          // Execute later
     void post_delayed_ns(std::function<void()> fn, uint64_t delay_ns) override;  // Delayed execution
     void stop() override;                                  // Stop executor

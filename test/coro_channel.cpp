@@ -134,6 +134,32 @@ void test_channel_wakeup_chain() {
   }
 }
 
+async<void> stopped_loop_channel_sender(channel<int>& ch) {
+  co_await sleep(1ms);
+  ASSERT(co_await ch.send(42));
+}
+
+void test_stopped_loop_channel_continuation() {
+  executor_loop executor;
+  channel<int> ch;
+  int completed = 0;
+  auto on_completed = [&] {
+    ++completed;
+  };
+  stopped_loop_channel_sender(ch).detach_with_callback(executor, on_completed);
+  channel_chain_endpoint(ch, false, false).detach_with_callback(executor, on_completed);
+  executor.post([&] {
+    executor.stop();
+    // Ordinary new work is still rejected while the accepted timer drains.
+    executor.post([] {
+      ASSERT(false);
+    });
+  });
+  executor.run_loop();
+  ASSERT(completed == 2);
+  check_coro_leak();
+}
+
 thread_local size_t* channel_allocation_bytes = nullptr;
 
 void* operator new(std::size_t size) {
@@ -1136,6 +1162,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_stopped_loop_channel_continuation();
   test_channel_wakeup_chain<channel_mt<int>>();
   test_channel_wakeup_chain<channel_st<int>>();
   test_unbuffered_channel_does_not_allocate_message_storage<channel_mt>();

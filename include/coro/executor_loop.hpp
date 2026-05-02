@@ -74,6 +74,19 @@ class executor_loop : public executor_base {
     condition_.notify_one();
   }
 
+  void post_continuation(std::function<void()> fn) override {
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex_);
+      // Already accepted work may resume suspended operations while this loop drains after stop().
+      if (stop_.load(std::memory_order_acquire) &&
+          running_thread_id_.load(std::memory_order_acquire) != std::hash<std::thread::id>{}(std::this_thread::get_id())) {
+        return;
+      }
+      task_queue_.emplace(std::move(fn));
+    }
+    condition_.notify_one();
+  }
+
   void stop() override {
     executor_base::stop();
     condition_.notify_one();

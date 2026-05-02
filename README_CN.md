@@ -296,6 +296,7 @@ while (!executor.stopped()) {
 ```cpp
 struct my_executor : coro::executor {
     void dispatch(std::function<void()> fn) override;      // 立即或稍后执行
+    // 可选：重写 post_continuation(fn)，在 stop() 后排空已接收任务时保留恢复通知。
     void post(std::function<void()> fn) override;          // 稍后执行
     void post_delayed_ns(std::function<void()> fn, uint64_t delay_ns) override;  // 延迟执行
     void stop() override;                                  // 停止执行器
