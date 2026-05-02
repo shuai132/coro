@@ -35,6 +35,14 @@ int main() {
 
   int value = 0;
   {
+    executor_poll executor;
+    spawn(executor, child_without_executor(value));
+    ASSERT(debug_coro_promise::debug_coro_leak.size() == 1);
+  }
+  ASSERT(value == 0);
+  ASSERT(debug_coro_promise::debug_coro_leak.empty());
+
+  {
     auto task = spawn_local_without_executor(value);
     task.current_coro_handle_.resume();
     ASSERT(task.current_coro_handle_.done());

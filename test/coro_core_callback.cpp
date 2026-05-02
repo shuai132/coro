@@ -119,6 +119,59 @@ void test_sleep_duration_conversion() {
   check_coro_leak();
 }
 
+struct detached_completion_state {
+  std::atomic<bool> release{false};
+  std::atomic<bool> finished{false};
+  std::thread worker;
+};
+
+struct concurrent_completion_executor : executor {
+  detached_completion_state& state;
+
+  explicit concurrent_completion_executor(detached_completion_state& completion) : state(completion) {}
+
+  void dispatch(std::function<void()> function) override {
+    function();
+    state.release.store(true, std::memory_order_release);
+    while (!state.finished.load(std::memory_order_relaxed)) {
+      std::this_thread::yield();
+    }
+  }
+
+  void post(std::function<void()>) override {
+    ASSERT(false);
+  }
+
+  void post_delayed_ns(std::function<void()>, uint64_t) override {
+    ASSERT(false);
+  }
+
+  void stop() override {}
+};
+
+async<void> finish_while_detach_returns(detached_completion_state& state) {
+  co_await callback_awaiter<void>([&state](std::function<void()> callback) {
+    state.worker = std::thread([&state, callback = std::move(callback)] {
+      while (!state.release.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      callback();
+    });
+  });
+  state.finished.store(true, std::memory_order_relaxed);
+}
+
+void test_concurrent_detach_completion() {
+  for (int iteration = 0; iteration < 128; ++iteration) {
+    detached_completion_state state;
+    concurrent_completion_executor exec{state};
+    spawn(exec, finish_while_detach_returns(state));
+    state.worker.join();
+    ASSERT(state.finished.load(std::memory_order_relaxed));
+  }
+  check_coro_leak();
+}
+
 struct callback_state {
   int call_depth = 0;
   int destructor_during_call = 0;
@@ -285,6 +338,7 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
 }
 
 int main() {
+  test_concurrent_detach_completion();
   test_sleep_duration_conversion();
   test_callback_completion_during_handoff<false>();
   test_callback_completion_during_handoff<true>();
