@@ -1084,9 +1084,12 @@ make
 | 选项                             | 默认值         | 说明                  |
 |--------------------------------|-------------|---------------------|
 | `CORO_BUILD_TEST`              | ON (当作为主项目) | 构建测试                |
+| `CORO_TEST_RUNNER_VERY_SLOW`   | OFF         | 为慢速测试环境放宽时间限制      |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF         | 启用 AddressSanitizer |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF         | 启用 ThreadSanitizer  |
 | `CORO_DISABLE_EXCEPTION`       | OFF         | 禁用异常支持              |
+
+macOS GitHub Actions runner 会自动启用 `CORO_TEST_RUNNER_VERY_SLOW`。
 
 ## 项目结构
 

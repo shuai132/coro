@@ -1104,9 +1104,12 @@ make
 | Option                         | Default              | Description               |
 |--------------------------------|----------------------|---------------------------|
 | `CORO_BUILD_TEST`              | ON (as main project) | Build tests               |
+| `CORO_TEST_RUNNER_VERY_SLOW`   | OFF                  | Relax test timing for slow runners |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF                  | Enable AddressSanitizer   |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF                  | Enable ThreadSanitizer    |
 | `CORO_DISABLE_EXCEPTION`       | OFF                  | Disable exception support |
+
+`CORO_TEST_RUNNER_VERY_SLOW` is automatically enabled on macOS GitHub Actions runners.
 
 ## Project Structure
 

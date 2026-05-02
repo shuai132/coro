@@ -36,10 +36,12 @@ unset(CORO_BUILD_TEST_DEFAULT)
 if (CORO_BUILD_TEST)
     option(CORO_ENABLE_SANITIZE_ADDRESS "" OFF)
     option(CORO_ENABLE_SANITIZE_THREAD "" OFF)
-    option(CORO_TEST_RUNNER_VERY_SLOW "" OFF)
+    option(CORO_TEST_RUNNER_VERY_SLOW "Relax test timing for slow runners" OFF)
     # github actions runner of macOS is very slow
     if ($ENV{GITHUB_ACTIONS} AND $ENV{RUNNER_OS} STREQUAL "macOS")
         set(CORO_TEST_RUNNER_VERY_SLOW ON)
+    endif ()
+    if (CORO_TEST_RUNNER_VERY_SLOW)
         add_compile_definitions(CORO_TEST_RUNNER_VERY_SLOW)
     endif ()
 
