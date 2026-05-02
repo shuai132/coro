@@ -164,6 +164,10 @@ struct final_awaitable {
     CORO_DEBUG_LIFECYCLE("done: %d", h.done());
     // h.promise() is self
     if (h.promise().parent_handle_) {
+      if (h.promise().parent_executor_ && h.promise().parent_executor_ != h.promise().executor_) {
+        detail::resume_via(h.promise().parent_executor_, h.promise().parent_handle_);
+        return std::noop_coroutine();
+      }
       return h.promise().parent_handle_;
     } else {
       if (!h.promise().awaitable_) {
@@ -194,6 +198,7 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
   }
 
   std::coroutine_handle<> parent_handle_{};
+  executor* parent_executor_ = nullptr;
   executor* executor_ = nullptr;       // from bind_executor or inherit from caller
   awaitable<T>* awaitable_ = nullptr;  // have awaitable lived or detached
   bool started_ = false;
@@ -264,7 +269,7 @@ struct awaitable {
   }
 
   template <typename Promise>
-  auto await_suspend(std::coroutine_handle<Promise> h) {
+  std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> h) {
     CORO_DEBUG_LIFECYCLE("awaitable: await_suspend: %p, h: %p, p.h: %p", this, current_coro_handle_.address(), h.address());
     // use bind executor or inherit from caller
     if (!current_coro_handle_.promise().executor_) {
@@ -278,7 +283,13 @@ struct awaitable {
     }
 #endif
     current_coro_handle_.promise().parent_handle_ = h;
+    current_coro_handle_.promise().parent_executor_ = h.promise().executor_;
     current_coro_handle_.promise().started_ = true;
+    auto* child_exec = current_coro_handle_.promise().executor_;
+    if (child_exec && child_exec != h.promise().executor_) {
+      detail::resume_via(child_exec, current_coro_handle_);
+      return std::noop_coroutine();
+    }
     return current_coro_handle_;
   }
 

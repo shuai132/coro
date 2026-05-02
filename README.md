@@ -242,6 +242,8 @@ async<void> example() {
 }
 ```
 
+`bind_executor(exec)` selects a task's executor. When directly awaiting a child bound to another executor, the child runs on its selected executor and the caller continues on its own executor. Unbound children inherit their caller's executor.
+
 ## Executors
 
 Two executor implementations are provided:

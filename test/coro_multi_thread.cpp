@@ -6,6 +6,8 @@
 // #define CORO_DEBUG_LIFECYCLE LOG
 
 #include <atomic>
+#include <stdexcept>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -60,6 +62,44 @@ async<void> mutex_task(coro::mutex& mtx, std::atomic<int>& shared_counter, int t
   LOG("Task %d: finished", task_id);
 }
 
+async<int> directly_bound_child(executor& expected_exec, std::thread::id expected_tid, bool delayed, [[maybe_unused]] bool failure = false) {
+  ASSERT(co_await current_executor() == &expected_exec);
+  ASSERT(std::this_thread::get_id() == expected_tid);
+  if (delayed) {
+    co_await sleep(1ms);
+  }
+  ASSERT(std::this_thread::get_id() == expected_tid);
+#ifndef CORO_DISABLE_EXCEPTION
+  if (failure) {
+    throw std::runtime_error("bound child failure");
+  }
+#endif
+  co_return 42;
+}
+
+async<void> test_direct_executor_binding(executor& child_exec, executor& parent_exec, std::thread::id child_tid, std::thread::id parent_tid) {
+  ASSERT(co_await current_executor() == &parent_exec);
+  ASSERT(std::this_thread::get_id() == parent_tid);
+  for (bool delayed : {false, true}) {
+    int result = co_await directly_bound_child(child_exec, child_tid, delayed).bind_executor(child_exec);
+    ASSERT(result == 42);
+    ASSERT(co_await current_executor() == &parent_exec);
+    ASSERT(std::this_thread::get_id() == parent_tid);
+  }
+#ifndef CORO_DISABLE_EXCEPTION
+  bool caught = false;
+  try {
+    co_await directly_bound_child(child_exec, child_tid, true, true).bind_executor(child_exec);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "bound child failure");
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(co_await current_executor() == &parent_exec);
+  ASSERT(std::this_thread::get_id() == parent_tid);
+#endif
+}
+
 async<void> run_mutex_test(executor& exec1, executor& exec2, std::thread::id exec1_tid, std::thread::id exec2_tid) {
   LOG("=== Testing Mutex Across Threads ===");
 
@@ -71,6 +111,8 @@ async<void> run_mutex_test(executor& exec1, executor& exec2, std::thread::id exe
   // Launch two tasks on different executors (different threads)
   auto task1 = mutex_task(mtx, shared_counter, 1, exec1, exec1_tid).bind_executor(exec1);
   auto task2 = mutex_task(mtx, shared_counter, 2, exec2, exec2_tid).bind_executor(exec2);
+
+  co_await test_direct_executor_binding(exec2, exec1, exec2_tid, exec1_tid).bind_executor(exec1);
 
   // Start test
 #if 1
