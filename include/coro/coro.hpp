@@ -2,6 +2,9 @@
 
 #include <cassert>
 #include <coroutine>
+#ifndef CORO_DISABLE_EXCEPTION
+#include <exception>
+#endif
 #include <functional>
 #include <memory>
 #include <optional>
@@ -95,19 +98,19 @@ struct awaitable_promise_value {
 #endif
   }
 
-  T get_value() const {
+  T get_value() {
 #ifndef CORO_DISABLE_EXCEPTION
     if (std::holds_alternative<std::exception_ptr>(value_)) {
       std::rethrow_exception(std::get<std::exception_ptr>(value_));
     }
-    return std::get<T>(value_);
+    return std::move(std::get<T>(value_));
 #else
-    return value_.value();
+    return std::move(value_.value());
 #endif
   }
 
 #ifndef CORO_DISABLE_EXCEPTION
-  std::variant<std::exception_ptr, T> value_{nullptr};
+  std::variant<std::monostate, std::exception_ptr, T> value_;
 #else
   std::optional<T> value_;
 #endif
@@ -123,7 +126,7 @@ struct awaitable_promise_value<void> {
 #endif
   }
 
-  void get_value() const {
+  void get_value() {
 #ifndef CORO_DISABLE_EXCEPTION
     if (exception_) {
       std::rethrow_exception(exception_);
@@ -182,6 +185,7 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
   std::coroutine_handle<> parent_handle_{};
   executor* executor_ = nullptr;       // from bind_executor or inherit from caller
   awaitable<T>* awaitable_ = nullptr;  // have awaitable lived or detached
+  bool started_ = false;
 
 #ifdef CORO_ENABLE_LOCAL_STORAGE
   // Local storage support (lazily created, inherits from parent via parent pointer in coro_local_map)
@@ -201,7 +205,7 @@ struct awaitable {
     CORO_DEBUG_LIFECYCLE("awaitable: free: %p, h: %p, done: %s", this, current_coro_handle_ ? current_coro_handle_.address() : nullptr,
                          current_coro_handle_ ? current_coro_handle_.done() ? "yes" : "no" : "null");
     if (current_coro_handle_) {
-      if (current_coro_handle_.done()) {
+      if (current_coro_handle_.done() || !current_coro_handle_.promise().started_) {
         current_coro_handle_.destroy();
       } else {
         current_coro_handle_.promise().awaitable_ = nullptr;
@@ -226,7 +230,13 @@ struct awaitable {
   awaitable& operator=(awaitable&& other) noexcept {
     CORO_DEBUG_LIFECYCLE("awaitable: move(=): %p to %p, h: %p", &other, this, current_coro_handle_.address());
     if (this != &other) {
-      if (current_coro_handle_) current_coro_handle_.destroy();
+      if (current_coro_handle_) {
+        if (current_coro_handle_.done() || !current_coro_handle_.promise().started_) {
+          current_coro_handle_.destroy();
+        } else {
+          current_coro_handle_.promise().awaitable_ = nullptr;
+        }
+      }
       current_coro_handle_ = other.current_coro_handle_;
       if (current_coro_handle_) {
         current_coro_handle_.promise().awaitable_ = this;
@@ -257,6 +267,7 @@ struct awaitable {
     }
 #endif
     current_coro_handle_.promise().parent_handle_ = h;
+    current_coro_handle_.promise().started_ = true;
     return current_coro_handle_;
   }
 
@@ -278,29 +289,27 @@ struct awaitable {
     auto* exec_to_use = current_coro_handle_.promise().executor_ ? current_coro_handle_.promise().executor_ : &executor;
     exec_to_use->dispatch([coro = std::make_shared<awaitable<T>>(std::move(*this)), exec_to_use]() mutable {
       coro->current_coro_handle_.promise().executor_ = exec_to_use;
+      coro->current_coro_handle_.promise().started_ = true;
       CORO_DEBUG_LIFECYCLE("awaitable: resume begin: %p, h: %p", coro.get(), coro->current_coro_handle_.address());
       coro->current_coro_handle_.resume();
       CORO_DEBUG_LIFECYCLE("awaitable: resume end: %p, h: %p", coro.get(), coro->current_coro_handle_.address());
     });
   }
 
+#ifndef CORO_DISABLE_EXCEPTION
   template <typename Function>
   auto with_callback(Function completion_handler, std::function<void(std::exception_ptr)> exception_handler = nullptr) {
     auto coro = [](awaitable<T> lazy, auto completion_handler, [[maybe_unused]] auto exception_handler) mutable -> awaitable<void> {
-#ifndef CORO_DISABLE_EXCEPTION
       try {
-#endif
         if constexpr (std::is_void_v<T>) {
           co_await std::move(lazy);
           completion_handler();
         } else {
           completion_handler(co_await std::move(lazy));
         }
-#ifndef CORO_DISABLE_EXCEPTION
       } catch (...) {
         if (exception_handler) exception_handler(std::current_exception());
       }
-#endif
     }(std::move(*this), std::move(completion_handler), std::move(exception_handler));
     return coro;
   }
@@ -310,6 +319,26 @@ struct awaitable {
     auto coro = with_callback(std::move(completion_handler), std::move(exception_handler));
     return coro.detach(executor);  // launched here
   }
+#else
+  template <typename Function>
+  auto with_callback(Function completion_handler) {
+    auto coro = [](awaitable<T> lazy, auto completion_handler) mutable -> awaitable<void> {
+      if constexpr (std::is_void_v<T>) {
+        co_await std::move(lazy);
+        completion_handler();
+      } else {
+        completion_handler(co_await std::move(lazy));
+      }
+    }(std::move(*this), std::move(completion_handler));
+    return coro;
+  }
+
+  template <typename Function>
+  auto detach_with_callback(auto& executor, Function completion_handler) {
+    auto coro = with_callback(std::move(completion_handler));
+    return coro.detach(executor);  // launched here
+  }
+#endif
 
   std::coroutine_handle<promise_type> current_coro_handle_;
 };
@@ -369,13 +398,13 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
         auto& func = std::get<0>(callback_function_);
         if constexpr (std::is_void_v<T>) {
           func([handle, executor]() {
-            executor->dispatch([handle] {
+            executor->post([handle] {
               handle.resume();
             });
           });
         } else {
           func([handle, this, executor](T value) {
-            executor->dispatch([handle, this, value = std::move(value)]() mutable {
+            executor->post([handle, this, value = std::move(value)]() mutable {
               this->result_ = std::move(value);
               handle.resume();
             });
@@ -386,13 +415,13 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
         auto& func = std::get<1>(callback_function_);
         if constexpr (std::is_void_v<T>) {
           func(executor, [handle, executor]() {
-            executor->dispatch([handle] {
+            executor->post([handle] {
               handle.resume();
             });
           });
         } else {
           func(executor, [handle, this, executor](T value) {
-            executor->dispatch([handle, this, value = std::move(value)]() mutable {
+            executor->post([handle, this, value = std::move(value)]() mutable {
               this->result_ = std::move(value);
               handle.resume();
             });
