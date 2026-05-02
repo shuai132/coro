@@ -39,24 +39,40 @@
 #include <mutex>
 #include <unordered_set>
 struct debug_coro_promise {
-  inline static std::unordered_set<void*> debug_coro_leak;
-  inline static std::mutex debug_coro_leak_mutex;
+ private:
+  struct leak_state_t {
+    std::mutex mutex_;
+    std::unordered_set<void*> promises_;
+  };
+
+  static leak_state_t& get_leak_state() {
+    // Other translation units can create coroutines during both static initialization and teardown.
+    // Retain this debug-only registry for the process lifetime instead of depending on global destruction order.
+    static auto* state = new leak_state_t;
+    return *state;
+  }
+
+ public:
+  inline static auto& debug_coro_leak = get_leak_state().promises_;
+  inline static auto& debug_coro_leak_mutex = get_leak_state().mutex_;
 
   static void dump() {
+    auto& state = get_leak_state();
     [[maybe_unused]] std::size_t count;
     {
-      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
-      count = debug_coro_leak.size();
+      std::lock_guard<std::mutex> lock(state.mutex_);
+      count = state.promises_.size();
     }
     CORO_DEBUG_LEAK_LOG("debug: debug_coro_leak.size: %zu", count);
   }
 
   debug_coro_promise() {
+    auto& state = get_leak_state();
     [[maybe_unused]] std::size_t count;
     {
-      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
-      debug_coro_leak.insert(this);
-      count = debug_coro_leak.size();
+      std::lock_guard<std::mutex> lock(state.mutex_);
+      state.promises_.insert(this);
+      count = state.promises_.size();
     }
     // User logging may create another coroutine; never call it while holding the tracking lock.
 #ifndef CORO_DISABLE_EXCEPTION
@@ -65,19 +81,20 @@ struct debug_coro_promise {
       CORO_DEBUG_LEAK_LOG("new promise: %p, num: %zu", this, count);
 #ifndef CORO_DISABLE_EXCEPTION
     } catch (...) {
-      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
-      debug_coro_leak.erase(this);
+      std::lock_guard<std::mutex> lock(state.mutex_);
+      state.promises_.erase(this);
       throw;
     }
 #endif
   }
 
   ~debug_coro_promise() {
+    auto& state = get_leak_state();
     [[maybe_unused]] std::size_t count;
     {
-      std::lock_guard<std::mutex> lock(debug_coro_leak_mutex);
-      debug_coro_leak.erase(this);
-      count = debug_coro_leak.size();
+      std::lock_guard<std::mutex> lock(state.mutex_);
+      state.promises_.erase(this);
+      count = state.promises_.size();
     }
     CORO_DEBUG_LEAK_LOG("free promise: %p, num: %zu", this, count);
   }

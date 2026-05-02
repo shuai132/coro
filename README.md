@@ -1137,6 +1137,8 @@ add_definitions(-DCORO_DISABLE_EXCEPTION)
 
 Logging hooks run on the calling thread and may be invoked concurrently; use a thread-safe logger. Leak counts are snapshots taken when each event is recorded.
 
+The debug tracker retains its shared registry until process exit so static constructors and destructors can safely create coroutines.
+
 Leak tracking preserves aligned allocations requested by the compiler. Clang builds with over-aligned coroutine state may require `-fcoro-aligned-allocation`.
 
 ```cpp

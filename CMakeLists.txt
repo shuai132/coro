@@ -90,7 +90,7 @@ if (CORO_BUILD_TEST)
 
     # test core lifetime
     set(TARGET_NAME ${PROJECT_NAME}_core_lifetime)
-    add_executable(${TARGET_NAME} test/coro_core_lifetime.cpp)
+    add_executable(${TARGET_NAME} test/coro_core_lifetime_static.cpp test/coro_core_lifetime.cpp)
     include(CheckCXXCompilerFlag)
     check_cxx_compiler_flag("-fcoro-aligned-allocation" CORO_TEST_HAS_ALIGNED_COROUTINE_ALLOCATION)
     if (CORO_TEST_HAS_ALIGNED_COROUTINE_ALLOCATION)

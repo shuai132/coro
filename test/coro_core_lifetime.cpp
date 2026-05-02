@@ -28,6 +28,16 @@ async<int> lazy_value() {
   co_return 42;
 }
 
+void test_static_coroutine_lifetime() {
+  {
+    auto task = lazy_value();
+    task.current_coro_handle_.resume();
+    ASSERT(task.current_coro_handle_.done());
+    ASSERT(task.await_resume() == 42);
+  }
+  debug_coro_promise::dump();
+}
+
 #ifndef CORO_DISABLE_EXCEPTION
 thread_local bool fail_leak_log = false;
 thread_local bool fail_initial_log = false;
