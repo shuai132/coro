@@ -104,6 +104,9 @@ jobs:
           ${{ matrix.env.CMAKE_OPTIONS }}
         shell: bash
 
+      - name: Test CMake integration
+        run: cmake -P test/cmake/run.cmake
+
       - name: Build with ${{ matrix.compiler }}
         run: cmake --build build --config ${{ matrix.build_type }} -j
 
