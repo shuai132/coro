@@ -53,7 +53,7 @@ struct coro_local {
   // Awaiter for getting the stored value
   struct get_awaiter {
     const coro_local* self_;
-    std::optional<T> result_{std::in_place};
+    std::optional<T> result_;
 
     [[nodiscard]] bool await_ready() const noexcept {
       return false;
@@ -64,6 +64,8 @@ struct coro_local {
       T* ptr = self_->find_in_storage(h.promise());
       if (ptr) {
         result_.emplace(*ptr);
+      } else {
+        result_.emplace();
       }
       return false;  // Don't actually suspend
     }
@@ -190,7 +192,7 @@ struct coro_local {
 
   // Get the stored value, returns default-constructed T if not found
   // Usage: T value = co_await storage.get();
-  [[nodiscard]] auto get() const noexcept(std::is_nothrow_default_constructible_v<T>) {
+  [[nodiscard]] auto get() const noexcept {
     return get_awaiter{this};
   }
 

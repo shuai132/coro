@@ -347,6 +347,37 @@ struct nonassignable_local_value {
   nonassignable_local_value& operator=(nonassignable_local_value&&) = delete;
 };
 
+struct default_counting_local_value {
+  inline static int defaults = 0;
+  int value;
+
+  default_counting_local_value() : value(0) {
+    ++defaults;
+  }
+
+  explicit default_counting_local_value(int v) : value(v) {}
+};
+
+async<void> read_inherited_without_default(coro_local<default_counting_local_value>& storage) {
+  auto value = co_await storage.get();
+  ASSERT(value.value == 42);
+  ASSERT(default_counting_local_value::defaults == 0);
+}
+
+async<void> coro_local_lazy_default_test() {
+  static coro_local<default_counting_local_value> storage;
+  default_counting_local_value::defaults = 0;
+  co_await storage.set(42);
+  auto value = co_await storage.get();
+  ASSERT(value.value == 42);
+  ASSERT(default_counting_local_value::defaults == 0);
+  co_await read_inherited_without_default(storage);
+  co_await storage.erase();
+  auto missing = co_await storage.get();
+  ASSERT(missing.value == 0);
+  ASSERT(default_counting_local_value::defaults == 1);
+}
+
 async<void> coro_local_nonassignable_test() {
   static coro_local<nonassignable_local_value> storage;
   auto missing = co_await storage.get();
@@ -371,9 +402,17 @@ struct throwing_local_value {
   inline static int live = 0;
   inline static bool fail_copy = false;
   inline static bool fail_move = false;
+  inline static bool fail_default = false;
   int value = 0;
 
-  explicit throwing_local_value(int v = 0) : value(v) {
+  throwing_local_value() {
+    if (fail_default) {
+      throw std::runtime_error("local default failed");
+    }
+    ++live;
+  }
+
+  explicit throwing_local_value(int v) : value(v) {
     if (v < 0) {
       throw std::runtime_error("local conversion failed");
     }
@@ -466,6 +505,17 @@ async<void> coro_local_exception_test() {
   }
   ASSERT(caught);
 
+  throwing_local_value::fail_default = true;
+  caught = false;
+  try {
+    auto stored = co_await storage.get();
+    ASSERT(stored.value == 7);
+  } catch (...) {
+    caught = true;
+  }
+  ASSERT(!caught);
+  throwing_local_value::fail_default = false;
+
   for (bool fail_copy : {true, false}) {
     throwing_local_value::fail_copy = fail_copy;
     throwing_local_value::fail_move = !fail_copy;
@@ -504,11 +554,22 @@ async<void> coro_local_exception_test() {
   auto* value = co_await storage.get_ptr();
   ASSERT(value && value->value == 7);
   co_await storage.erase();
+  throwing_local_value::fail_default = true;
+  caught = false;
+  try {
+    [[maybe_unused]] auto missing = co_await storage.get();
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "local default failed");
+    caught = true;
+  }
+  throwing_local_value::fail_default = false;
+  ASSERT(caught);
   ASSERT(throwing_local_value::live == 0);
 }
 #endif
 
 async<void> run_all_tests() {
+  co_await coro_local_lazy_default_test();
   co_await coro_local_basic_test();
   co_await coro_local_nonassignable_test();
 #ifndef CORO_DISABLE_EXCEPTION
