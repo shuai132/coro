@@ -110,7 +110,7 @@
 | `coro::current_executor()`                   | 获取当前执行器                            |
 | `coro::callback_awaiter<T>`                  | 将回调式 API 转换为协程                     |
 | `coro::coro_local<T>`                        | 协程本地存储（类似 thread_local）            |
-| `coro::inherit_coro_local()`                 | 继承父协程的本地存储                         |
+| `coro::inherit_coro_local()`                 | 确保当前协程的本地存储存在                   |
 
 ## 特性
 
@@ -767,19 +767,20 @@ T value = co_await storage.get();
 // 获取 optional（如果未设置则返回 std::nullopt）
 std::optional<T> opt = co_await storage.get_optional();
 
-// 获取指针（如果未设置则返回 nullptr）
+// 获取借用指针（可能指向祖先协程中的值；未设置时返回 nullptr）
 T* ptr = co_await storage.get_ptr();
 
 // 检查值是否存在
 bool exists = co_await storage.has();
 
-// 删除值
+// 删除本地覆盖值（继承的值会重新可见）
 co_await storage.erase();
 ```
 
 ### 从父协程继承
 
-子协程可以继承父协程的值。默认情况下，子协程可以读取父协程的值。使用 `inherit_coro_local()` 启用写时复制语义，使修改仅对子协程生效。
+通过 `co_await` 直接等待的子协程会自动继承对父协程值的访问。调用 `set()` 会创建或替换本地值，不改变父协程的值。分离任务从独立的存储开始。
+`inherit_coro_local()` 仅确保当前协程的存储映射存在；继承和本地写入都不要求调用它。
 
 ```cpp
 static coro::coro_local<int> context_id;
@@ -798,18 +799,17 @@ async<void> parent_coro() {
 }
 ```
 
-### 写时复制语义
+### 本地覆盖
 
-当你希望子协程继承值但拥有自己的副本进行修改时，使用 `inherit_coro_local()`：
+使用 `set()` 在子协程中覆盖继承的值。`erase()` 仅删除本地覆盖值，使继承的值重新可见。
+`get_ptr()` 返回指向存储值的借用指针，该值可能属于祖先协程；通过此指针修改会改变祖先协程的值。
+如果希望修改仅在本地生效，使用 `get()` 读取，再用 `set()` 写回：
 
 ```cpp
 async<void> parent_coro() {
     co_await context_id.set(100);
 
     auto child = []() -> async<void> {
-        // 启用写时复制继承
-        co_await coro::inherit_coro_local();
-
         // 读取父协程的值
         int id = co_await context_id.get();  // 100
 

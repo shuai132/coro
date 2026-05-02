@@ -28,7 +28,8 @@ struct coro_local;
 //     int v = co_await my_value.get();   // Get value (returns 42)
 //   }
 //
-// Child coroutines inherit parent's storage values (copy-on-write semantics)
+// Directly awaited children inherit parent values; set() writes local overrides.
+// get_ptr() may borrow an ancestor's value and does not copy it before mutation.
 template <typename T>
 struct coro_local {
  private:
@@ -204,7 +205,7 @@ struct coro_local {
     return get_optional_awaiter{this};
   }
 
-  // Get pointer to stored value, returns nullptr if not found
+  // Borrow a pointer to the stored value, possibly in an ancestor; no copy is made.
   // Usage: T* ptr = co_await storage.get_ptr();
   [[nodiscard]] auto get_ptr() const noexcept {
     return get_ptr_awaiter{this};
@@ -223,7 +224,7 @@ struct coro_local {
     return has_awaiter{this};
   }
 
-  // Erase the locally stored value
+  // Erase the local value, making any inherited value visible again
   // Usage: co_await storage.erase();
   auto erase() const noexcept {
     return erase_awaiter{this};
@@ -256,9 +257,8 @@ struct inherit_coro_local_awaiter {
 
 }  // namespace detail
 
-// Explicitly inherit coro_local storage from parent coroutine
-// This is useful when you want copy-on-write semantics where
-// the child sees parent values but modifications are local
+// Ensure the current coroutine has a local storage map.
+// Direct co_await inheritance and local set() overrides already work automatically.
 // Usage: co_await inherit_coro_local();
 [[nodiscard]] inline detail::inherit_coro_local_awaiter inherit_coro_local() {
   return detail::inherit_coro_local_awaiter{};

@@ -125,7 +125,7 @@ I have also learned about some well-known C++20 coroutine open-source libraries,
 | `coro::current_executor()`                   | Get current executor                                  |
 | `coro::callback_awaiter<T>`                  | Convert callback-style APIs to coroutines             |
 | `coro::coro_local<T>`                        | Coroutine-local storage (like thread_local)           |
-| `coro::inherit_coro_local()`                 | Inherit parent coroutine's local storage              |
+| `coro::inherit_coro_local()`                 | Ensure local storage exists                           |
 
 ## Features
 
@@ -784,20 +784,21 @@ T value = co_await storage.get();
 // Get as optional (returns std::nullopt if not set)
 std::optional<T> opt = co_await storage.get_optional();
 
-// Get pointer (returns nullptr if not set)
+// Get a borrowed pointer (may point into an ancestor; nullptr if not set)
 T* ptr = co_await storage.get_ptr();
 
 // Check if value exists
 bool exists = co_await storage.has();
 
-// Erase the value
+// Erase the local override (an inherited value becomes visible again)
 co_await storage.erase();
 ```
 
 ### Inheritance from Parent Coroutine
 
-Child coroutines can inherit values from their parent coroutine. By default, child coroutines can read parent values.
-Use `inherit_coro_local()` to enable copy-on-write semantics where modifications are local to the child.
+Directly awaited child coroutines automatically inherit access to parent values. Calling `set()` creates or replaces a local
+value without changing the parent. Detached tasks start with independent storage.
+`inherit_coro_local()` only ensures the current coroutine has a storage map; it is optional for inheritance and local writes.
 
 ```cpp
 static coro::coro_local<int> context_id;
@@ -816,18 +817,17 @@ async<void> parent_coro() {
 }
 ```
 
-### Copy-on-Write Semantics
+### Local Overrides
 
-Use `inherit_coro_local()` when you want the child to inherit values but have its own copy for modifications:
+Use `set()` to override an inherited value in the child. `erase()` removes only that local override, exposing the inherited
+value again. `get_ptr()` returns a borrowed pointer to the stored value, which may belong to an ancestor; modifying through
+that pointer changes the ancestor's value. To keep a modification local, read with `get()` and write back with `set()`:
 
 ```cpp
 async<void> parent_coro() {
     co_await context_id.set(100);
 
     auto child = []() -> async<void> {
-        // Enable copy-on-write inheritance
-        co_await coro::inherit_coro_local();
-
         // Read parent's value
         int id = co_await context_id.get();  // 100
 
