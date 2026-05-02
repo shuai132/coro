@@ -125,8 +125,11 @@ async<void> test_broadcast_multiple_receivers() {
   bool receiver2_done = false;
   bool receiver3_done = false;
 
+  wait_group receivers;
+  receivers.add(3);
+
   // Create multiple receivers
-  auto receiver = [&ch](int id, int* value_ptr, bool* done_ptr) -> async<void> {
+  auto receiver = [](channel<int>& ch, int id, int* value_ptr, bool* done_ptr) -> async<void> {
     LOG("Receiver %d: waiting for broadcast", id);
     auto val_opt = co_await ch.recv();
     if (val_opt.has_value()) {
@@ -140,12 +143,15 @@ async<void> test_broadcast_multiple_receivers() {
   };
 
   // Start 3 receivers
-  co_await spawn_local(receiver(1, &receiver1_value, &receiver1_done));
-  co_await spawn_local(receiver(2, &receiver2_value, &receiver2_done));
-  co_await spawn_local(receiver(3, &receiver3_value, &receiver3_done));
-
-  // Give receivers time to start waiting
-  co_await sleep(50ms);
+  co_await spawn_local(receiver(ch, 1, &receiver1_value, &receiver1_done).with_callback([&receivers] {
+    receivers.done();
+  }));
+  co_await spawn_local(receiver(ch, 2, &receiver2_value, &receiver2_done).with_callback([&receivers] {
+    receivers.done();
+  }));
+  co_await spawn_local(receiver(ch, 3, &receiver3_value, &receiver3_done).with_callback([&receivers] {
+    receivers.done();
+  }));
 
   // Broadcast a value - should go to ALL receivers
   LOG("Broadcasting value 42 to all receivers");
@@ -154,8 +160,8 @@ async<void> test_broadcast_multiple_receivers() {
 
   ASSERT(count == 3);  // Should have notified all 3 receivers
 
-  // Wait for all receivers to complete
-  co_await sleep(50ms);
+  // Wait for all receivers to release their coroutine frames.
+  co_await receivers;
 
   // Verify all receivers got the same value
   ASSERT(receiver1_done);
@@ -178,8 +184,10 @@ async<void> test_broadcast_vs_send() {
   int receiver2_value = 0;
   bool receiver1_done = false;
   bool receiver2_done = false;
+  wait_group receivers;
+  receivers.add(2);
 
-  auto receiver = [&ch](int id, int* value_ptr, bool* done_ptr) -> async<void> {
+  auto receiver = [](channel<int>& ch, int id, int* value_ptr, bool* done_ptr) -> async<void> {
     auto val_opt = co_await ch.recv();
     if (val_opt.has_value()) {
       *value_ptr = *val_opt;
@@ -190,17 +198,17 @@ async<void> test_broadcast_vs_send() {
   };
 
   // Start 2 receivers
-  co_await spawn_local(receiver(1, &receiver1_value, &receiver1_done));
-  co_await spawn_local(receiver(2, &receiver2_value, &receiver2_done));
-
-  co_await sleep(50ms);
+  co_await spawn_local(receiver(ch, 1, &receiver1_value, &receiver1_done).with_callback([&receivers] {
+    receivers.done();
+  }));
+  co_await spawn_local(receiver(ch, 2, &receiver2_value, &receiver2_done).with_callback([&receivers] {
+    receivers.done();
+  }));
 
   // First, use send() - should only go to ONE receiver
   LOG("Using send(100) - should go to only one receiver");
   bool send_ok = co_await ch.send(100);
   ASSERT(send_ok);
-
-  co_await sleep(50ms);
 
   // Exactly one receiver should have received the value
   int received_count = (receiver1_value == 100 ? 1 : 0) + (receiver2_value == 100 ? 1 : 0);
@@ -212,7 +220,7 @@ async<void> test_broadcast_vs_send() {
   size_t broadcast_count = co_await ch.broadcast(200);
   ASSERT(broadcast_count == 1);  // Only one receiver waiting
 
-  co_await sleep(50ms);
+  co_await receivers;
 
   // Both receivers should now be done
   ASSERT(receiver1_done);
@@ -250,32 +258,39 @@ async<void> test_sequential_broadcasts() {
 
   std::vector<int> receiver1_values;
   std::vector<int> receiver2_values;
+  wait_group processed;
+  wait_group receivers;
+  receivers.add(2);
 
-  auto receiver = [&ch](int id, std::vector<int>* values) -> async<void> {
+  auto receiver = [](channel<int>& ch, int id, std::vector<int>* values, wait_group& processed) -> async<void> {
     for (int i = 0; i < 3; i++) {
       auto val_opt = co_await ch.recv();
       if (val_opt.has_value()) {
         values->push_back(*val_opt);
         LOG("Receiver %d: received value %d (broadcast %d)", id, *val_opt, i + 1);
       }
+      processed.done();
     }
     co_return;
   };
 
-  co_await spawn_local(receiver(1, &receiver1_values));
-  co_await spawn_local(receiver(2, &receiver2_values));
-
-  co_await sleep(50ms);
+  co_await spawn_local(receiver(ch, 1, &receiver1_values, processed).with_callback([&receivers] {
+    receivers.done();
+  }));
+  co_await spawn_local(receiver(ch, 2, &receiver2_values, processed).with_callback([&receivers] {
+    receivers.done();
+  }));
 
   // Send multiple broadcasts
   for (int i = 1; i <= 3; i++) {
+    processed.add(2);
     LOG("Broadcasting value %d", i * 10);
     size_t count = co_await ch.broadcast(i * 10);
-    ASSERT(count == 2);    // Both receivers should get it
-    co_await sleep(30ms);  // Give time for receivers to process
+    ASSERT(count == 2);  // Both receivers should get it
+    co_await processed;
   }
 
-  co_await sleep(50ms);
+  co_await receivers;
 
   // Both receivers should have received all 3 values
   ASSERT(receiver1_values.size() == 3);
