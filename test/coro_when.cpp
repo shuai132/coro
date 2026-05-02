@@ -41,10 +41,10 @@ void test_when_any_result_publication() {
   detail::when_any_awaiter<state_type, result_type, int, publication_value> waiter{state};
   std::atomic<bool> entered{false};
   std::atomic<bool> release{false};
-  publication_value value{entered, release, 42};
+  std::optional<publication_value> value{std::in_place, entered, release, 42};
 
   std::thread writer([&] {
-    state->template set_result<1>(std::move(value));
+    state->template set_result<1>(value);
   });
   while (!entered.load(std::memory_order_acquire)) {
     std::this_thread::yield();

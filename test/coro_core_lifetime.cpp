@@ -138,6 +138,94 @@ void test_child_frame_cleanup() {
   }
 }
 
+struct tracked_result {
+  int* live;
+
+  explicit tracked_result(int& count) : live(&count) {
+    ++*live;
+  }
+  tracked_result(tracked_result&& other) noexcept : live(other.live) {
+    ++*live;
+  }
+  tracked_result(const tracked_result&) = delete;
+  ~tracked_result() {
+    --*live;
+  }
+};
+
+async<tracked_result> child_with_tracked_result(int& live, bool delayed) {
+  if (delayed) {
+    co_await sleep(0ns);
+  }
+  co_return tracked_result{live};
+}
+
+async<void> gated_loser(std::function<void()>& release, bool& completed) {
+  co_await callback_awaiter<void>([&release](std::function<void()> callback) {
+    release = std::move(callback);
+  });
+  completed = true;
+}
+
+template <bool ANY>
+async<void> await_result_cleanup(bool delayed, bool& completed) {
+  int live = 0;
+  {
+    if constexpr (ANY) {
+      auto result = co_await when_any(child_with_tracked_result(live, delayed));
+      ASSERT(result.index == 0);
+    } else {
+      auto result = co_await when_all(child_with_tracked_result(live, delayed));
+      ASSERT(result.live == &live);
+    }
+  }
+  ASSERT(live == 0);
+  if constexpr (ANY) {
+    std::function<void()> release;
+    bool loser_completed = false;
+    {
+      auto result = co_await when_any(child_with_tracked_result(live, delayed), gated_loser(release, loser_completed));
+      ASSERT(result.index == 0);
+      ASSERT(!loser_completed);
+    }
+    ASSERT(live == 0);
+    ASSERT(release);
+    release();
+    ASSERT(loser_completed);
+  } else {
+    {
+      auto results = co_await when_all(child_with_tracked_result(live, delayed), child_with_tracked_result(live, delayed));
+      ASSERT(std::get<0>(results).live == &live);
+      ASSERT(std::get<1>(results).live == &live);
+    }
+    ASSERT(live == 0);
+#ifndef CORO_DISABLE_EXCEPTION
+    bool caught = false;
+    try {
+      co_await when_all(child_with_tracked_result(live, false), child_with_frame_parameter<void>(frame_parameter{live}, delayed, true));
+    } catch (const std::runtime_error&) {
+      caught = true;
+    }
+    ASSERT(caught);
+    ASSERT(live == 0);
+#endif
+  }
+  completed = true;
+}
+
+template <bool ANY>
+void test_combined_result_cleanup() {
+  for (bool delayed : {false, true}) {
+    executor_poll executor;
+    bool completed = false;
+    spawn(executor, await_result_cleanup<ANY>(delayed, completed));
+    while (!completed) {
+      executor.poll();
+    }
+    check_coro_leak();
+  }
+}
+
 void test_alignment_argument() {
   auto task = alignment_argument(std::align_val_t{0});
   task.current_coro_handle_.resume();
@@ -172,6 +260,8 @@ int main() {
   test_child_frame_cleanup<false, void>();
   test_child_frame_cleanup<true, int>();
   test_child_frame_cleanup<true, void>();
+  test_combined_result_cleanup<false>();
+  test_combined_result_cleanup<true>();
 #ifndef CORO_DISABLE_EXCEPTION
   test_debug_log_failure();
 #endif

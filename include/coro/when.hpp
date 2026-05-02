@@ -77,6 +77,25 @@ struct when_all_state {
   std::exception_ptr exception;  // Add exception support
 #endif
 
+  // Release stored values before returning or propagating an extraction error to the caller.
+  struct result_cleanup {
+    when_all_state* state_;
+
+    ~result_cleanup() {
+      std::apply(
+          [](auto&... values) {
+            (clear(values), ...);
+          },
+          state_->results);
+    }
+
+    template <typename T>
+    static void clear(std::optional<T>& value) noexcept {
+      value.reset();
+    }
+    static void clear(void_placeholder&) noexcept {}
+  };
+
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
     bool expected = false;
@@ -95,9 +114,11 @@ struct when_all_state {
 #endif
 
   template <size_t Index, typename T>
-  void set_result(T&& value) {
+  void set_result(std::optional<T>& value) {
     std::unique_lock<std::mutex> lock(mtx);
-    std::get<Index>(results).emplace(std::forward<T>(value));
+    std::get<Index>(results).emplace(std::move(*value));
+    // A moved-from result can still have a destructor that refers to the parent's data.
+    value.reset();
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
     if (count == total_count) {
       if (parent_handle) {
@@ -130,8 +151,8 @@ awaitable<void> when_all_task(awaitable<T> task, std::shared_ptr<State> state) {
       co_await awaitable<T>{std::move(task)};
       state->increment_completed();
     } else {
-      auto result = co_await awaitable<T>{std::move(task)};
-      state->template set_result<Index>(std::move(result));
+      std::optional<T> result{std::in_place, co_await awaitable<T>{std::move(task)}};
+      state->template set_result<Index>(result);
     }
 #ifndef CORO_DISABLE_EXCEPTION
   } catch (...) {
@@ -179,6 +200,7 @@ struct when_all_awaiter<State, std::tuple<>> {
   }
 
   std::tuple<> await_resume() {
+    typename State::result_cleanup cleanup{state_.get()};
 #ifndef CORO_DISABLE_EXCEPTION
     if (state_->exception) {
       std::rethrow_exception(state_->exception);
@@ -250,6 +272,7 @@ struct when_all_awaiter<State, std::tuple<ResultTypes...>> {
   }
 
   std::tuple<ResultTypes...> await_resume() {
+    typename State::result_cleanup cleanup{state_.get()};
 #ifndef CORO_DISABLE_EXCEPTION
     if (state_->exception) {
       std::rethrow_exception(state_->exception);
@@ -276,6 +299,7 @@ struct when_all_single_awaiter {
   }
 
   ResultType await_resume() {
+    typename State::result_cleanup cleanup{state_.get()};
 #ifndef CORO_DISABLE_EXCEPTION
     if (state_->exception) {
       std::rethrow_exception(state_->exception);
@@ -455,6 +479,15 @@ struct when_any_state_impl {
   std::exception_ptr exception;  // Add exception support
 #endif
 
+  // Other branches can keep this state alive after the winning result has been consumed.
+  struct result_cleanup {
+    when_any_state_impl* state_;
+
+    ~result_cleanup() {
+      state_->result.template emplace<0>();
+    }
+  };
+
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
     std::unique_lock<std::mutex> lock(mtx);
@@ -471,11 +504,13 @@ struct when_any_state_impl {
 #endif
 
   template <size_t Index, typename T>
-  void set_result(T&& value) {
+  void set_result(std::optional<T>& value) {
     std::unique_lock<std::mutex> lock(mtx);
     if (!completed.load(std::memory_order_relaxed)) {
       completed_index = Index;
-      result.template emplace<Index + 1>(std::forward<T>(value));
+      result.template emplace<Index + 1>(std::move(*value));
+      // Release the source before publishing completion to the parent.
+      value.reset();
       // Publish completion only after the result or exception is fully initialized.
       completed.store(true, std::memory_order_release);
       if (parent_handle) {
@@ -558,8 +593,8 @@ awaitable<void> when_any_task(awaitable<T> task, std::shared_ptr<State> state) {
       co_await awaitable<T>{std::move(task)};
       state->template set_completed_at<Index>();
     } else {
-      auto result = co_await awaitable<T>{std::move(task)};
-      state->template set_result<Index>(std::move(result));
+      std::optional<T> result{std::in_place, co_await awaitable<T>{std::move(task)}};
+      state->template set_result<Index>(result);
     }
 #ifndef CORO_DISABLE_EXCEPTION
   } catch (...) {
@@ -638,6 +673,7 @@ struct when_any_awaiter_impl {
   }
 
   ResultType await_resume() {
+    typename State::result_cleanup cleanup{state_.get()};
 #ifndef CORO_DISABLE_EXCEPTION
     if (state_->exception) {
       std::rethrow_exception(state_->exception);
