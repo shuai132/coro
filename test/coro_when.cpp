@@ -3,6 +3,7 @@
 // #define CORO_DISABLE_EXCEPTION
 
 #include <atomic>
+#include <memory>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
@@ -229,18 +230,26 @@ void test_when_any_result_publication() {
   LOG("when_any result publication test: PASSED");
 }
 
+// Optional counters track completion on the single test executor. Shared ownership keeps them
+// alive for when_any branches that outlive their caller.
 // Test task that returns a value after a delay
-async<int> delayed_value_task(int value, int delay_ms) {
+async<int> delayed_value_task(int value, int delay_ms, std::shared_ptr<int> completed = {}) {
   LOG("Task %d: starting, will complete after %d ms", value, delay_ms);
   co_await sleep(std::chrono::milliseconds(delay_ms));
+  if (completed) {
+    ++*completed;
+  }
   LOG("Task %d: completed", value);
   co_return value;
 }
 
 // Test task that returns void
-async<void> delayed_void_task(const char* name, int delay_ms) {
+async<void> delayed_void_task(const char* name, int delay_ms, std::shared_ptr<int> completed = {}) {
   LOG("Task %s: starting, will complete after %d ms", name, delay_ms);
   co_await sleep(std::chrono::milliseconds(delay_ms));
+  if (completed) {
+    ++*completed;
+  }
   LOG("Task %s: completed", name);
 }
 
@@ -304,9 +313,14 @@ async<void> test_when_all_void() {
 async<void> test_when_any_values() {
   LOG("=== Testing when_any with value-returning tasks ===");
   TimeCount t;
+  auto completed = std::make_shared<int>(0);
+  // A busy executor must not turn first-completion checks into timing failures.
+  (co_await current_executor())->post([] {
+    std::this_thread::sleep_for(100ms);
+  });
 
   // Launch 3 tasks with different delays
-  auto result = co_await when_any(delayed_value_task(1, 100), delayed_value_task(2, 30), delayed_value_task(3, 80));
+  auto result = co_await when_any(delayed_value_task(1, 100, completed), delayed_value_task(2, 30, completed), delayed_value_task(3, 80, completed));
 
   auto elapsed = t.elapsed();
   LOG("First task completed after %d ms", (int)elapsed);
@@ -314,9 +328,8 @@ async<void> test_when_any_values() {
 
   // Task 2 should complete first (30ms delay)
   ASSERT(result.index == 1);  // Index 1 corresponds to the second task
-#ifndef CORO_TEST_RUNNER_VERY_SLOW
-  ASSERT(elapsed >= 30 && elapsed < 80);
-#endif
+  ASSERT(elapsed >= 30);
+  ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
   // Get the value from the result
   auto value = result.template get<1>();
   LOG("Completed task value: %d", value);
@@ -329,9 +342,11 @@ async<void> test_when_any_values() {
 async<void> test_when_any_void() {
   LOG("=== Testing when_any with void tasks ===");
   TimeCount t;
+  auto completed = std::make_shared<int>(0);
 
   // Launch 3 void tasks with different delays
-  auto result = co_await when_any(delayed_void_task("A", 60), delayed_void_task("B", 20), delayed_void_task("C", 50));
+  auto result =
+      co_await when_any(delayed_void_task("A", 60, completed), delayed_void_task("B", 20, completed), delayed_void_task("C", 50, completed));
 
   auto elapsed = t.elapsed();
   LOG("First void task completed after %d ms", (int)elapsed);
@@ -339,9 +354,8 @@ async<void> test_when_any_void() {
 
   // Task B should complete first (20ms delay)
   ASSERT(result.index == 1);  // Index 1 corresponds to task B
-#ifndef CORO_TEST_RUNNER_VERY_SLOW
-  ASSERT(elapsed >= 20 && elapsed < 50);
-#endif
+  ASSERT(elapsed >= 20);
+  ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
 
   LOG("when_any void test: PASSED");
 }
@@ -392,9 +406,11 @@ async<void> test_when_all_mixed_types2() {
 async<void> test_when_any_mixed_types() {
   LOG("=== Testing when_any with mixed types (int, void, int) ===");
   TimeCount t;
+  auto completed = std::make_shared<int>(0);
 
   // Launch tasks with different return types
-  auto result = co_await when_any(delayed_value_task(100, 50), delayed_void_task("FastVoid", 15), delayed_value_task(200, 60));
+  auto result =
+      co_await when_any(delayed_value_task(100, 50, completed), delayed_void_task("FastVoid", 15, completed), delayed_value_task(200, 60, completed));
 
   auto elapsed = t.elapsed();
   LOG("First task completed after %d ms", (int)elapsed);
@@ -402,9 +418,8 @@ async<void> test_when_any_mixed_types() {
 
   // The void task (index 1) should complete first
   ASSERT(result.index == 1);
-#ifndef CORO_TEST_RUNNER_VERY_SLOW
-  ASSERT(elapsed >= 15 && elapsed < 50);
-#endif
+  ASSERT(elapsed >= 15);
+  ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
 
   LOG("when_any mixed types test: PASSED");
 }
@@ -467,9 +482,12 @@ async<void> test_when_any_keeps_losers_running() {
 #ifndef CORO_DISABLE_EXCEPTION
 
 // Exception test tasks
-async<int> delayed_value_task_with_exception(int value, int delay_ms, bool should_throw) {
+async<int> delayed_value_task_with_exception(int value, int delay_ms, bool should_throw, std::shared_ptr<int> completed = {}) {
   LOG("Task %d: starting, will complete after %d ms, throw=%d", value, delay_ms, should_throw);
   co_await sleep(std::chrono::milliseconds(delay_ms));
+  if (completed) {
+    ++*completed;
+  }
   if (should_throw) {
     LOG("Task %d: throwing exception", value);
     throw std::runtime_error("Task " + std::to_string(value) + " failed");
@@ -478,9 +496,12 @@ async<int> delayed_value_task_with_exception(int value, int delay_ms, bool shoul
   co_return value;
 }
 
-async<void> delayed_void_task_with_exception(const char* name, int delay_ms, bool should_throw) {
+async<void> delayed_void_task_with_exception(const char* name, int delay_ms, bool should_throw, std::shared_ptr<int> completed = {}) {
   LOG("Task %s: starting, will complete after %d ms, throw=%d", name, delay_ms, should_throw);
   co_await sleep(std::chrono::milliseconds(delay_ms));
+  if (completed) {
+    ++*completed;
+  }
   if (should_throw) {
     LOG("Task %s: throwing exception", name);
     throw std::runtime_error(std::string("Task ") + name + " failed");
@@ -580,13 +601,15 @@ async<void> test_when_all_mixed_exception() {
 async<void> test_when_any_exception_first() {
   LOG("=== Testing when_any with exception (first task throws) ===");
   TimeCount t;
+  auto completed = std::make_shared<int>(0);
 
   bool exception_caught = false;
   std::string exception_msg;
   try {
     // Task 2 completes first (20ms) but throws
-    [[maybe_unused]] auto result = co_await when_any(delayed_value_task_with_exception(1, 100, false), delayed_value_task_with_exception(2, 20, true),
-                                                     delayed_value_task_with_exception(3, 80, false));
+    [[maybe_unused]] auto result =
+        co_await when_any(delayed_value_task_with_exception(1, 100, false, completed), delayed_value_task_with_exception(2, 20, true, completed),
+                          delayed_value_task_with_exception(3, 80, false, completed));
     // Should never reach here
     LOG("ERROR: Should have thrown exception");
     ASSERT(false && "when_any should have thrown exception");
@@ -601,9 +624,8 @@ async<void> test_when_any_exception_first() {
 
   ASSERT(exception_caught);
   ASSERT(exception_msg.find("Task 2") != std::string::npos);  // Verify it's from task 2
-#ifndef CORO_TEST_RUNNER_VERY_SLOW
-  ASSERT(elapsed >= 20 && elapsed < 80);  // Should complete when first task completes
-#endif
+  ASSERT(elapsed >= 20);
+  ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
   LOG("when_any exception first test: PASSED");
 }
 
@@ -611,10 +633,12 @@ async<void> test_when_any_exception_first() {
 async<void> test_when_any_exception_later() {
   LOG("=== Testing when_any with exception (later task throws) ===");
   TimeCount t;
+  auto completed = std::make_shared<int>(0);
 
   // Task 2 completes first and succeeds, task 3 throws later (but is ignored)
-  auto result = co_await when_any(delayed_value_task_with_exception(1, 100, true), delayed_value_task_with_exception(2, 20, false),
-                                  delayed_value_task_with_exception(3, 80, true));
+  auto result =
+      co_await when_any(delayed_value_task_with_exception(1, 100, true, completed), delayed_value_task_with_exception(2, 20, false, completed),
+                        delayed_value_task_with_exception(3, 80, true, completed));
 
   auto elapsed = t.elapsed();
   LOG("First task completed after %d ms", (int)elapsed);
@@ -622,9 +646,8 @@ async<void> test_when_any_exception_later() {
 
   // Task 2 should complete first (20ms delay) without exception
   ASSERT(result.index == 1);
-#ifndef CORO_TEST_RUNNER_VERY_SLOW
-  ASSERT(elapsed >= 20 && elapsed < 80);
-#endif
+  ASSERT(elapsed >= 20);
+  ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
 
   auto value = result.template get<1>();
   LOG("Completed task value: %d", value);
@@ -637,14 +660,15 @@ async<void> test_when_any_exception_later() {
 async<void> test_when_any_void_exception() {
   LOG("=== Testing when_any with void tasks and exception ===");
   TimeCount t;
+  auto completed = std::make_shared<int>(0);
 
   bool exception_caught = false;
   std::string exception_msg;
   try {
     // Task B completes first (20ms) and throws
     [[maybe_unused]] auto result =
-        co_await when_any(delayed_void_task_with_exception("A", 60, false), delayed_void_task_with_exception("B", 20, true),
-                          delayed_void_task_with_exception("C", 50, false));
+        co_await when_any(delayed_void_task_with_exception("A", 60, false, completed), delayed_void_task_with_exception("B", 20, true, completed),
+                          delayed_void_task_with_exception("C", 50, false, completed));
     // Should never reach here
     LOG("ERROR: Should have thrown exception");
     ASSERT(false && "when_any should have thrown exception");
@@ -659,9 +683,8 @@ async<void> test_when_any_void_exception() {
 
   ASSERT(exception_caught);
   ASSERT(exception_msg.find("Task B") != std::string::npos);  // Verify it's from task B
-#ifndef CORO_TEST_RUNNER_VERY_SLOW
-  ASSERT(elapsed >= 20 && elapsed < 50);  // Should complete when first task completes
-#endif
+  ASSERT(elapsed >= 20);
+  ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
   LOG("when_any void exception test: PASSED");
 }
 
