@@ -242,6 +242,49 @@ void test_poll_moves_delayed_callback() {
   ASSERT(state.called);
 }
 
+template <typename BASE>
+struct observed_shutdown_executor : BASE {
+  std::atomic<bool> dispatch_started{false};
+  std::atomic<bool> dispatch_finished{false};
+  std::atomic<bool> release_dispatch{false};
+
+  void dispatch(std::function<void()> fn) override {
+    dispatch_started.store(true, std::memory_order_release);
+    BASE::dispatch(std::move(fn));
+    // Hold a producer inside dispatch after the stop callback can run.
+    while (!release_dispatch.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    dispatch_finished.store(true, std::memory_order_release);
+  }
+};
+
+template <typename BASE>
+void test_delay_stop_finishes_with_executor(int wait_ms) {
+  observed_shutdown_executor<BASE> executor;
+  auto started = std::chrono::steady_clock::now();
+  delay_stop(executor, wait_ms);
+  if constexpr (std::is_same_v<BASE, executor_loop>) {
+    executor.run_loop();
+  } else {
+    while (!executor.stopped()) {
+      executor.poll();
+      std::this_thread::yield();
+    }
+  }
+  bool producer_active = executor.dispatch_started.load(std::memory_order_acquire) && !executor.dispatch_finished.load(std::memory_order_acquire);
+  executor.release_dispatch.store(true, std::memory_order_release);
+  if (executor.dispatch_started.load(std::memory_order_acquire)) {
+    while (!executor.dispatch_finished.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+  }
+  ASSERT(!producer_active);
+  if (wait_ms > 0) {
+    ASSERT(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(wait_ms));
+  }
+}
+
 void test_stop_wakes_idle_loop() {
   for (int iteration = 0; iteration < 256; ++iteration) {
     executor_loop executor;
@@ -389,6 +432,10 @@ void test_executor_queue_fairness() {
 }
 
 int main() {
+  for (int wait_ms : {-1, 0, 5}) {
+    test_delay_stop_finishes_with_executor<executor_loop>(wait_ms);
+    test_delay_stop_finishes_with_executor<executor_poll>(wait_ms);
+  }
   LOG("init");
   test_executor_queue_fairness<executor_poll>();
   test_executor_queue_fairness<executor_loop>();
