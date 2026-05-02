@@ -3,6 +3,8 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <stdexcept>
+#include <string_view>
 #include <thread>
 
 #include "assert_def.h"
@@ -175,6 +177,61 @@ async<void> await_non_default_move_only_callback_value(int& result) {
   result = value.value;
 }
 
+#ifndef CORO_DISABLE_EXCEPTION
+struct extraction_state {
+  int live = 0;
+  bool fail_move = false;
+};
+
+struct throwing_callback_value {
+  extraction_state* state;
+
+  explicit throwing_callback_value(extraction_state& value_state) : state(&value_state) {
+    ++state->live;
+  }
+
+  throwing_callback_value(const throwing_callback_value&) = delete;
+  throwing_callback_value(throwing_callback_value&& other) : state(other.state) {
+    if (state->fail_move) {
+      throw std::runtime_error("callback result extraction failed");
+    }
+    ++state->live;
+  }
+
+  ~throwing_callback_value() {
+    --state->live;
+  }
+};
+
+template <bool EXECUTOR_AWARE>
+async<void> await_throwing_callback_result() {
+  extraction_state state;
+  auto registration = [&state](std::function<void(throwing_callback_value)> callback) {
+    callback(throwing_callback_value{state});
+    state.fail_move = true;
+  };
+  bool caught = false;
+  try {
+    auto awaiter = [&] {
+      if constexpr (EXECUTOR_AWARE) {
+        return callback_awaiter<throwing_callback_value>([registration](executor* exec, std::function<void(throwing_callback_value)> callback) {
+          ASSERT(exec);
+          registration(std::move(callback));
+        });
+      } else {
+        return callback_awaiter<throwing_callback_value>(registration);
+      }
+    }();
+    [[maybe_unused]] auto value = co_await std::move(awaiter);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "callback result extraction failed");
+    caught = true;
+  }
+  ASSERT(caught);
+  ASSERT(state.live == 0);
+}
+#endif
+
 async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_completed_count, executor*& observed_exec, int& async_result,
                                bool& async_callback_started, int& move_only_result, int& non_default_result) {
   co_await await_synchronous_callback(state);
@@ -184,6 +241,10 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
   co_await await_asynchronous_value_callback(async_result, async_callback_started);
   co_await await_move_only_callback_value(move_only_result);
   co_await await_non_default_move_only_callback_value(non_default_result);
+#ifndef CORO_DISABLE_EXCEPTION
+  co_await await_throwing_callback_result<false>();
+  co_await await_throwing_callback_result<true>();
+#endif
 }
 
 int main() {

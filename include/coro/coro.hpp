@@ -369,7 +369,7 @@ struct callback_awaiter_base {
   using callback_function_no_executor = std::function<void(std::function<void(T)>)>;
   using callback_function_with_executor = std::function<void(executor*, std::function<void(T)>)>;
 
-  T await_resume() noexcept {
+  T await_resume() noexcept(std::is_nothrow_move_constructible_v<T>) {
     assert(result_.has_value());
     return std::move(*result_);
   }
