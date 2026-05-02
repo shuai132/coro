@@ -147,10 +147,12 @@ I have also learned about some well-known C++20 coroutine open-source libraries,
 
 ## Requirements
 
-- C++20 compatible compiler (GCC 10+, Clang 10+, MSVC 19.28+)
+- A compiler and standard library with working C++20 coroutine support (`<coroutine>` and `std::coroutine_handle`)
 - CMake 3.15+ (optional, for building tests)
 
 GCC 10 also requires `-fcoroutines`; the CMake `coro` target supplies this option automatically.
+
+GCC 10.3 does not pass the coroutine regression suite: some lvalue awaiters fail to compile, and temporary aggregate awaiters can release shared ownership prematurely. Use a toolchain that passes the test suite; C++20 mode alone is insufficient to establish compatibility.
 
 ## Installation
 
