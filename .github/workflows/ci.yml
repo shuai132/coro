@@ -18,13 +18,13 @@ jobs:
       matrix:
         cpu: [cortex-m0, cortex-m3]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install ARM compiler and standard library headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libstdc++-arm-none-eabi-dev libnewlib-arm-none-eabi
       - name: Compile single-threaded components without exceptions or RTTI
         run: |
           arm-none-eabi-g++ -std=c++20 -mcpu=${{ matrix.cpu }} -mthumb \
-            -fno-exceptions -fno-rtti -DCORO_DISABLE_EXCEPTION -DCORO_TEST_NO_NATIVE_MUTEX \
+            -Wall -Wunused-parameter -Werror -fno-exceptions -fno-rtti -DCORO_DISABLE_EXCEPTION -DCORO_TEST_NO_NATIVE_MUTEX \
             -Iinclude -c test/cmake/threadless.cpp -o threadless.o
       - name: Configure and build a threadless CMake consumer
         run: |
@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-22.04
     container: ubuntu:20.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install CMake and GCC 10
         run: apt-get update && apt-get install -y --no-install-recommends cmake make g++-10
       - name: Test CMake integration
@@ -62,7 +62,7 @@ jobs:
       matrix:
         disable_exception: [OFF, ON]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install GCC 13
         run: sudo apt-get update && sudo apt-get install -y g++-13
       - name: Configure async debugger metadata
@@ -81,7 +81,7 @@ jobs:
       matrix:
         disable_exception: [OFF, ON]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Clang and libc++ 14
         run: sudo apt-get update && sudo apt-get install -y clang-14 libc++-14-dev libc++abi-14-dev
       - name: Configure async debugger metadata
@@ -167,17 +167,27 @@ jobs:
             sanitize_thread: ON
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Init ASIO
-        run: git clone https://github.com/chriskohlhoff/asio.git -b asio-1-32-0 --depth=1
+        uses: actions/checkout@v5
+        with:
+          repository: chriskohlhoff/asio
+          ref: asio-1-32-0
+          path: asio
+          persist-credentials: false
 
       - name: Configure ${{ matrix.build_type }} disable_exception:${{ matrix.disable_exception }} sanitize_address:${{ matrix.sanitize_address }} sanitize_thread:${{ matrix.sanitize_thread }}
         env:
           ASIO_PATH: asio/asio/include
         run: |
+          build_type_options=()
+          if [[ "${{ matrix.compiler }}" != "msvc" ]]; then
+            build_type_options+=("-DCMAKE_BUILD_TYPE=${{ matrix.build_type }}")
+          fi
           cmake -S . -B build \
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          "${build_type_options[@]}" \
+          -DCORO_WARNINGS_AS_ERRORS=ON \
           -DCORO_DISABLE_EXCEPTION=${{ matrix.disable_exception }} \
           -DCORO_ENABLE_SANITIZE_ADDRESS=${{ matrix.sanitize_address }} \
           -DCORO_ENABLE_SANITIZE_THREAD=${{ matrix.sanitize_thread }} \
@@ -185,6 +195,8 @@ jobs:
         shell: bash
 
       - name: Test CMake integration
+        env:
+          ASIO_PATH: asio/asio/include
         run: cmake -P test/cmake/run.cmake
 
       - name: Build with ${{ matrix.compiler }}
