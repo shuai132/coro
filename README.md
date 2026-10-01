@@ -585,6 +585,8 @@ async<void> example() {
 }
 ```
 
+A release cannot resume an acquiring coroutine until its waiter registration has finished unlocking the internal queue.
+
 `counting_semaphore(initial, max)` requires `0 <= initial <= max`. `acquire(n)` and `release(n)` require `n > 0`, and
 `release(n)` must not raise the available permits above `max`. When coroutines are queued, permits are granted to the
 front waiter first.

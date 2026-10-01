@@ -4,12 +4,11 @@
 #include <cassert>
 #include <coroutine>
 #include <mutex>
-#include <type_traits>
-#include <utility>
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
 #include "coro/detail/thread_support.hpp"
+#include "coro/detail/waiter_registration.hpp"
 #include "coro/dummy_mutex.hpp"  // For dummy_mutex
 #include "coro/mutex.hpp"
 
@@ -34,56 +33,7 @@ struct condition_variable_t {
     std::coroutine_handle<> handle;
     executor* exec{};
     waiter_node* next{};
-    enum class phase { registering, suspended, notified };
-    using phase_state = std::conditional_t<std::is_same_v<MUTEX, dummy_mutex>, phase, std::atomic<phase>>;
-    phase_state phase_{phase::registering};
-
-    waiter_node() = default;
-    waiter_node(const waiter_node& other) noexcept : handle(other.handle), exec(other.exec), next(other.next), phase_(other.current_phase()) {}
-    waiter_node& operator=(const waiter_node& other) noexcept {
-      handle = other.handle;
-      exec = other.exec;
-      next = other.next;
-      set_phase(other.current_phase());
-      return *this;
-    }
-
-    phase current_phase() const noexcept {
-      if constexpr (std::is_same_v<MUTEX, dummy_mutex>) {
-        return phase_;
-      } else {
-        return phase_.load(std::memory_order_relaxed);
-      }
-    }
-
-    void set_phase(phase value) noexcept {
-      if constexpr (std::is_same_v<MUTEX, dummy_mutex>) {
-        phase_ = value;
-      } else {
-        phase_.store(value, std::memory_order_relaxed);
-      }
-    }
-
-    bool suspend() noexcept {
-      if constexpr (std::is_same_v<MUTEX, dummy_mutex>) {
-        if (phase_ == phase::notified) {
-          return false;
-        }
-        phase_ = phase::suspended;
-        return true;
-      } else {
-        auto expected = phase::registering;
-        return phase_.compare_exchange_strong(expected, phase::suspended, std::memory_order_acq_rel);
-      }
-    }
-
-    bool notify() noexcept {
-      if constexpr (std::is_same_v<MUTEX, dummy_mutex>) {
-        return std::exchange(phase_, phase::notified) == phase::suspended;
-      } else {
-        return phase_.exchange(phase::notified, std::memory_order_acq_rel) == phase::suspended;
-      }
-    }
+    detail::waiter_registration<MUTEX> registration_;
   };
 
  public:
@@ -123,7 +73,7 @@ struct condition_variable_t {
       node_.handle = h;
       node_.exec = h.promise().executor_;
       node_.next = nullptr;
-      node_.set_phase(waiter_node::phase::registering);
+      node_.registration_.reset();
 
       {
         // Lock internal mutex to protect queue
@@ -143,7 +93,7 @@ struct condition_variable_t {
       unlock_fn(mtx);
 
       // Publish suspension only after all mutex operations return. A notification can now destroy this awaiter.
-      return node_.suspend();
+      return node_.registration_.suspend();
     }
 
     void await_resume() noexcept {
@@ -203,7 +153,7 @@ struct condition_variable_t {
     }
 
     // Resume the waiting coroutine outside the lock
-    if (node && node->notify()) {
+    if (node && node->registration_.notify()) {
       detail::post_resume_via(exec_to_use, handle_to_resume);
     }
   }
@@ -225,7 +175,7 @@ struct condition_variable_t {
       auto* exec = nodes->exec;
       auto* next = nodes->next;
       // Cache everything before notification publishes completion to a registering waiter.
-      if (nodes->notify()) {
+      if (nodes->registration_.notify()) {
         detail::post_resume_via(exec, handle);
       }
       nodes = next;

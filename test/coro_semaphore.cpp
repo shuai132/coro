@@ -7,8 +7,19 @@
 #include "detail/assert_def.h"
 #include "detail/log.h"
 #include "detail/utils.hpp"
+#include "registration_lifetime.hpp"
 
 using namespace coro;
+
+async<void> semaphore_registration_lifetime(registration_lifetime_state& state) {
+  counting_semaphore_t<registration_lifetime_mutex> semaphore(0, 1);
+  state.release = [&] {
+    semaphore.release();
+  };
+  state.armed = true;
+  co_await semaphore.acquire();
+  state.completed = true;
+}
 
 // Test basic semaphore functionality
 async<void> semaphore_basic_test() {
@@ -239,6 +250,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  check_registration_lifetime(semaphore_registration_lifetime);
   LOG("Semaphore test init");
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {

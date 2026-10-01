@@ -8,6 +8,7 @@
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
 #include "coro/detail/thread_support.hpp"
+#include "coro/detail/waiter_registration.hpp"
 #include "coro/dummy_mutex.hpp"
 
 namespace coro {
@@ -30,6 +31,7 @@ struct counting_semaphore_t {
     std::coroutine_handle<> handle;
     executor* exec{};
     waiter_node* next{};
+    detail::waiter_registration<MUTEX> registration_;
     int desired{1};  // Number of permits desired
   };
 
@@ -80,6 +82,7 @@ struct counting_semaphore_t {
       node_.handle = h;
       node_.exec = h.promise().executor_;
       node_.next = nullptr;
+      node_.registration_.reset();
 
       {
         std::lock_guard<MUTEX> lock(sem_->mutex_);
@@ -99,7 +102,7 @@ struct counting_semaphore_t {
         sem_->tail_ = &node_;
       }
 
-      return true;  // Suspend
+      return node_.registration_.suspend();
     }
 
     void await_resume() noexcept {
@@ -163,7 +166,11 @@ struct counting_semaphore_t {
     waiter_node* waiter = nodes_to_resume;
     while (waiter) {
       waiter_node* next = waiter->next;
-      detail::post_resume_via(waiter->exec, waiter->handle);
+      auto handle = waiter->handle;
+      auto* exec = waiter->exec;
+      if (waiter->registration_.notify()) {
+        detail::post_resume_via(exec, handle);
+      }
       waiter = next;
     }
   }

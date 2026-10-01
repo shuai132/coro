@@ -565,6 +565,8 @@ async<void> example() {
 }
 ```
 
+只有获取方完成等待节点注册并释放内部队列锁，`release()` 才可能恢复该协程。
+
 `counting_semaphore(initial, max)` 要求 `0 <= initial <= max`。`acquire(n)` 和 `release(n)` 要求 `n > 0`，
 并且 `release(n)` 不能让可用许可数超过 `max`。当已有协程排队等待时，许可会优先授予队首等待者。
 
