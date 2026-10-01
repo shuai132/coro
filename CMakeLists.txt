@@ -11,7 +11,33 @@ else ()
     add_compile_options(-Wall -Wunused-parameter)
 endif ()
 
-option(CORO_DISABLE_EXCEPTION "Remove library exception handling" OFF)
+include(CheckCXXSourceCompiles)
+include(CMakePushCheckState)
+
+function(_coro_detect_exception_support result)
+    cmake_push_check_state(RESET)
+    # Compile only, so embedded toolchains do not need a runnable/linkable probe executable.
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+    # Recheck the current flags if the user clears the public option to restore automatic selection.
+    unset(CORO_COMPILER_HAS_EXCEPTIONS CACHE)
+    check_cxx_source_compiles("#if !defined(__cpp_exceptions) && !defined(_CPPUNWIND)
+#error Compiler exceptions are disabled
+#endif
+int coro_exception_probe() { return 0; }" CORO_COMPILER_HAS_EXCEPTIONS)
+    cmake_pop_check_state()
+    set(${result} "${CORO_COMPILER_HAS_EXCEPTIONS}" PARENT_SCOPE)
+endfunction()
+
+set(CORO_DISABLE_EXCEPTION_DEFAULT OFF)
+if (NOT DEFINED CORO_DISABLE_EXCEPTION)
+    _coro_detect_exception_support(CORO_COMPILER_EXCEPTIONS_ENABLED)
+    if (NOT CORO_COMPILER_EXCEPTIONS_ENABLED)
+        set(CORO_DISABLE_EXCEPTION_DEFAULT ON)
+    endif ()
+    unset(CORO_COMPILER_EXCEPTIONS_ENABLED)
+endif ()
+option(CORO_DISABLE_EXCEPTION "Disable exception support" ${CORO_DISABLE_EXCEPTION_DEFAULT})
+unset(CORO_DISABLE_EXCEPTION_DEFAULT)
 option(CORO_ENABLE_LOCAL_STORAGE "Enable coroutine local storage" OFF)
 option(CORO_DEBUG_ASYNC_STACK "Enable asynchronous debugger metadata" OFF)
 
@@ -29,8 +55,6 @@ endif ()
 
 # Native executors and multithreaded primitives need the platform's thread link flags.
 # A threadless standard library can still consume the explicit _st component headers.
-include(CheckCXXSourceCompiles)
-include(CMakePushCheckState)
 cmake_push_check_state(RESET)
 check_cxx_source_compiles("#include <mutex>
 int main() { return sizeof(std::mutex) == 0; }" CORO_HAS_STD_MUTEX)

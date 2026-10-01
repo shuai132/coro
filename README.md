@@ -1185,6 +1185,13 @@ c++ -std=c++20 -fno-exceptions -DCORO_DISABLE_EXCEPTION -Iinclude main.cpp
 The CMake option `-DCORO_DISABLE_EXCEPTION=ON` exports the macro to consumers; this project's test builds also disable
 compiler exceptions. Consumers are responsible for their own compiler and third-party exception settings.
 
+If the CMake option is not set, configuration probes the compiler's current exception mode and defaults the option to
+`ON` when exceptions are unavailable, or `OFF` otherwise. An explicit cache option or parent-project variable always takes
+precedence, including `OFF`; an incompatible explicit choice can therefore fail to compile. CMake caches the selected value.
+To detect again after changing compiler flags, configure with `-UCORO_DISABLE_EXCEPTION`. The probe uses toolchain/global
+CMake compiler flags; for exception flags set through directory or target compile options, set this option explicitly.
+Keep all translation units configured consistently.
+
 ### Debug Coroutine Leaks
 
 Logging hooks run on the calling thread and may be invoked concurrently; use a thread-safe logger. Leak counts are snapshots taken when each event is recorded.
@@ -1335,7 +1342,7 @@ an empty value to disable the ASIO test. Disabling exceptions still selects the 
 | `CORO_TEST_RUNNER_VERY_SLOW`   | OFF                  | Relax test timing for slow runners |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF                  | Enable AddressSanitizer   |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF                  | Enable ThreadSanitizer    |
-| `CORO_DISABLE_EXCEPTION`       | OFF                  | Disable exception support |
+| `CORO_DISABLE_EXCEPTION`       | Detected if unset    | Disable exception support |
 | `CORO_DEBUG_ASYNC_STACK`       | OFF                  | Enable async debugger metadata |
 
 `CORO_TEST_RUNNER_VERY_SLOW` is automatically enabled on macOS GitHub Actions runners.

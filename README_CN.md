@@ -1158,6 +1158,12 @@ c++ -std=c++20 -fno-exceptions -DCORO_DISABLE_EXCEPTION -Iinclude main.cpp
 CMake 选项 `-DCORO_DISABLE_EXCEPTION=ON` 会向消费者导出该宏；本项目的测试构建还会关闭编译器异常。
 消费者应自行配置编译器和第三方库的异常选项。
 
+未设置此 CMake 选项时，配置过程会探测编译器当前的异常模式：异常不可用时默认设为 `ON`，否则为 `OFF`。
+显式缓存选项或父项目变量始终优先，包括显式 `OFF`；因此与编译器状态冲突的显式配置可能导致编译失败。
+CMake 会缓存选定值；修改编译器选项后，如需重新自动探测，配置时传入 `-UCORO_DISABLE_EXCEPTION`。
+探测使用工具链及 CMake 全局编译选项；若通过目录或目标的编译选项控制异常，请显式设置此选项，
+并保证所有编译单元配置一致。
+
 ### 调试协程泄漏
 
 日志钩子在调用线程上执行，可能被并发调用，请使用线程安全的日志函数。泄漏数量是记录对应事件时的快照。
@@ -1294,7 +1300,7 @@ ASIO 测试。禁用异常时仍使用占位测试。
 | `CORO_TEST_RUNNER_VERY_SLOW`   | OFF         | 为慢速测试环境放宽时间限制      |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF         | 启用 AddressSanitizer |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF         | 启用 ThreadSanitizer  |
-| `CORO_DISABLE_EXCEPTION`       | OFF         | 禁用异常支持              |
+| `CORO_DISABLE_EXCEPTION`       | 未设置时自动探测 | 禁用异常支持              |
 | `CORO_DEBUG_ASYNC_STACK`       | OFF         | 启用异步调用链诊断信息 |
 
 macOS GitHub Actions runner 会自动启用 `CORO_TEST_RUNNER_VERY_SLOW`。

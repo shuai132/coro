@@ -83,6 +83,45 @@ function(expect_test_targets name expected)
     endif ()
 endfunction()
 
+function(test_exception_configuration name compiler_exceptions expected build_consumer)
+    configure_project("${name}" "${CMAKE_CURRENT_LIST_DIR}/exceptions"
+        -UCORO_DISABLE_EXCEPTION -UPARENT_DISABLE_EXCEPTION
+        -DCOMPILER_EXCEPTIONS=${compiler_exceptions} -DEXPECT_DISABLED=${expected}
+        -DCORO_BUILD_TEST=OFF ${ARGN})
+    if (build_consumer)
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" --build "${CORO_REGRESSION_BINARY_DIR}/${name}" --config Release
+            RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error
+        )
+        if (NOT result EQUAL 0)
+            message(FATAL_ERROR "Configuration ${name}: consumer build failed:\n${output}\n${error}")
+        endif ()
+        execute_process(
+            COMMAND "${CMAKE_CTEST_COMMAND}" -C Release --output-on-failure
+            WORKING_DIRECTORY "${CORO_REGRESSION_BINARY_DIR}/${name}"
+            RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error
+        )
+        if (NOT result EQUAL 0)
+            message(FATAL_ERROR "Configuration ${name}: consumer run failed:\n${output}\n${error}")
+        endif ()
+    endif ()
+endfunction()
+
+test_exception_configuration(exceptions-auto-disabled OFF ON ON)
+test_exception_configuration(exceptions-auto-enabled ON OFF ON)
+# Cached choices survive a compiler-mode change; clearing the option must recheck both directions.
+configure_project(exceptions-auto-enabled "${CMAKE_CURRENT_LIST_DIR}/exceptions"
+    -DCOMPILER_EXCEPTIONS=OFF -DEXPECT_DISABLED=OFF -DCORO_BUILD_TEST=OFF)
+test_exception_configuration(exceptions-auto-enabled OFF ON ON)
+test_exception_configuration(exceptions-auto-enabled ON OFF ON)
+test_exception_configuration(exceptions-explicit-on ON ON ON -DCORO_DISABLE_EXCEPTION=ON)
+test_exception_configuration(exceptions-explicit-off ON OFF ON -DCORO_DISABLE_EXCEPTION=OFF)
+test_exception_configuration(exceptions-explicit-on-disabled OFF ON ON -DCORO_DISABLE_EXCEPTION=ON)
+# An explicit OFF is preserved even if it contradicts the compiler flags; only configure this case.
+test_exception_configuration(exceptions-explicit-off-disabled OFF OFF OFF -DCORO_DISABLE_EXCEPTION=OFF)
+test_exception_configuration(exceptions-parent-on ON ON ON -DPARENT_DISABLE_EXCEPTION=ON)
+test_exception_configuration(exceptions-parent-off-disabled OFF OFF OFF -DPARENT_DISABLE_EXCEPTION=OFF)
+
 configure_project(tests-default "${CORO_SOURCE_DIR}")
 expect_test_targets(tests-default ON)
 configure_project(tests-off "${CORO_SOURCE_DIR}" -DCORO_BUILD_TEST=OFF)
