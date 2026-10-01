@@ -166,14 +166,14 @@ struct channel {
         }
 
         // Prepare every result before removing any waiter from the queue.
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#ifndef CORO_DISABLE_EXCEPTION
         try {
 #endif
           for (auto* receiver = state_->recv_queue_head_; receiver; receiver = receiver->next_) {
             receiver->pending_value_.emplace(value_);
             ++receivers_notified_;
           }
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#ifndef CORO_DISABLE_EXCEPTION
         } catch (...) {
           for (auto* receiver = state_->recv_queue_head_; receiver; receiver = receiver->next_) {
             receiver->pending_value_.reset();

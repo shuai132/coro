@@ -1165,15 +1165,32 @@ Or via CMake:
 add_definitions(-DCORO_DISABLE_EXCEPTION)
 ```
 
-The macro disables coroutine exception propagation; it does not change the compiler's exception flags. If compiler
-exceptions remain enabled, an exception escaping a coroutine body calls `std::terminate()` instead of reporting successful completion.
+Defining `CORO_DISABLE_EXCEPTION` removes all explicit library `try`/`catch` blocks, exception storage, rethrowing,
+and exception-dependent cleanup and rollback, even when the compiler still enables exceptions. The coroutine-required
+`unhandled_exception()` hook remains as a fail-fast `std::terminate()` path; it does not capture, store, or propagate errors.
+
+In this mode, logging hooks, user value operations, mutex operations, and executor callbacks used by the library must not
+throw. The library does not catch diagnostic failures or recover from failed creation, broadcast copies, or waiter unlocks.
+An exception escaping a coroutine body, disabled-mode promise construction, initial suspension, or another `noexcept`
+operation terminates the program.
+
+The macro does not change compiler flags or control exception handling inside the standard library or ASIO. With compiler
+exceptions enabled, coroutine lowering can still generate implicit exception handling. For a platform that requires a
+fully exception-disabled build, also disable compiler exceptions, for example with GCC/Clang:
+
+```bash
+c++ -std=c++20 -fno-exceptions -DCORO_DISABLE_EXCEPTION -Iinclude main.cpp
+```
+
+The CMake option `-DCORO_DISABLE_EXCEPTION=ON` exports the macro to consumers; this project's test builds also disable
+compiler exceptions. Consumers are responsible for their own compiler and third-party exception settings.
 
 ### Debug Coroutine Leaks
 
 Logging hooks run on the calling thread and may be invoked concurrently; use a thread-safe logger. Leak counts are snapshots taken when each event is recorded.
 
 Exceptions from diagnostic hooks during return-object construction, task moves, readiness checks, destruction, and final suspension
-are caught and discarded when the compiler supports exceptions. These operations retain their `noexcept` guarantees and complete
+are caught and discarded when `CORO_DISABLE_EXCEPTION` is not defined. These operations retain their `noexcept` guarantees and complete
 ownership transfer or cleanup even if logging fails. Promise-construction, initial-suspension, explicit dump, and other potentially
 throwing hooks still propagate errors through their existing cleanup paths.
 
@@ -1181,7 +1198,8 @@ Operations that allocate, submit work to an executor, construct user values, or 
 `noexcept`. Locking readiness/query operations use the mutex's exception specification, preserving nonthrowing `_st` variants.
 Final suspension and destructors must remain nonthrowing: failure to deliver a continuation there is unrecoverable, and user value
 destructors and internal mutex `unlock()` operations must not throw. A compatible condition-variable user mutex whose `unlock()` can fail is
-handled separately: its waiter is removed, or an in-flight notification completes before the exception is rethrown at `co_await`.
+handled separately when exception handling is enabled: its waiter is removed, or an in-flight notification completes before
+the exception is rethrown at `co_await`.
 
 Apple Clang 21.0.0 (`clang-2100.3.34.2`) at `-O0` can read a freed coroutine frame while unwinding an exception
 from `initial_suspend()` when final suspension uses symmetric transfer. Keep creation-time logging hooks nonthrowing

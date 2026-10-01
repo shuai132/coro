@@ -165,18 +165,17 @@ struct asio_awaitable_awaiter {
     auto state = state_;  // Copy shared_ptr for the lambda
 
     // Spawn the asio awaitable and resume when complete
-    asio::co_spawn(asio_exec->get_asio_executor(), store_result(std::move(asio_awaitable_), state),
-                   [state, handle, exec]([[maybe_unused]] std::exception_ptr ep) {
+    asio::co_spawn(asio_exec->get_asio_executor(), store_result(std::move(asio_awaitable_), state), [state, handle, exec]([[maybe_unused]] auto ep) {
 #ifndef CORO_DISABLE_EXCEPTION
-                     if (ep) {
-                       state->exception = std::move(ep);
-                     }
+      if (ep) {
+        state->exception = std::move(ep);
+      }
 #endif
-                     // Preserve the executor's strand and retain completion across io_context stop/restart.
-                     exec->post([handle]() {
-                       handle.resume();
-                     });
-                   });
+      // Preserve the executor's strand and retain completion across io_context stop/restart.
+      exec->post([handle]() {
+        handle.resume();
+      });
+    });
   }
 
   T await_resume() {
@@ -248,7 +247,7 @@ struct asio_awaitable_awaiter<void> {
       });
     });
 #else
-    asio::co_spawn(asio_exec->get_asio_executor(), std::move(asio_awaitable_), [handle, exec](std::exception_ptr) {
+    asio::co_spawn(asio_exec->get_asio_executor(), std::move(asio_awaitable_), [handle, exec](auto) {
       exec->post([handle]() {
         handle.resume();
       });

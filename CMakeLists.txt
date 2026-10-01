@@ -11,7 +11,7 @@ else ()
     add_compile_options(-Wall -Wunused-parameter)
 endif ()
 
-option(CORO_DISABLE_EXCEPTION "Disable C++ exceptions" OFF)
+option(CORO_DISABLE_EXCEPTION "Remove library exception handling" OFF)
 option(CORO_ENABLE_LOCAL_STORAGE "Enable coroutine local storage" OFF)
 option(CORO_DEBUG_ASYNC_STACK "Enable asynchronous debugger metadata" OFF)
 

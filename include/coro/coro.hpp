@@ -66,7 +66,11 @@ struct debug_coro_promise {
     CORO_DEBUG_LEAK_LOG("debug: debug_coro_leak.size: %zu", count);
   }
 
-  debug_coro_promise() {
+  debug_coro_promise()
+#ifdef CORO_DISABLE_EXCEPTION
+      noexcept
+#endif
+  {
     auto& state = get_leak_state();
     [[maybe_unused]] std::size_t count;
     {
@@ -75,11 +79,11 @@ struct debug_coro_promise {
       count = state.promises_.size();
     }
     // User logging may create another coroutine; never call it while holding the tracking lock.
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#ifndef CORO_DISABLE_EXCEPTION
     try {
 #endif
       CORO_DEBUG_LEAK_LOG("new promise: %p, num: %zu", this, count);
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#ifndef CORO_DISABLE_EXCEPTION
     } catch (...) {
       std::lock_guard<std::mutex> lock(state.mutex_);
       state.promises_.erase(this);
@@ -236,17 +240,21 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
     }
   };
 
-  initial_awaitable initial_suspend() {
-    // Creation can throw even when propagation from the coroutine body is disabled.
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  initial_awaitable initial_suspend()
+#ifdef CORO_DISABLE_EXCEPTION
+      noexcept
+#endif
+  {
+    // Disabled exception handling requires creation hooks and infrastructure to be nonthrowing.
+#ifndef CORO_DISABLE_EXCEPTION
     try {
 #endif
 #ifdef CORO_DEBUG_ASYNC_STACK
-      // Initial suspension has an owned return object and a guarded creation-failure cleanup path.
+      // Exception-enabled initial suspension has an owned return object and a guarded failure-cleanup path.
       debug_node_.register_frame();
 #endif
       CORO_DEBUG_LIFECYCLE("promise: initial_suspend: p: %p, p.h: %p", this, parent_handle_.address());
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#ifndef CORO_DISABLE_EXCEPTION
     } catch (...) {
       // Creation failure destroys the frame even if the compiler also destroys the return object.
       awaitable_->current_coro_handle_ = nullptr;

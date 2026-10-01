@@ -60,7 +60,7 @@ struct condition_variable_t {
     void* mtx_{};                 // Type-erased mutex pointer
     void (*unlock_fn_)(void*){};  // Function pointer to unlock
     waiter_node node_{};
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#ifndef CORO_DISABLE_EXCEPTION
     std::exception_ptr unlock_exception_{};
 #endif
 
@@ -95,11 +95,11 @@ struct condition_variable_t {
       }
 
       // Release the user's mutex before this waiter is allowed to resume.
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#ifndef CORO_DISABLE_EXCEPTION
       try {
 #endif
         unlock_fn(mtx);
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#ifndef CORO_DISABLE_EXCEPTION
       } catch (...) {
         unlock_exception_ = std::current_exception();
         if (cv_->remove_waiter(&node_)) {
@@ -115,11 +115,11 @@ struct condition_variable_t {
     }
 
     void await_resume()
-#if !defined(__cpp_exceptions) && !defined(_CPPUNWIND)
+#ifdef CORO_DISABLE_EXCEPTION
         noexcept
 #endif
     {
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#ifndef CORO_DISABLE_EXCEPTION
       if (auto error = std::exchange(unlock_exception_, {})) {
         std::rethrow_exception(error);
       }
@@ -210,6 +210,7 @@ struct condition_variable_t {
   }
 
  private:
+#ifndef CORO_DISABLE_EXCEPTION
   bool remove_waiter(waiter_node* node) {
     std::lock_guard<MUTEX> lock(mutex_);
     waiter_node* previous = nullptr;
@@ -230,6 +231,8 @@ struct condition_variable_t {
     }
     return false;
   }
+
+#endif
 
   mutable MUTEX mutex_;  // Internal mutex to protect the queue
   waiter_node* head_;    // Head of waiting list
