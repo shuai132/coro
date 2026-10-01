@@ -623,43 +623,46 @@ async<void> test_failed_refill_preserves_sender_order(size_t capacity, bool clos
 #endif
 
 // Test basic unbuffered channel
-async<void> test_unbuffered_channel() {
-  LOG("Starting unbuffered channel test");
-
-  channel<int> ch;  // unbuffered channel
-
-  // Track completion and timing
+struct channel_completion_state {
   bool consumer_completed = false;
   bool producer_completed = false;
   bool producer_blocked = false;
   uint64_t producer_block_start = 0;
   uint64_t producer_unblock_time = 0;
+};
+
+async<void> test_unbuffered_channel() {
+  LOG("Starting unbuffered channel test");
+
+  channel<int> ch;  // unbuffered channel
+
+  channel_completion_state state;
 
   // Producer coroutine that tracks completion and blocking
-  auto tracked_producer = [&]() -> async<void> {
+  auto tracked_producer = [](channel<int>& ch, channel_completion_state& state) -> async<void> {
     LOG("Producer: sending 42 (will block until consumer ready)");
-    producer_block_start = get_now_ms();
-    producer_blocked = true;
+    state.producer_block_start = get_now_ms();
+    state.producer_blocked = true;
     co_await ch.send(42);
-    producer_unblock_time = get_now_ms();
-    LOG("Producer: sent 42 (was blocked for %d ms)", int(producer_unblock_time - producer_block_start));
+    state.producer_unblock_time = get_now_ms();
+    LOG("Producer: sent 42 (was blocked for %d ms)", int(state.producer_unblock_time - state.producer_block_start));
 
     LOG("Producer: sending 100 (will block until consumer ready)");
     co_await ch.send(100);
     LOG("Producer: sent 100");
 
-    producer_completed = true;
+    state.producer_completed = true;
     co_return;
   };
 
   // Consumer coroutine that tracks completion
-  auto tracked_consumer = [&]() -> async<void> {
+  auto tracked_consumer = [](channel<int>& ch, channel_completion_state& state) -> async<void> {
     // Delay to ensure producer starts first and gets blocked
     co_await sleep(50ms);
 
     // Verify producer is blocked before we start receiving
-    ASSERT(producer_blocked);
-    ASSERT(!producer_completed);
+    ASSERT(state.producer_blocked);
+    ASSERT(!state.producer_completed);
 
     auto val_opt = co_await ch.recv();
     ASSERT(val_opt.has_value());
@@ -674,24 +677,21 @@ async<void> test_unbuffered_channel() {
     ASSERT(val == 100);
 
     LOG("Consumer: received all expected values");
-    consumer_completed = true;
+    state.consumer_completed = true;
     co_return;
   };
 
-  // Start producer first (it should block immediately)
-  co_await spawn_local(tracked_producer());
-  co_await spawn_local(tracked_consumer());
-
-  // Allow time for operations to complete
-  co_await sleep(100ms);
+  // Await both tasks even if the event loop stalls beyond the consumer's timer.
+  co_await when_all(tracked_producer(ch, state), tracked_consumer(ch, state));
 
   // Verify timing: producer should have been unblocked by consumer
-  ASSERT(producer_unblock_time - producer_block_start);
-  LOG("Timing verified: producer was unblocked(%d ms) after consumer started receiving", int(producer_unblock_time - producer_block_start));
+  ASSERT(state.producer_unblock_time - state.producer_block_start);
+  LOG("Timing verified: producer was unblocked(%d ms) after consumer started receiving",
+      int(state.producer_unblock_time - state.producer_block_start));
 
   // Verify that both have completed
-  ASSERT(consumer_completed);
-  ASSERT(producer_completed);
+  ASSERT(state.consumer_completed);
+  ASSERT(state.producer_completed);
   LOG("Unbuffered channel test completed");
 }
 
@@ -701,15 +701,10 @@ async<void> test_buffered_channel() {
 
   channel<int> ch(2);  // buffered channel with capacity 2
 
-  // Track completion and timing
-  bool consumer_completed = false;
-  bool producer_completed = false;
-  bool producer_blocked = false;
-  uint64_t producer_block_start = 0;
-  uint64_t producer_unblock_time = 0;
+  channel_completion_state state;
 
   // Producer coroutine that tracks completion and blocking
-  auto tracked_producer = [&]() -> async<void> {
+  auto tracked_producer = [](channel<int>& ch, channel_completion_state& state) -> async<void> {
     LOG("Producer: sending 1");
     co_await ch.send(1);
     LOG("Producer: sent 1 (buffered)");
@@ -720,26 +715,26 @@ async<void> test_buffered_channel() {
 
     // This should block since buffer is full
     LOG("Producer: sending 3 (will block)");
-    producer_block_start = get_now_ms();
-    producer_blocked = true;
+    state.producer_block_start = get_now_ms();
+    state.producer_blocked = true;
     co_await ch.send(3);
-    producer_unblock_time = get_now_ms();
-    LOG("Producer: sent 3 (was blocked for %d ms)", int(producer_unblock_time - producer_block_start));
+    state.producer_unblock_time = get_now_ms();
+    LOG("Producer: sent 3 (was blocked for %d ms)", int(state.producer_unblock_time - state.producer_block_start));
 
     LOG("Producer: all operations completed");
-    producer_completed = true;
+    state.producer_completed = true;
     co_return;
   };
 
   // Consumer coroutine that tracks completion
-  auto tracked_consumer = [&]() -> async<void> {
+  auto tracked_consumer = [](channel<int>& ch, channel_completion_state& state) -> async<void> {
     LOG("Consumer: sleep starting");
     co_await sleep(100ms);  // Let producer fill the buffer and start blocking
     LOG("Consumer: sleep completed, starting receive operations");
 
     // Verify producer is indeed blocked before we start consuming
-    ASSERT(producer_blocked);
-    ASSERT(!producer_completed);  // Producer should still be blocked
+    ASSERT(state.producer_blocked);
+    ASSERT(!state.producer_completed);  // Producer should still be blocked
 
     auto val_opt = co_await ch.recv();
     ASSERT(val_opt.has_value());
@@ -760,26 +755,23 @@ async<void> test_buffered_channel() {
     ASSERT(val == 3);
 
     LOG("Consumer: received all expected values");
-    consumer_completed = true;
+    state.consumer_completed = true;
     LOG("Consumer: completion flag set");
     co_return;
   };
 
-  co_await spawn_local(tracked_producer());
-  co_await spawn_local(tracked_consumer());
+  co_await when_all(tracked_producer(ch, state), tracked_consumer(ch, state));
 
-  // Wait for operations to complete
-  co_await sleep(200ms);
-
-  LOG("About to check completion flags - consumer: %s, producer: %s", consumer_completed ? "yes" : "no", producer_completed ? "yes" : "no");
+  LOG("About to check completion flags - consumer: %s, producer: %s", state.consumer_completed ? "yes" : "no",
+      state.producer_completed ? "yes" : "no");
 
   // Verify timing: producer should have been unblocked by consumer
-  ASSERT(producer_unblock_time - producer_block_start >= 100);
-  LOG("Timing verified: producer unblocked(%d ms) after consumer started receiving", int(producer_unblock_time - producer_block_start));
+  ASSERT(state.producer_unblock_time - state.producer_block_start >= 100);
+  LOG("Timing verified: producer unblocked(%d ms) after consumer started receiving", int(state.producer_unblock_time - state.producer_block_start));
 
   // Verify that both have indeed completed
-  ASSERT(consumer_completed);
-  ASSERT(producer_completed);
+  ASSERT(state.consumer_completed);
+  ASSERT(state.producer_completed);
   LOG("Buffered channel test completed");
 }
 
@@ -1137,7 +1129,18 @@ async<void> test_multiple_producers_consumers() {
   LOG("Multiple producers/consumers test completed");
 }
 
+async<void> stall_channel_test_loop() {
+  co_await sleep(25ms);
+  std::this_thread::sleep_for(250ms);
+}
+
+async<void> test_channel_completion_after_loop_stall() {
+  co_await when_all(test_unbuffered_channel(), stall_channel_test_loop());
+  co_await when_all(test_buffered_channel(), stall_channel_test_loop());
+}
+
 async<void> run_all_tests() {
+  co_await test_channel_completion_after_loop_stall();
   co_await test_reused_send_results<channel_mt<int>>();
   co_await test_reused_send_results<channel_st<int>>();
   co_await test_reused_receive_results<channel_mt<int>>();
