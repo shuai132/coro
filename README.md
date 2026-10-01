@@ -1192,6 +1192,39 @@ To detect again after changing compiler flags, configure with `-UCORO_DISABLE_EX
 CMake compiler flags; for exception flags set through directory or target compile options, set this option explicitly.
 Keep all translation units configured consistently.
 
+### Coroutine Frame Memory and MCU Deployment
+
+The library does not provide a separate memory manager. Coroutine frames use global
+`operator new/delete` by default, so applications replacing these functions can reuse their
+existing allocator without changing `async<T>` usage. This avoids duplicating memory pools or
+adding configuration and management overhead to ordinary applications, while MCU applications
+can choose an allocation strategy suited to their capacity and real-time requirements.
+
+An RTOS task's required stack upper bound also needs analysis and runtime validation; headroom
+reserved separately for each task may remain idle. Allocating and reclaiming coroutine frames
+through a shared allocator lets successive tasks reuse storage, potentially improving limited
+RAM utilization while supporting nested calls and temporary concurrency. Peak usage, allocation
+latency, and exhaustion behavior still need to be planned for.
+
+- **MCU deployments also need runtime allocation support**, but not necessarily a system heap:
+  an existing application pool backed by static RAM can provide it.
+- **Budget for simultaneously live frames.** The compiler determines each frame's size; parent,
+  child, and internal helper frames can coexist. Bounded concurrency and nesting allow a preset
+  budget, validated by measurements on the target; `sizeof(async<T>)` is not the frame size.
+  Coroutine execution still needs a thread call stack, which must also be included in the budget.
+- **Dynamic allocation does not necessarily cause uncontrolled fragmentation.** Fixed-block pools
+  avoid external fragmentation within a pool, but still have internal waste and can run out of
+  blocks. Variable-size allocators cannot universally guarantee zero fragmentation. Choose a
+  strategy for the workload and leave headroom.
+- **Disabling exceptions does not disable allocation.** `CORO_DISABLE_EXCEPTION` does not turn
+  exhaustion into an empty task. With compiler exceptions disabled, the platform or allocator
+  must define failure behavior such as termination or reset; the ordinarily throwing
+  `operator new` must not simply return null.
+
+Executor queues, channels, combinator shared state, and some debug facilities may also allocate.
+Assess the entire call chain's memory requirements for MCU deployment and keep the allocator
+alive until all related objects have been destroyed.
+
 ### Debug Coroutine Leaks
 
 Logging hooks run on the calling thread and may be invoked concurrently; use a thread-safe logger. Leak counts are snapshots taken when each event is recorded.
