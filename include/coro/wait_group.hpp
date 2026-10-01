@@ -9,6 +9,7 @@
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
 #include "coro/detail/thread_support.hpp"
+#include "coro/detail/waiter_registration.hpp"
 #include "coro/dummy_mutex.hpp"
 
 namespace coro {
@@ -31,6 +32,7 @@ struct wait_group_t {
     std::coroutine_handle<> handle;
     executor* exec{};
     waiter_node* next{};
+    detail::waiter_registration<MUTEX> registration_;
   };
 
  public:
@@ -75,7 +77,9 @@ struct wait_group_t {
         auto* next_exec = node->exec;
         waiter_node* next_node = node->next;
 
-        detail::post_resume_via(next_exec, next_handle);
+        if (node->registration_.notify()) {
+          detail::post_resume_via(next_exec, next_handle);
+        }
 
         node = next_node;
       }
@@ -106,6 +110,7 @@ struct wait_group_t {
       node_.handle = h;
       node_.exec = h.promise().executor_;
       node_.next = nullptr;
+      node_.registration_.reset();
 
       {
         std::lock_guard<MUTEX> lock(wg_->mutex_);
@@ -126,7 +131,7 @@ struct wait_group_t {
       }
 
       // Suspend
-      return true;
+      return node_.registration_.suspend();
     }
 
     void await_resume() noexcept {

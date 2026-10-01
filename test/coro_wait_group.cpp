@@ -9,8 +9,20 @@
 #include "detail/TimeCount.hpp"
 #include "detail/assert_def.h"
 #include "detail/utils.hpp"
+#include "registration_lifetime.hpp"
 
 using namespace coro;
+
+async<void> wait_group_registration_lifetime(registration_lifetime_state& state) {
+  wait_group_t<registration_lifetime_mutex> group;
+  group.add(1);
+  state.release = [&] {
+    group.done();
+  };
+  state.armed = true;
+  co_await group;
+  state.completed = true;
+}
 
 // Simple task that simulates work
 async<void> worker_task(wait_group& wg, std::string name, int work_ms) {
@@ -215,6 +227,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  check_registration_lifetime(wait_group_registration_lifetime);
   LOG("Wait Group test init");
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {
