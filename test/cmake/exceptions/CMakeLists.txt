@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(coro_exception_configuration CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/../warnings.cmake")
 
 # Set the compiler state before adding the library, as a parent project or toolchain would.
 if (MSVC)
@@ -7,6 +8,7 @@ if (MSVC)
         string(APPEND CMAKE_CXX_FLAGS " /EHsc")
     else ()
         string(APPEND CMAKE_CXX_FLAGS " /EHs-c-")
+        add_compile_definitions(_HAS_EXCEPTIONS=0)
     endif ()
 else ()
     if (COMPILER_EXCEPTIONS)

@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(coro_threadless_consumer CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/../warnings.cmake")
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../.." coro)
 get_target_property(threadless_link_dependencies coro INTERFACE_LINK_LIBRARIES)

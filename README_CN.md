@@ -1297,6 +1297,7 @@ ASIO 测试。禁用异常时仍使用占位测试。
 | 选项                             | 默认值         | 说明                  |
 |--------------------------------|-------------|---------------------|
 | `CORO_BUILD_TEST`              | ON (当作为主项目) | 构建测试                |
+| `CORO_WARNINGS_AS_ERRORS`      | 构建测试时 ON | 将项目构建警告视为错误       |
 | `CORO_TEST_RUNNER_VERY_SLOW`   | OFF         | 为慢速测试环境放宽时间限制      |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF         | 启用 AddressSanitizer |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF         | 启用 ThreadSanitizer  |
@@ -1304,6 +1305,10 @@ ASIO 测试。禁用异常时仍使用占位测试。
 | `CORO_DEBUG_ASYNC_STACK`       | OFF         | 启用异步调用链诊断信息 |
 
 macOS GitHub Actions runner 会自动启用 `CORO_TEST_RUNNER_VERY_SLOW`。
+
+库头文件、项目测试和 CMake 消费端回归测试必须在 CI 矩阵中保持零编译警告。警告视为错误的选项仅作用于
+项目测试，不通过库接口传播给消费者。ASIO 头文件作为外部系统头文件处理；GCC TSan 无法插桩 ASIO 的
+`atomic_thread_fence`，仅在 ASIO 测试目标使用 `-Wno-tsan` 处理这一已知工具链限制，保留内存屏障和 sanitizer 插桩。
 
 ## 项目结构
 

@@ -1339,6 +1339,7 @@ an empty value to disable the ASIO test. Disabling exceptions still selects the 
 | Option                         | Default              | Description               |
 |--------------------------------|----------------------|---------------------------|
 | `CORO_BUILD_TEST`              | ON (as main project) | Build tests               |
+| `CORO_WARNINGS_AS_ERRORS`      | ON (when building tests) | Treat project build warnings as errors |
 | `CORO_TEST_RUNNER_VERY_SLOW`   | OFF                  | Relax test timing for slow runners |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF                  | Enable AddressSanitizer   |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF                  | Enable ThreadSanitizer    |
@@ -1346,6 +1347,12 @@ an empty value to disable the ASIO test. Disabling exceptions still selects the 
 | `CORO_DEBUG_ASYNC_STACK`       | OFF                  | Enable async debugger metadata |
 
 `CORO_TEST_RUNNER_VERY_SLOW` is automatically enabled on macOS GitHub Actions runners.
+
+Library headers, project tests, and CMake consumer regressions must build without compiler warnings across the CI matrix.
+Warnings-as-errors are not exported through the library's interface to downstream consumers; consumer regression projects
+enable them locally. ASIO headers are external
+system includes. GCC TSan's documented inability to instrument ASIO's `atomic_thread_fence` calls is handled with
+`-Wno-tsan` on the ASIO test target only; the fences and sanitizer instrumentation remain enabled.
 
 ## Project Structure
 
