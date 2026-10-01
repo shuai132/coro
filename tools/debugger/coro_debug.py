@@ -6,6 +6,7 @@ import shlex
 REGISTRY = "coro::detail::async_debug_registry::"
 MAX_NODES = 4096
 MAX_DEPTH = 256
+MAX_SOURCE_BYTES = 4096
 
 
 def snapshot(backend):
@@ -171,7 +172,7 @@ class LldbBackend:
         if not address:
             return ""
         error = self.lldb.SBError()
-        result = self.process.ReadCStringFromMemory(address, 4096, error)
+        result = self.process.ReadCStringFromMemory(address, MAX_SOURCE_BYTES, error)
         if error.Fail():
             # Compact cores can omit the read-only image pages containing source_location strings.
             resolved = self.target.ResolveLoadAddress(address)
@@ -179,13 +180,18 @@ class LldbBackend:
             if not section.IsValid():
                 raise RuntimeError(str(error))
             offset = resolved.GetOffset()
-            size = min(4096, section.GetByteSize() - offset)
+            size = min(MAX_SOURCE_BYTES, section.GetByteSize() - offset)
             data = section.GetSectionData(offset, size)
             error.Clear()
             raw = data.ReadRawData(error, 0, size)
-            if error.Fail() or not raw or b"\0" not in raw:
+            if error.Fail() or not raw:
+                raise RuntimeError("unreadable source string in core and matching image")
+            terminated = b"\0" in raw
+            if not terminated and (size != MAX_SOURCE_BYTES or len(raw) != size):
                 raise RuntimeError("unreadable source string in core and matching image")
             result = raw.split(b"\0", 1)[0].decode("utf-8", errors="replace")
+            if not terminated:
+                result += "..."
         return result
 
 

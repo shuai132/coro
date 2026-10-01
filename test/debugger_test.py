@@ -3,6 +3,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 
 spec = importlib.util.spec_from_file_location(
@@ -39,6 +41,45 @@ class FakeBackend:
     integer = staticmethod(int)
     string = staticmethod(str)
     field = staticmethod(lambda record, key: record[key])
+
+
+class FakeError:
+    failed = False
+
+    def Fail(self):
+        return self.failed
+
+    def Clear(self):
+        self.failed = False
+
+
+def core_string_backend(image_bytes, image_error=False):
+    backend = object.__new__(debug.LldbBackend)
+    backend.lldb = SimpleNamespace(SBError=FakeError)
+    backend.integer = int
+    backend.process = Mock()
+    backend.target = Mock()
+
+    def missing_core_string(address, size, error):
+        error.failed = True
+        return None
+
+    def read_image(error, offset, size):
+        error.failed = image_error
+        return image_bytes[offset:offset + size]
+
+    backend.process.ReadCStringFromMemory.side_effect = missing_core_string
+    data = Mock()
+    data.ReadRawData.side_effect = read_image
+    section = Mock()
+    section.IsValid.return_value = True
+    section.GetByteSize.return_value = len(image_bytes)
+    section.GetSectionData.return_value = data
+    address = Mock()
+    address.GetSection.return_value = section
+    address.GetOffset.return_value = 0
+    backend.target.ResolveLoadAddress.return_value = address
+    return backend, section
 
 
 class DebuggerTest(unittest.TestCase):
@@ -86,6 +127,30 @@ class DebuggerTest(unittest.TestCase):
         backend.updating = True
         with self.assertRaisesRegex(RuntimeError, "update interrupted"):
             debug.snapshot(backend)
+
+    def test_lldb_core_long_source_string(self):
+        backend, section = core_string_backend(b"a" * 6000 + b"\0")
+        self.assertEqual(backend.string(16), "a" * 4096 + "...")
+        section.GetSectionData.assert_called_once_with(0, 4096)
+
+    def test_lldb_core_terminated_source_string(self):
+        for length in (0, 12, 4095):
+            with self.subTest(length=length):
+                backend, section = core_string_backend(b"a" * length + b"\0suffix")
+                self.assertEqual(backend.string(16), "a" * length)
+
+    def test_lldb_core_unreadable_source_string(self):
+        for contents, read_error in ((b"unterminated", False), (b"a" * 6000 + b"\0", True)):
+            with self.subTest(read_error=read_error):
+                backend, section = core_string_backend(contents, read_error)
+                with self.assertRaisesRegex(RuntimeError, "unreadable source string"):
+                    backend.string(16)
+
+    def test_lldb_core_incomplete_string_window(self):
+        backend, section = core_string_backend(b"incomplete")
+        section.GetByteSize.return_value = 6000
+        with self.assertRaisesRegex(RuntimeError, "unreadable source string"):
+            backend.string(16)
 
     def test_invalid_arguments(self):
         for command, args in [("list", "extra"), ("bt", ""), ("bt", "id:7"), ("bt", "resume()")]:

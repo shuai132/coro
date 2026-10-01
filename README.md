@@ -1244,7 +1244,8 @@ Both commands read memory without calling functions in the debugged process, acq
 locks, or assuming a compiler's coroutine frame ABI. Stop **all threads** before using them.
 They also work with a core containing the registry, frame metadata, and referenced strings,
 plus matching debug symbols. LLDB can read omitted source strings from the matching binary
-when a compact core leaves out read-only image pages. A regular Breakpad minidump may omit
+when a compact core leaves out read-only image pages. Image string reads are limited to 4096 bytes;
+longer strings are shown with a trailing `...`. A regular Breakpad minidump may omit
 the required frame memory; this is not a
 Breakpad stackwalker extension. Interrupted registry updates, corrupt links, missing memory,
 and traversal limits are reported rather than followed indefinitely (4096 records, 256 frames).
