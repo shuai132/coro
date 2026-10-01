@@ -508,8 +508,8 @@ struct callback_awaiter_base<void> {
 
 template <typename T>
 struct callback_awaiter : detail::callback_awaiter_base<T> {
-  using callback_function_no_executor = detail::callback_awaiter_base<T>::callback_function_no_executor;
-  using callback_function_with_executor = detail::callback_awaiter_base<T>::callback_function_with_executor;
+  using callback_function_no_executor = typename detail::callback_awaiter_base<T>::callback_function_no_executor;
+  using callback_function_with_executor = typename detail::callback_awaiter_base<T>::callback_function_with_executor;
   std::variant<callback_function_no_executor, callback_function_with_executor> callback_function_;
 
   explicit callback_awaiter(callback_function_no_executor callback) : callback_function_(std::move(callback)) {}
