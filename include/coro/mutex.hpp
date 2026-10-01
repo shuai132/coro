@@ -31,7 +31,7 @@ struct mutex_t {
   };
 
  public:
-  mutex_t() : state_(unlocked_state()), waiters_(nullptr) {}
+  mutex_t() noexcept : state_(unlocked_state()), waiters_(nullptr) {}
 
   ~mutex_t() {
     // Check the mutex is not locked and there are no waiters.
@@ -66,7 +66,7 @@ struct mutex_t {
     }
 
     template <typename Promise>
-    bool await_suspend(std::coroutine_handle<Promise> h) {
+    bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
       node_.handle = h;
       node_.exec = h.promise().executor_;
       return m_->lock_async_impl(&node_);
@@ -84,7 +84,7 @@ struct mutex_t {
     }
 
     template <typename Promise>
-    bool await_suspend(std::coroutine_handle<Promise> h) {
+    bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
       node_.handle = h;
       node_.exec = h.promise().executor_;
       return m_->lock_async_impl(&node_);
@@ -160,7 +160,7 @@ struct mutex_t {
   // Try to lock the mutex asynchronously
   // Returns true if the coroutine should suspend (lock not acquired)
   // Returns false if the lock was acquired synchronously (don't suspend)
-  bool lock_async_impl(waiter_node* awaiter) {
+  bool lock_async_impl(waiter_node* awaiter) noexcept {
     void* old_value = state_.load(std::memory_order_relaxed);
     while (true) {
       if (old_value == unlocked_state()) {
@@ -197,14 +197,14 @@ struct mutex_t {
   // RAII-style lock guard that unlocks when destroyed
   class lock_guard {
    public:
-    explicit lock_guard(mutex_t* m) : mutex_(m) {}
+    explicit lock_guard(mutex_t* m) noexcept : mutex_(m) {}
 
     ~lock_guard() {
       unlock();
     }
 
     // Manually unlock the mutex
-    void unlock() {
+    void unlock() noexcept {
       if (auto* mutex = std::exchange(mutex_, nullptr)) {
         // Resuming an unbound waiter can destroy this guard inline.
         mutex->unlock();

@@ -19,6 +19,18 @@
 
 using namespace coro;
 
+using all_lock_state = detail::when_all_state<int>;
+using any_lock_state = detail::when_any_state<int>;
+using any_void_lock_state = detail::when_any_state<void>;
+static_assert(!noexcept(std::declval<detail::when_all_awaiter<all_lock_state, std::tuple<>>&>().await_suspend(std::noop_coroutine())));
+static_assert(!noexcept(std::declval<detail::when_all_awaiter<all_lock_state, std::tuple<int, int>>&>().await_suspend(std::noop_coroutine())));
+static_assert(!noexcept(std::declval<detail::when_all_single_awaiter<all_lock_state, int>&>().await_suspend(std::noop_coroutine())));
+static_assert(!noexcept(std::declval<detail::when_all_void_awaiter<all_lock_state>&>().await_suspend(std::noop_coroutine())));
+static_assert(
+    !noexcept(std::declval<detail::when_any_awaiter<any_lock_state, detail::when_any_result<int>, int>&>().await_suspend(std::noop_coroutine())));
+static_assert(!noexcept(
+    std::declval<detail::when_any_awaiter<any_void_lock_state, detail::when_any_result<void>, void>&>().await_suspend(std::noop_coroutine())));
+
 struct nested_when_executor : executor_poll {
   int dispatch_depth = 0;
   int max_dispatch_depth = 0;

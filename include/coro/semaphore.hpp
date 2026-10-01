@@ -4,6 +4,7 @@
 #include <climits>
 #include <coroutine>
 #include <mutex>
+#include <utility>
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
@@ -62,13 +63,13 @@ struct counting_semaphore_t {
     int desired_;
     waiter_node node_{};
 
-    explicit acquire_awaitable(counting_semaphore_t* sem, int n = 1) : sem_(sem), desired_(n) {
+    explicit acquire_awaitable(counting_semaphore_t* sem, int n = 1) noexcept : sem_(sem), desired_(n) {
       assert(n > 0);
       assert(n <= sem_->max_value_);
       node_.desired = n;
     }
 
-    bool await_ready() noexcept {
+    bool await_ready() noexcept(noexcept(std::declval<MUTEX&>().lock())) {
       std::lock_guard<MUTEX> lock(sem_->mutex_);
       if (sem_->head_ == nullptr && sem_->counter_ >= desired_) {
         sem_->counter_ -= desired_;
@@ -112,13 +113,13 @@ struct counting_semaphore_t {
 
   // Acquire n permits (default 1)
   // Usage: co_await sem.acquire();
-  auto acquire(int n = 1) {
+  auto acquire(int n = 1) noexcept {
     return acquire_awaitable{this, n};
   }
 
   // Try to acquire n permits without blocking
   // Returns true if successful, false otherwise
-  bool try_acquire(int n = 1) noexcept {
+  bool try_acquire(int n = 1) noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     assert(n > 0);
     assert(n <= max_value_);
     std::lock_guard<MUTEX> lock(mutex_);
@@ -176,7 +177,7 @@ struct counting_semaphore_t {
   }
 
   // Get current number of available permits
-  int available() const noexcept {
+  int available() const noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     std::lock_guard<MUTEX> lock(mutex_);
     return counter_;
   }
@@ -204,11 +205,11 @@ struct binary_semaphore_t {
  public:
   explicit binary_semaphore_t(int desired) : sem_(desired, 1) {}
 
-  auto acquire() {
+  auto acquire() noexcept {
     return sem_.acquire(1);
   }
 
-  bool try_acquire() noexcept {
+  bool try_acquire() noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     return sem_.try_acquire(1);
   }
 
@@ -216,7 +217,7 @@ struct binary_semaphore_t {
     sem_.release(1);
   }
 
-  int available() const noexcept {
+  int available() const noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     return sem_.available();
   }
 

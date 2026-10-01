@@ -7,9 +7,43 @@
 #include "detail/assert_def.h"
 #include "detail/log.h"
 #include "detail/utils.hpp"
+#include "exception_mutex.hpp"
 #include "registration_lifetime.hpp"
 
 using namespace coro;
+
+void test_semaphore_lock_failure() {
+  static_assert(!noexcept(std::declval<counting_semaphore&>().try_acquire()));
+  static_assert(!noexcept(std::declval<counting_semaphore&>().available()));
+  static_assert(noexcept(std::declval<counting_semaphore_st&>().try_acquire()));
+  static_assert(noexcept(std::declval<counting_semaphore_st&>().available()));
+#ifndef CORO_DISABLE_EXCEPTION
+  counting_semaphore_t<exception_mutex> sem(1, 1);
+  expect_lock_failure([&] {
+    (void)sem.try_acquire();
+  });
+  expect_lock_failure([&] {
+    (void)sem.available();
+  });
+  auto acquiring = sem.acquire();
+  expect_lock_failure([&] {
+    (void)acquiring.await_ready();
+  });
+  ASSERT(sem.available() == 1);
+  ASSERT(acquiring.await_ready());
+  ASSERT(sem.available() == 0);
+  sem.release();
+  binary_semaphore_t<exception_mutex> binary(1);
+  expect_lock_failure([&] {
+    (void)binary.try_acquire();
+  });
+  expect_lock_failure([&] {
+    (void)binary.available();
+  });
+  ASSERT(binary.try_acquire());
+  binary.release();
+#endif
+}
 
 async<void> semaphore_registration_lifetime(registration_lifetime_state& state) {
   counting_semaphore_t<registration_lifetime_mutex> semaphore(0, 1);
@@ -250,6 +284,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_semaphore_lock_failure();
   check_registration_lifetime(semaphore_registration_lifetime);
   LOG("Semaphore test init");
   executor_loop executor;

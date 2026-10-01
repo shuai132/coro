@@ -5,6 +5,7 @@
 #include <climits>
 #include <coroutine>
 #include <mutex>
+#include <utility>
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
@@ -98,7 +99,7 @@ struct wait_group_t {
     wait_group_t* wg_;
     waiter_node node_{};
 
-    bool await_ready() noexcept {
+    bool await_ready() noexcept(noexcept(std::declval<MUTEX&>().lock())) {
       // Check if counter is already zero
       std::lock_guard<MUTEX> lock(wg_->mutex_);
       return wg_->counter_ == 0;
@@ -141,18 +142,18 @@ struct wait_group_t {
 
   // Wait for the counter to reach zero
   // Usage: co_await wg.wait();
-  auto wait() {
+  auto wait() noexcept {
     return wait_awaitable{this};
   }
 
   // Support direct co_await on wait_group object
   // Usage: co_await wg;
-  auto operator co_await() {
+  auto operator co_await() noexcept {
     return wait_awaitable{this};
   }
 
   // Get current counter value (for debugging/testing)
-  int get_count() const {
+  int get_count() const noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     std::lock_guard<MUTEX> lock(mutex_);
     return counter_;
   }

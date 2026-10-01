@@ -9,9 +9,24 @@
 #include "detail/TimeCount.hpp"
 #include "detail/assert_def.h"
 #include "detail/utils.hpp"
+#include "exception_mutex.hpp"
 #include "registration_lifetime.hpp"
 
 using namespace coro;
+
+void test_wait_group_lock_failure() {
+  static_assert(!noexcept(std::declval<wait_group&>().wait().await_ready()));
+  static_assert(noexcept(std::declval<wait_group_st&>().wait().await_ready()));
+#ifndef CORO_DISABLE_EXCEPTION
+  wait_group_t<exception_mutex> group;
+  auto waiting = group.wait();
+  expect_lock_failure([&] {
+    (void)waiting.await_ready();
+  });
+  ASSERT(waiting.await_ready());
+  ASSERT(group.get_count() == 0);
+#endif
+}
 
 async<void> wait_group_registration_lifetime(registration_lifetime_state& state) {
   wait_group_t<registration_lifetime_mutex> group;
@@ -227,6 +242,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_wait_group_lock_failure();
   check_registration_lifetime(wait_group_registration_lifetime);
   LOG("Wait Group test init");
   executor_loop executor;

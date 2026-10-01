@@ -6,9 +6,29 @@
 #include "detail/assert_def.h"
 #include "detail/log.h"
 #include "detail/utils.hpp"
+#include "exception_mutex.hpp"
 #include "registration_lifetime.hpp"
 
 using namespace coro;
+
+void test_event_lock_failure() {
+  static_assert(noexcept(std::declval<event_st&>().clear()));
+  static_assert(noexcept(std::declval<const event_st&>().is_set()));
+  static_assert(!noexcept(std::declval<event_mt&>().clear()));
+  static_assert(!noexcept(std::declval<const event_mt&>().is_set()));
+#ifndef CORO_DISABLE_EXCEPTION
+  event_t<exception_mutex> event(true);
+  expect_lock_failure([&] {
+    event.clear();
+  });
+  expect_lock_failure([&] {
+    (void)event.is_set();
+  });
+  ASSERT(event.is_set());
+  event.clear();
+  ASSERT(!event.is_set());
+#endif
+}
 
 async<void> wait_for_event_waiters(const int& completed, int expected) {
   auto deadline = std::chrono::steady_clock::now() + 5s;
@@ -253,6 +273,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_event_lock_failure();
   check_registration_lifetime(event_registration_lifetime);
   LOG("Event test init");
   executor_loop executor;

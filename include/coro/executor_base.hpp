@@ -21,8 +21,8 @@ class executor_base : public coro::executor {
     std::unique_ptr<std::function<void()>> callback_;
 
     queued_task() = default;
-    explicit queued_task(std::coroutine_handle<> handle) : handle_(handle) {}
-    explicit queued_task(std::unique_ptr<std::function<void()>> callback) : callback_(std::move(callback)) {}
+    explicit queued_task(std::coroutine_handle<> handle) noexcept : handle_(handle) {}
+    explicit queued_task(std::unique_ptr<std::function<void()>> callback) noexcept : callback_(std::move(callback)) {}
 
     explicit operator bool() const noexcept {
       return handle_ || callback_;
@@ -57,7 +57,7 @@ class executor_base : public coro::executor {
   };
 
   struct DelayedTaskCompare {
-    bool operator()(const DelayedTask& lhs, const DelayedTask& rhs) const {
+    bool operator()(const DelayedTask& lhs, const DelayedTask& rhs) const noexcept {
       return lhs.execute_at > rhs.execute_at;
     };
   };
@@ -162,7 +162,7 @@ class executor_base : public coro::executor {
     notify_waiters(true);
   }
 
-  bool stopped() {
+  bool stopped() const noexcept {
     return stop_.load(std::memory_order_acquire);
   }
 };

@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <mutex>
+#include <utility>
 
 #include "coro/coro.hpp"
 #include "coro/detail/thread_support.hpp"
@@ -60,7 +61,7 @@ struct latch_t {
 
   // Wait for the counter to reach zero
   // Usage: co_await latch.wait();
-  auto wait() {
+  auto wait() noexcept {
     return wg_.wait();
   }
 
@@ -72,12 +73,12 @@ struct latch_t {
 
   // Try to wait (non-blocking check)
   // Returns true if the latch count is zero
-  bool try_wait() const noexcept {
+  bool try_wait() const noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     return wg_.get_count() == 0;
   }
 
   // Get current counter value (for debugging/testing)
-  int get_count() const {
+  int get_count() const noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     return wg_.get_count();
   }
 

@@ -115,7 +115,7 @@ struct event_t {
   // Clear the event
   // Future waits will block until set() is called again
   // Usage: evt.clear();
-  void clear() {
+  void clear() noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     std::lock_guard<MUTEX> lock(mutex_);
     set_ = false;
   }
@@ -123,7 +123,7 @@ struct event_t {
   // Wait for the event to be set
   // If already set, returns immediately without suspending
   // Usage: co_await evt.wait();
-  auto wait() const {
+  auto wait() const noexcept {
     return wait_awaitable{const_cast<event_t*>(this)};
   }
 
@@ -135,7 +135,7 @@ struct event_t {
 
   // Check if the event is set (non-blocking)
   // Returns true if the event is set
-  bool is_set() const {
+  bool is_set() const noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     std::lock_guard<MUTEX> lock(mutex_);
     return set_;
   }

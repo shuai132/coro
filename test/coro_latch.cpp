@@ -6,8 +6,21 @@
 #include "detail/assert_def.h"
 #include "detail/log.h"
 #include "detail/utils.hpp"
+#include "exception_mutex.hpp"
 
 using namespace coro;
+
+void test_latch_lock_failure() {
+  static_assert(!noexcept(std::declval<latch&>().try_wait()));
+  static_assert(noexcept(std::declval<latch_st&>().try_wait()));
+#ifndef CORO_DISABLE_EXCEPTION
+  latch_t<exception_mutex> latch(0);
+  expect_lock_failure([&] {
+    (void)latch.try_wait();
+  });
+  ASSERT(latch.try_wait());
+#endif
+}
 
 async<void> wait_for_latch_waiters(const int& completed, int expected) {
   auto deadline = std::chrono::steady_clock::now() + 5s;
@@ -127,6 +140,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_latch_lock_failure();
   LOG("Latch test init");
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {

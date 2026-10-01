@@ -95,7 +95,7 @@ struct async_debug_node {
     async_debug_registry::head_ = this;
   }
 
-  void set_parent(std::uint64_t id, void* external = nullptr) noexcept {
+  void set_parent(std::uint64_t id, void* external = nullptr) {
     async_debug_guard lock;
     parent_id_ = id;
     external_parent_ = external;

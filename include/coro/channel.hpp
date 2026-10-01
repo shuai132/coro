@@ -33,7 +33,7 @@ struct channel {
       }
     }
 
-    bool buffer_empty() const {
+    bool buffer_empty() const noexcept {
       return !buffer_ || buffer_->empty();
     }
 
@@ -130,7 +130,7 @@ struct channel {
       return true;  // Suspend
     }
 
-    bool await_resume() {
+    bool await_resume() noexcept {
       return delivered_;
     }
   };
@@ -205,7 +205,7 @@ struct channel {
       return false;
     }
 
-    size_t await_resume() {
+    size_t await_resume() noexcept {
       return receivers_notified_;
     }
   };
@@ -223,9 +223,9 @@ struct channel {
     std::optional<T> pending_value_ = std::nullopt;
     recv_awaitable* next_ = nullptr;
 
-    explicit recv_awaitable(std::shared_ptr<state> state) : state_(std::move(state)) {}
+    explicit recv_awaitable(std::shared_ptr<state> state) noexcept : state_(std::move(state)) {}
 
-    bool await_ready() noexcept {
+    bool await_ready() noexcept(noexcept(std::declval<MUTEX&>().lock())) {
       // A previous await_suspend may have reserved a value before a buffer refill failed.
       pending_value_.reset();
       // Check if channel is closed and no data available without suspending
@@ -329,11 +329,11 @@ struct channel {
     }
   };
 
-  auto recv() {
+  auto recv() noexcept {
     return recv_awaitable{state_};
   }
 
-  bool is_closed() const {
+  bool is_closed() const noexcept {
     return state_->closed_.load(std::memory_order_acquire);
   }
 
@@ -387,22 +387,22 @@ struct channel {
     }
   }
 
-  bool empty() const {
+  bool empty() const noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     std::lock_guard<MUTEX> lock(state_->mutex_);
     return state_->buffer_empty();
   }
 
-  bool full() const {
+  bool full() const noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     std::lock_guard<MUTEX> lock(state_->mutex_);
     return state_->capacity_ > 0 && state_->buffer_->size() >= state_->capacity_;
   }
 
-  size_t size() const {
+  size_t size() const noexcept(noexcept(std::declval<MUTEX&>().lock())) {
     std::lock_guard<MUTEX> lock(state_->mutex_);
     return state_->buffer_ ? state_->buffer_->size() : 0;
   }
 
-  size_t capacity() const {
+  size_t capacity() const noexcept {
     return state_->capacity_;
   }
 

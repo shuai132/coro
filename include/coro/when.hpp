@@ -203,7 +203,7 @@ struct when_all_awaiter<State, std::tuple<>> {
     return state_->completed_count >= state_->total_count;
   }
 
-  bool await_suspend(std::coroutine_handle<> h) noexcept {
+  bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
@@ -275,7 +275,7 @@ struct when_all_awaiter<State, std::tuple<ResultTypes...>> {
     return state_->completed_count >= state_->total_count;
   }
 
-  bool await_suspend(std::coroutine_handle<> h) noexcept {
+  bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
@@ -302,7 +302,7 @@ struct when_all_single_awaiter {
     return state_->completed_count >= state_->total_count;
   }
 
-  bool await_suspend(std::coroutine_handle<> h) noexcept {
+  bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
@@ -420,7 +420,7 @@ struct when_all_void_awaiter {
     return state_->completed_count >= state_->total_count;
   }
 
-  bool await_suspend(std::coroutine_handle<> h) noexcept {
+  bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
@@ -737,7 +737,7 @@ struct when_any_awaiter_impl {
     return state_->completed;
   }
 
-  bool await_suspend(std::coroutine_handle<> h) noexcept {
+  bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return !state_->completed;
@@ -763,7 +763,7 @@ struct when_any_awaiter_impl<State, ResultType, true> {
     return state_->completed;
   }
 
-  bool await_suspend(std::coroutine_handle<> h) noexcept {
+  bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<std::mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return !state_->completed;

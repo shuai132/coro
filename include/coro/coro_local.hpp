@@ -263,7 +263,7 @@ struct inherit_coro_local_awaiter {
 // Ensure the current coroutine has a local storage map.
 // Direct co_await inheritance and local set() overrides already work automatically.
 // Usage: co_await inherit_coro_local();
-[[nodiscard]] inline detail::inherit_coro_local_awaiter inherit_coro_local() {
+[[nodiscard]] inline detail::inherit_coro_local_awaiter inherit_coro_local() noexcept {
   return detail::inherit_coro_local_awaiter{};
 }
 
@@ -271,7 +271,7 @@ struct inherit_coro_local_awaiter {
 template <typename T>
 using local_storage = coro_local<T>;
 
-[[nodiscard]] inline detail::inherit_coro_local_awaiter inherit_local_storage() {
+[[nodiscard]] inline detail::inherit_coro_local_awaiter inherit_local_storage() noexcept {
   return detail::inherit_coro_local_awaiter{};
 }
 

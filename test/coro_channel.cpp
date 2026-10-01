@@ -17,10 +17,39 @@
 
 #include "assert_def.h"
 #include "coro.hpp"
+#include "exception_mutex.hpp"
 #include "registration_lifetime.hpp"
 #include "utils.hpp"
 
 using namespace coro;
+
+void test_channel_lock_failure() {
+  static_assert(!noexcept(std::declval<channel_mt<int>&>().recv().await_ready()));
+  static_assert(noexcept(std::declval<channel_st<int>&>().recv().await_ready()));
+  static_assert(noexcept(std::declval<const channel_st<int>&>().empty()));
+  static_assert(noexcept(std::declval<const channel_st<int>&>().full()));
+  static_assert(noexcept(std::declval<const channel_st<int>&>().size()));
+#ifndef CORO_DISABLE_EXCEPTION
+  channel<int, exception_mutex> channel;
+  auto receiving = channel.recv();
+  expect_lock_failure([&] {
+    (void)receiving.await_ready();
+  });
+  expect_lock_failure([&] {
+    (void)channel.empty();
+  });
+  expect_lock_failure([&] {
+    (void)channel.full();
+  });
+  expect_lock_failure([&] {
+    (void)channel.size();
+  });
+  ASSERT(!receiving.await_ready());
+  channel.close();
+  ASSERT(receiving.await_ready());
+  ASSERT(!receiving.await_resume());
+#endif
+}
 
 async<void> channel_registration_handle() {
   co_return;
@@ -1204,6 +1233,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_channel_lock_failure();
   check_registration_lifetime(channel_receiver_registration_lifetime);
   check_registration_lifetime(channel_sender_registration_lifetime);
   test_stopped_loop_channel_continuation();
