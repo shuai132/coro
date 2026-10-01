@@ -24,6 +24,10 @@ target_include_directories(log_header_consumer PRIVATE "${CMAKE_CURRENT_LIST_DIR
 
 enable_testing()
 add_test(NAME consumer_run COMMAND consumer)
+add_test(NAME noexcept_source_scanner
+    COMMAND "${CMAKE_COMMAND}" "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+        -P "${CMAKE_CURRENT_LIST_DIR}/noexcept_source_scan_test.cmake"
+)
 
 # Preprocess with compiler exceptions enabled to distinguish the public macro from -fno-exceptions.
 set(CORO_SOURCE_ASIO_INCLUDE_DIR "")
