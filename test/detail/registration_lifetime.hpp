@@ -4,11 +4,15 @@
 #include <memory>
 #include <mutex>
 
+#include "assert_def.h"
 #include "coro/coro.hpp"
+
+inline void check_coro_leak();
 
 struct registration_lifetime_state {
   std::unique_ptr<coro::async<void>> owner;
   std::function<void()> release;
+  int trigger_unlock = 2;
   bool armed = false;
   bool mutex_destroyed = false;
   bool completed = false;
@@ -30,7 +34,7 @@ struct registration_lifetime_mutex {
   void unlock() {
     auto* state = state_;
     mutex_.unlock();
-    if (state->armed && ++unlock_count_ == 2) {
+    if (state->armed && ++unlock_count_ == state->trigger_unlock) {
       state->owner.reset();
       state->release();
       ASSERT(!state->mutex_destroyed);

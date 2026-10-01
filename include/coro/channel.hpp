@@ -77,21 +77,23 @@ struct channel {
 
     template <typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> h) {
-      std::unique_lock<MUTEX> lock(state_->mutex_);
+      // A peer can complete this coroutine during unlock; retain the mutex-owning state until registration returns.
+      auto state = state_;
+      std::unique_lock<MUTEX> lock(state->mutex_);
 
-      if (state_->closed_.load(std::memory_order_relaxed)) {
+      if (state->closed_.load(std::memory_order_relaxed)) {
         // If channel is closed, don't suspend - just return false to allow await_resume to handle it
         return false;
       }
 
       // Check if there's a waiting receiver for direct transfer
-      if (state_->recv_queue_head_ != nullptr) {
-        auto* recv_awaiter = state_->recv_queue_head_;
+      if (state->recv_queue_head_ != nullptr) {
+        auto* recv_awaiter = state->recv_queue_head_;
         // Keep the waiter queued if constructing its result throws.
         recv_awaiter->pending_value_.emplace(std::move(value_));
-        state_->recv_queue_head_ = recv_awaiter->next_;
-        if (state_->recv_queue_head_ == nullptr) {
-          state_->recv_queue_tail_ = nullptr;
+        state->recv_queue_head_ = recv_awaiter->next_;
+        if (state->recv_queue_head_ == nullptr) {
+          state->recv_queue_tail_ = nullptr;
         }
         recv_awaiter->next_ = nullptr;
 
@@ -108,9 +110,9 @@ struct channel {
       }
 
       // A failed receive refill may leave space while older senders are still queued.
-      if (state_->capacity_ > 0 && state_->send_queue_head_ == nullptr && state_->buffer_->size() < state_->capacity_) {
+      if (state->capacity_ > 0 && state->send_queue_head_ == nullptr && state->buffer_->size() < state->capacity_) {
         // Put data in buffer, sender can proceed immediately
-        state_->buffer_->push(std::move(value_));
+        state->buffer_->push(std::move(value_));
         delivered_ = true;
         return false;  // Don't suspend
       }
@@ -119,12 +121,12 @@ struct channel {
       exec_ = h.promise().executor_;
       handle_ = h;
       next_ = nullptr;
-      if (state_->send_queue_tail_) {
-        state_->send_queue_tail_->next_ = this;
+      if (state->send_queue_tail_) {
+        state->send_queue_tail_->next_ = this;
       } else {
-        state_->send_queue_head_ = this;
+        state->send_queue_head_ = this;
       }
-      state_->send_queue_tail_ = this;
+      state->send_queue_tail_ = this;
       return true;  // Suspend
     }
 
@@ -233,20 +235,22 @@ struct channel {
 
     template <typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> h) {
-      std::unique_lock<MUTEX> lock(state_->mutex_);
+      // A peer can complete this coroutine during unlock; retain the mutex-owning state until registration returns.
+      auto state = state_;
+      std::unique_lock<MUTEX> lock(state->mutex_);
 
       // Check buffer
-      if (!state_->buffer_empty()) {
-        pending_value_.emplace(std::move(state_->buffer_->front()));
-        state_->buffer_->pop();
+      if (!state->buffer_empty()) {
+        pending_value_.emplace(std::move(state->buffer_->front()));
+        state->buffer_->pop();
 
         // After reading from buffer, check if there are waiting senders to move to buffer
-        if (state_->send_queue_head_ != nullptr && state_->buffer_->size() < state_->capacity_) {
-          auto* sender_awaiter = state_->send_queue_head_;
-          state_->buffer_->push(std::move(sender_awaiter->value_));
-          state_->send_queue_head_ = sender_awaiter->next_;
-          if (state_->send_queue_head_ == nullptr) {
-            state_->send_queue_tail_ = nullptr;
+        if (state->send_queue_head_ != nullptr && state->buffer_->size() < state->capacity_) {
+          auto* sender_awaiter = state->send_queue_head_;
+          state->buffer_->push(std::move(sender_awaiter->value_));
+          state->send_queue_head_ = sender_awaiter->next_;
+          if (state->send_queue_head_ == nullptr) {
+            state->send_queue_tail_ = nullptr;
           }
           sender_awaiter->next_ = nullptr;
           sender_awaiter->delivered_ = true;
@@ -261,18 +265,18 @@ struct channel {
         return false;
       }
 
-      if (state_->closed_.load(std::memory_order_relaxed)) {
+      if (state->closed_.load(std::memory_order_relaxed)) {
         // If channel is closed, don't suspend - just return false to allow await_resume to handle it
         return false;
       }
 
       // Check if there's a waiting sender for direct transfer
-      if (state_->send_queue_head_ != nullptr) {
-        auto* send_awaiter = state_->send_queue_head_;
+      if (state->send_queue_head_ != nullptr) {
+        auto* send_awaiter = state->send_queue_head_;
         pending_value_.emplace(std::move(send_awaiter->value_));
-        state_->send_queue_head_ = send_awaiter->next_;
-        if (state_->send_queue_head_ == nullptr) {
-          state_->send_queue_tail_ = nullptr;
+        state->send_queue_head_ = send_awaiter->next_;
+        if (state->send_queue_head_ == nullptr) {
+          state->send_queue_tail_ = nullptr;
         }
         send_awaiter->next_ = nullptr;
         send_awaiter->delivered_ = true;
@@ -291,12 +295,12 @@ struct channel {
       handle_ = h;
       exec_ = h.promise().executor_;
       this->next_ = nullptr;
-      if (state_->recv_queue_tail_) {
-        state_->recv_queue_tail_->next_ = this;
+      if (state->recv_queue_tail_) {
+        state->recv_queue_tail_->next_ = this;
       } else {
-        state_->recv_queue_head_ = this;
+        state->recv_queue_head_ = this;
       }
-      state_->recv_queue_tail_ = this;
+      state->recv_queue_tail_ = this;
       return true;  // Suspend
     }
 

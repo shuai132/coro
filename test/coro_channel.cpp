@@ -17,9 +17,48 @@
 
 #include "assert_def.h"
 #include "coro.hpp"
+#include "registration_lifetime.hpp"
 #include "utils.hpp"
 
 using namespace coro;
+
+async<void> channel_registration_handle() {
+  co_return;
+}
+
+async<void> channel_receiver_registration_lifetime(registration_lifetime_state& state) {
+  channel<int, registration_lifetime_mutex> channel;
+  auto handle_owner = channel_registration_handle();
+  state.release = [&] {
+    auto sender = channel.send(42);
+    if (!sender.await_ready()) {
+      ASSERT(!sender.await_suspend(handle_owner.current_coro_handle_));
+    }
+    ASSERT(sender.await_resume());
+  };
+  state.armed = true;
+  auto result = co_await channel.recv();
+  ASSERT(result && *result == 42);
+  state.completed = true;
+}
+
+async<void> channel_sender_registration_lifetime(registration_lifetime_state& state) {
+  channel<int, registration_lifetime_mutex> channel;
+  auto handle_owner = channel_registration_handle();
+  state.release = [&] {
+    auto receiver = channel.recv();
+    if (!receiver.await_ready()) {
+      ASSERT(!receiver.await_suspend(handle_owner.current_coro_handle_));
+    }
+    ASSERT(receiver.await_resume().value() == 42);
+  };
+  // send.await_ready does not lock, so wait for its first queue unlock rather than the second.
+  state.trigger_unlock = 1;
+  auto sender = channel.send(42);
+  state.armed = true;
+  ASSERT(co_await sender);
+  state.completed = true;
+}
 
 struct channel_chain_executor : executor_poll {
   int depth = 0;
@@ -1162,6 +1201,8 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  check_registration_lifetime(channel_receiver_registration_lifetime);
+  check_registration_lifetime(channel_sender_registration_lifetime);
   test_stopped_loop_channel_continuation();
   test_channel_wakeup_chain<channel_mt<int>>();
   test_channel_wakeup_chain<channel_st<int>>();
