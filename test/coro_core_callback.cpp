@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 
 #include "assert_def.h"
 #include "coro/coro.hpp"
@@ -338,6 +339,16 @@ struct non_default_move_only_value {
   int value;
 };
 
+static_assert(std::is_nothrow_move_constructible_v<callback_awaiter<void>>);
+static_assert(std::is_nothrow_move_constructible_v<callback_awaiter<int>>);
+static_assert(std::is_nothrow_move_constructible_v<callback_awaiter<std::unique_ptr<int>>>);
+static_assert(std::is_nothrow_move_constructible_v<callback_awaiter<non_default_move_only_value>>);
+#ifndef CORO_DISABLE_EXCEPTION
+static_assert(!noexcept(std::declval<callback_awaiter<int>&>().await_resume()));
+#else
+static_assert(noexcept(std::declval<callback_awaiter<int>&>().await_resume()));
+#endif
+
 async<void> await_synchronous_void_callback(int& completed_count) {
   co_await callback_awaiter<void>([](std::function<void()> callback) {
     callback();
@@ -397,6 +408,45 @@ async<void> await_non_default_move_only_callback_value(int& result) {
 }
 
 #ifndef CORO_DISABLE_EXCEPTION
+struct throwing_copy_callback_value {
+  int* live_;
+
+  explicit throwing_copy_callback_value(int& live) noexcept : live_(&live) {
+    ++*live_;
+  }
+  throwing_copy_callback_value(const throwing_copy_callback_value&) {
+    throw std::runtime_error("callback copy failed");
+  }
+  throwing_copy_callback_value(throwing_copy_callback_value&& other) noexcept : live_(std::exchange(other.live_, nullptr)) {}
+  ~throwing_copy_callback_value() {
+    if (live_) {
+      --*live_;
+    }
+  }
+};
+
+void test_nothrow_move_callback_storage_failure() {
+  int live = 0;
+  {
+    throwing_copy_callback_value value{live};
+    detail::callback_awaiter_base<throwing_copy_callback_value> awaiter;
+    awaiter.set_result(value);
+    bool caught = false;
+    try {
+      (void)awaiter.await_resume();
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == "callback copy failed");
+      caught = true;
+    }
+    ASSERT(caught);
+    ASSERT(live == 1);
+    awaiter.set_result(std::move(value));
+    auto result = awaiter.await_resume();
+    ASSERT(result.live_ == &live);
+  }
+  ASSERT(live == 0);
+}
+
 struct callback_storage_state {
   int live = 0;
   bool escaped = false;
@@ -425,6 +475,8 @@ struct throwing_storage_value {
     --state->live;
   }
 };
+
+static_assert(!std::is_nothrow_move_constructible_v<callback_awaiter<throwing_storage_value>>);
 
 template <bool EXECUTOR_AWARE>
 async<void> await_throwing_callback_storage(executor& exec, callback_storage_state& state, bool asynchronous) {
@@ -596,6 +648,9 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
 }
 
 int main() {
+#ifndef CORO_DISABLE_EXCEPTION
+  test_nothrow_move_callback_storage_failure();
+#endif
 #ifdef __SIZEOF_INT128__
   test_wide_sleep_duration_conversion<__int128>();
   test_wide_sleep_duration_conversion<unsigned __int128>();

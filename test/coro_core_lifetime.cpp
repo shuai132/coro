@@ -13,6 +13,7 @@ void test_lifecycle_log(const char*, ...);
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -27,6 +28,12 @@ void test_lifecycle_log(const char*, ...);
 #include "utils.hpp"
 
 using namespace coro;
+
+static_assert(noexcept(std::declval<awaitable_promise<int>&>().get_return_object()));
+static_assert(noexcept(async<int>{std::declval<std::coroutine_handle<awaitable_promise<int>>>()}));
+static_assert(noexcept(std::declval<async<int>&>().bind_executor(std::declval<executor&>())));
+static_assert(noexcept(std::declval<const async<int>&>().get_executor()));
+static_assert(noexcept(current_executor()));
 
 async<int> lazy_value() {
   co_return 42;
@@ -46,8 +53,16 @@ void test_static_coroutine_lifetime() {
 thread_local bool fail_leak_log = false;
 thread_local bool fail_initial_log = false;
 thread_local bool fail_detach_log = false;
+thread_local std::string_view fail_lifecycle_prefix;
+thread_local bool fail_free_leak_log = false;
+thread_local int diagnostic_failures = 0;
 
 void test_lifecycle_log(const char* format, ...) {
+  if (!fail_lifecycle_prefix.empty() && std::string_view(format).starts_with(fail_lifecycle_prefix)) {
+    fail_lifecycle_prefix = {};
+    ++diagnostic_failures;
+    throw std::runtime_error("diagnostic logger failed");
+  }
   if (fail_initial_log && std::string_view(format).starts_with("promise: initial_suspend:")) {
     fail_initial_log = false;
     throw std::runtime_error("initial suspend logger failed");
@@ -63,12 +78,18 @@ void test_lifecycle_log(const char* format, ...) {
 thread_local bool reenter_leak_log = false;
 thread_local int reentered_leak_logs = 0;
 
-void test_leak_log(const char*, ...) {
+void test_leak_log(const char* format, ...) {
 #ifndef CORO_DISABLE_EXCEPTION
+  if (fail_free_leak_log && std::string_view(format).starts_with("free promise:")) {
+    fail_free_leak_log = false;
+    ++diagnostic_failures;
+    throw std::runtime_error("diagnostic logger failed");
+  }
   if (std::exchange(fail_leak_log, false)) {
     throw std::runtime_error("leak logger failed");
   }
 #endif
+  (void)format;
   if (std::exchange(reenter_leak_log, false)) {
     auto nested = lazy_value();
     ++reentered_leak_logs;
@@ -205,6 +226,69 @@ async<T> initial_suspend_logged_task([[maybe_unused]] frame_parameter parameter)
   } else {
     co_return;
   }
+}
+
+template <typename T>
+void test_nonthrowing_lifecycle_logs() {
+  static_assert(std::is_nothrow_move_constructible_v<async<T>>);
+  static_assert(std::is_nothrow_move_assignable_v<async<T>>);
+  static_assert(std::is_nothrow_destructible_v<async<T>>);
+  int live = 0;
+  for (std::string_view prefix :
+       {"promise: get_return_object:", "awaitable: new:", "awaitable: move(c):", "awaitable: move(=):", "awaitable: free:", "promise: final_suspend:",
+        "final_awaitable: await_ready:", "final_awaitable: await_suspend:", "done:", "awaitable: await_ready:"}) {
+    int failures = diagnostic_failures;
+    if (prefix == "promise: get_return_object:" || prefix == "awaitable: new:") {
+      fail_lifecycle_prefix = prefix;
+    }
+    {
+      auto task = initial_suspend_logged_task<T>(frame_parameter{live});
+      ASSERT(live == 1);
+      auto handle = task.current_coro_handle_;
+      if (prefix == "awaitable: move(c):") {
+        fail_lifecycle_prefix = prefix;
+        auto moved = std::move(task);
+        ASSERT(!task.current_coro_handle_);
+        ASSERT(handle.promise().awaitable_ == &moved);
+        task = std::move(moved);
+      } else if (prefix == "awaitable: move(=):") {
+        auto replacement = initial_suspend_logged_task<T>(frame_parameter{live});
+        ASSERT(live == 2);
+        fail_lifecycle_prefix = prefix;
+        replacement = std::move(task);
+        ASSERT(live == 1);
+        ASSERT(!task.current_coro_handle_);
+        ASSERT(handle.promise().awaitable_ == &replacement);
+        task = std::move(replacement);
+        auto& alias = task;
+        task = std::move(alias);
+        ASSERT(task.current_coro_handle_ == handle);
+      } else if (prefix != "promise: get_return_object:" && prefix != "awaitable: new:") {
+        fail_lifecycle_prefix = prefix;
+      }
+      handle.resume();
+      ASSERT(handle.done());
+      ASSERT(task.await_ready());
+      if constexpr (std::is_void_v<T>) {
+        task.await_resume();
+      } else {
+        ASSERT(task.await_resume() == 42);
+      }
+    }
+    ASSERT(fail_lifecycle_prefix.empty());
+    ASSERT(diagnostic_failures == failures + 1);
+    ASSERT(live == 0);
+    check_coro_leak();
+  }
+  int failures = diagnostic_failures;
+  {
+    auto task = initial_suspend_logged_task<T>(frame_parameter{live});
+    fail_free_leak_log = true;
+  }
+  ASSERT(!fail_free_leak_log);
+  ASSERT(diagnostic_failures == failures + 1);
+  ASSERT(live == 0);
+  check_coro_leak();
 }
 
 template <typename T>
@@ -777,6 +861,8 @@ int main() {
 #endif
 #ifndef CORO_DISABLE_EXCEPTION
   test_debug_log_failure();
+  test_nonthrowing_lifecycle_logs<int>();
+  test_nonthrowing_lifecycle_logs<void>();
   test_initial_suspend_log_failure<int>();
   test_initial_suspend_log_failure<void>();
   test_detach_log_failure<int>();
