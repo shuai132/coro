@@ -51,6 +51,7 @@ jobs:
         run: apt-get update && apt-get install -y --no-install-recommends cmake make g++-10
       - name: Test CMake integration
         env:
+          CC: gcc-10
           CXX: g++-10
         run: cmake -P test/cmake/run.cmake
 
