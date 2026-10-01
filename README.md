@@ -18,6 +18,7 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 - [Quick Start](#quick-start)
 - [Minimal Runnable Examples](#minimal-runnable-examples)
 - [Executors](#executors)
+- [Thread Safety Contract](#thread-safety-contract)
 - [Timer](#timer)
 - [Concurrency Operations](#concurrency-operations)
 - [Synchronization Primitives](#synchronization-primitives)
@@ -369,6 +370,16 @@ struct my_executor : coro::executor {
     void stop() override;                                  // Stop executor
 };
 ```
+
+## Thread Safety Contract
+
+Prefer one fixed thread per executor, with external threads submitting work, balancing performance and ease of reasoning.
+`executor_loop` also supports multiple runner threads, but resumptions may switch threads and shared data needs synchronization; `executor_poll` requires a fixed polling thread.
+Use `_mt` primitives across threads; keep all `_st` operations and notifications on one thread. Do not concurrently operate on the same task or awaiter.
+
+Children inherit the parent's executor unless explicitly bound; bound coroutines resume through their executors, while immediately ready operations continue inline.
+`stop()` does not cancel coroutines: `executor_loop` drains queued tasks and timers, while `executor_poll` stops dequeuing.
+Wait for coroutines and external callbacks to finish before stopping executors, joining threads, and destroying related objects.
 
 ## Timer
 
