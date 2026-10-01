@@ -165,6 +165,10 @@ On bare-metal standard libraries without `std::mutex`, include individual compon
 when compiling without exceptions. The umbrella `coro.hpp`, bundled executors, `when_*`, and promise leak tracing
 currently require standard threading support.
 
+The CMake target links detected native thread support when `std::mutex` is available and link probes are enabled.
+Threadless component builds keep no native thread dependency. For direct header use or compile-only cross toolchains,
+provide any required platform thread flags yourself, such as `-pthread` on older Linux runtimes.
+
 ## Installation
 
 ### Option 1: Direct Include

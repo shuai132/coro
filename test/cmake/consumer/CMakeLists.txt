@@ -4,6 +4,8 @@ project(coro_consumer C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# A caller can have an unrelated feature check in progress while adding the library.
+set(CMAKE_REQUIRED_LIBRARIES coro_missing_probe_only_library)
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../.." coro)
 
 if (TARGET coro_task)
@@ -22,6 +24,11 @@ target_include_directories(log_header_consumer PRIVATE "${CMAKE_CURRENT_LIST_DIR
 
 enable_testing()
 add_test(NAME consumer_run COMMAND consumer)
+
+# The header-only target must carry native thread link requirements for its executors.
+add_executable(threaded_consumer threaded.cpp)
+target_link_libraries(threaded_consumer PRIVATE coro)
+add_test(NAME threaded_consumer_run COMMAND threaded_consumer)
 
 # Compile the portable component headers independently of the host test helpers.
 add_library(threadless_consumer OBJECT ../threadless.cpp)

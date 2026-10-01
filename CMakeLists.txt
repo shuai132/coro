@@ -27,6 +27,25 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     endif ()
 endif ()
 
+# Native executors and multithreaded primitives need the platform's thread link flags.
+# A threadless standard library can still consume the explicit _st component headers.
+include(CheckCXXSourceCompiles)
+include(CMakePushCheckState)
+cmake_push_check_state(RESET)
+check_cxx_source_compiles("#include <mutex>
+int main() { return sizeof(std::mutex) == 0; }" CORO_HAS_STD_MUTEX)
+if (CORO_HAS_STD_MUTEX)
+    # Compile-only cross-toolchain probes cannot prove that a thread library is linkable.
+    if (NOT TARGET Threads::Threads AND NOT CMAKE_TRY_COMPILE_TARGET_TYPE STREQUAL "STATIC_LIBRARY")
+        set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+        find_package(Threads QUIET)
+    endif ()
+    if (TARGET Threads::Threads)
+        target_link_libraries(${PROJECT_NAME} INTERFACE Threads::Threads)
+    endif ()
+endif ()
+cmake_pop_check_state()
+
 if (CORO_DEBUG_ASYNC_STACK)
     target_compile_definitions(${PROJECT_NAME} INTERFACE CORO_DEBUG_ASYNC_STACK)
 endif ()
