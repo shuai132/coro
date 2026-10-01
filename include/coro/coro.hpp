@@ -223,7 +223,19 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
   awaitable<T> get_return_object();
 #endif
 
-  std::suspend_always initial_suspend() {
+  struct initial_awaitable {
+    awaitable_promise* self_;
+
+    bool await_ready() const noexcept {
+      return false;
+    }
+    void await_suspend(std::coroutine_handle<>) const noexcept {}
+    void await_resume() const noexcept {
+      self_->started_ = true;
+    }
+  };
+
+  initial_awaitable initial_suspend() {
     // Creation can throw even when propagation from the coroutine body is disabled.
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     try {
@@ -236,7 +248,7 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
       throw;
     }
 #endif
-    return {};
+    return {this};
   }
 
   final_awaitable<T> final_suspend() noexcept {
@@ -345,12 +357,10 @@ struct awaitable {
     if (child_exec && child_exec != h.promise().executor_) {
       // Distinct executors may share a thread; queue nested starts to keep the native stack bounded.
       child_exec->post([handle = current_coro_handle_]() {
-        handle.promise().started_ = true;
         handle.resume();
       });
       return std::noop_coroutine();
     }
-    current_coro_handle_.promise().started_ = true;
     return current_coro_handle_;
   }
 
@@ -379,7 +389,6 @@ struct awaitable {
       if (handle.done()) {
         handle.destroy();
       } else {
-        handle.promise().started_ = true;
         handle.resume();
       }
       CORO_DEBUG_LIFECYCLE("awaitable: resume end: %p, h: %p", coro.get(), handle.address());

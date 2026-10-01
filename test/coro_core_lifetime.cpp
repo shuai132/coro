@@ -145,6 +145,58 @@ struct frame_parameter {
   }
 };
 
+async<void> gated_child_without_executor(event_st& gate) {
+  co_await gate;
+}
+
+template <typename T>
+async<T> manually_started_pending_task([[maybe_unused]] frame_parameter parameter, event_st& gate, bool& completed, bool use_spawn_local,
+                                       [[maybe_unused]] bool fail) {
+  if (use_spawn_local) {
+    co_await spawn_local(gated_child_without_executor(gate));
+  } else {
+    co_await gate;
+  }
+  completed = true;
+#ifndef CORO_DISABLE_EXCEPTION
+  if (fail) {
+    throw std::runtime_error("manually started task failed");
+  }
+#endif
+  if constexpr (std::is_void_v<T>) {
+    co_return;
+  } else {
+    co_return 42;
+  }
+}
+
+template <typename T>
+void test_manually_started_pending_task(bool use_spawn_local, bool replace, bool fail) {
+  event_st gate;
+  int live = 0;
+  bool completed = false;
+  bool replacement_completed = false;
+  {
+    auto task = manually_started_pending_task<T>(frame_parameter{live}, gate, completed, use_spawn_local, fail);
+    task.current_coro_handle_.resume();
+    ASSERT(!task.current_coro_handle_.done());
+    ASSERT(!completed);
+    ASSERT(live == 1);
+    if (replace) {
+      task = manually_started_pending_task<T>(frame_parameter{live}, gate, replacement_completed, false, false);
+      ASSERT(live == 2);
+    }
+  }
+  // Dropping the started owner detaches it; the suspended frame remains alive until the gate opens.
+  ASSERT(live == 1);
+  ASSERT(!completed);
+  gate.set();
+  ASSERT(completed);
+  ASSERT(!replacement_completed);
+  ASSERT(live == 0);
+  check_coro_leak();
+}
+
 #ifndef CORO_DISABLE_EXCEPTION
 template <typename T>
 async<T> initial_suspend_logged_task([[maybe_unused]] frame_parameter parameter) {
@@ -690,6 +742,16 @@ void test_aligned_promise() {
 #endif
 
 int main() {
+  for (bool use_spawn_local : {false, true}) {
+    for (bool replace : {false, true}) {
+      test_manually_started_pending_task<void>(use_spawn_local, replace, false);
+      test_manually_started_pending_task<int>(use_spawn_local, replace, false);
+#ifndef CORO_DISABLE_EXCEPTION
+      test_manually_started_pending_task<void>(use_spawn_local, replace, true);
+      test_manually_started_pending_task<int>(use_spawn_local, replace, true);
+#endif
+    }
+  }
   test_reentrant_leak_log();
 #ifndef CORO_DISABLE_EXCEPTION
   test_rejected_child_cleanup<int>();

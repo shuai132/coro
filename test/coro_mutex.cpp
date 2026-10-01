@@ -34,7 +34,6 @@ void mutex_guard_reentrant_destruction_test() {
       spawn(executor, std::move(waiter));
       executor.poll();
     } else {
-      waiter.current_coro_handle_.promise().started_ = true;
       waiter.current_coro_handle_.resume();
     }
     ASSERT(!completed);
