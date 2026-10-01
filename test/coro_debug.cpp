@@ -1,5 +1,6 @@
 #define CORO_DEBUG_PROMISE_LEAK
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -134,10 +135,15 @@ extern "C" void coro_debug_checkpoint() {
 }
 
 int main() {
+  // Keep diagnostics visible when a platform aborts during a metadata regression.
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
+  LOG("Async debug test init");
   ASSERT(detail::async_debug_registry::head_ == nullptr);
 #ifndef CORO_DISABLE_EXCEPTION
+  LOG("Testing async debug registration failure");
   test_debug_registration_failure();
 #endif
+  LOG("Testing async debug frame lifetime");
   {
     auto lazy = debug_immediate();
     auto id = lazy.current_coro_handle_.promise().debug_node_.id_;
