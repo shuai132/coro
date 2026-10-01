@@ -48,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install CMake and GCC 10
-        run: apt-get update && apt-get install -y --no-install-recommends cmake g++-10
+        run: apt-get update && apt-get install -y --no-install-recommends cmake make g++-10
       - name: Test CMake integration
         env:
           CXX: g++-10
