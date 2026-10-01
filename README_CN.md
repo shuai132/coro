@@ -1309,6 +1309,8 @@ macOS GitHub Actions runner 会自动启用 `CORO_TEST_RUNNER_VERY_SLOW`。
 库头文件、项目测试和 CMake 消费端回归测试必须在 CI 矩阵中保持零编译警告。警告视为错误的选项仅作用于
 项目测试，不通过库接口传播给消费者。ASIO 头文件作为外部系统头文件处理；GCC TSan 无法插桩 ASIO 的
 `atomic_thread_fence`，仅在 ASIO 测试目标使用 `-Wno-tsan` 处理这一已知工具链限制，保留内存屏障和 sanitizer 插桩。
+GCC 15 MinGW 的 ASIO 测试另行禁用内联，避开其协程帧清理诊断，同时保留释放后使用的警告检查。
+这些测试设置不会影响库的消费者。
 
 ## 项目结构
 

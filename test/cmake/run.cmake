@@ -3,6 +3,12 @@ cmake_minimum_required(VERSION 3.15)
 get_filename_component(CORO_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 set(CORO_REGRESSION_BINARY_DIR "${CORO_SOURCE_DIR}/build/cmake-regression")
 
+function(check_output_warnings context diagnostics)
+    if (diagnostics MATCHES "[Ww]arning([ \t]+[A-Z][0-9]+[ \t]*)?:|CMake Warning")
+        message(FATAL_ERROR "${context} emitted unexpected warnings:\n${diagnostics}")
+    endif ()
+endfunction()
+
 function(configure_project name source)
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env ${CORO_CONFIGURE_ENV}
@@ -14,6 +20,7 @@ function(configure_project name source)
     if (NOT result EQUAL 0)
         message(FATAL_ERROR "Configuration ${name} failed:\n${output}\n${error}")
     endif ()
+    check_output_warnings("Configuration ${name}" "${output}\n${error}")
 endfunction()
 
 function(test_slow_runner name enabled expected)
@@ -107,6 +114,7 @@ function(test_exception_configuration name compiler_exceptions expected build_co
         if (NOT result EQUAL 0)
             message(FATAL_ERROR "Configuration ${name}: consumer build failed:\n${output}\n${error}")
         endif ()
+        check_output_warnings("Consumer build ${name}" "${output}\n${error}")
         execute_process(
             COMMAND "${CMAKE_CTEST_COMMAND}" -C Release --output-on-failure
             WORKING_DIRECTORY "${CORO_REGRESSION_BINARY_DIR}/${name}"
@@ -167,6 +175,7 @@ execute_process(
 if (NOT result EQUAL 0)
     message(FATAL_ERROR "Consumer build failed:\n${output}\n${error}")
 endif ()
+check_output_warnings("Consumer build" "${output}\n${error}")
 execute_process(
     COMMAND "${CMAKE_CTEST_COMMAND}" -C Release --output-on-failure
     WORKING_DIRECTORY "${CORO_REGRESSION_BINARY_DIR}/consumer"

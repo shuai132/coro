@@ -1353,6 +1353,8 @@ Warnings-as-errors are not exported through the library's interface to downstrea
 enable them locally. ASIO headers are external
 system includes. GCC TSan's documented inability to instrument ASIO's `atomic_thread_fence` calls is handled with
 `-Wno-tsan` on the ASIO test target only; the fences and sanitizer instrumentation remain enabled.
+The GCC 15 MinGW ASIO test disables inlining to avoid its coroutine-frame cleanup diagnostic while retaining
+use-after-free warnings. These test settings do not affect library consumers.
 
 ## Project Structure
 

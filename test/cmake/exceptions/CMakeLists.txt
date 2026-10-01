@@ -4,6 +4,8 @@ include("${CMAKE_CURRENT_LIST_DIR}/../warnings.cmake")
 
 # Set the compiler state before adding the library, as a parent project or toolchain would.
 if (MSVC)
+    # Avoid command-line override warnings when changing the compiler's default /EHsc mode.
+    string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
     if (COMPILER_EXCEPTIONS)
         string(APPEND CMAKE_CXX_FLAGS " /EHsc")
     else ()
