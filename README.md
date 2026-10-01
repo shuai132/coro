@@ -1172,6 +1172,17 @@ exceptions remain enabled, an exception escaping a coroutine body calls `std::te
 
 Logging hooks run on the calling thread and may be invoked concurrently; use a thread-safe logger. Leak counts are snapshots taken when each event is recorded.
 
+Exceptions from diagnostic hooks during return-object construction, task moves, readiness checks, destruction, and final suspension
+are caught and discarded when the compiler supports exceptions. These operations retain their `noexcept` guarantees and complete
+ownership transfer or cleanup even if logging fails. Promise-construction, initial-suspension, explicit dump, and other potentially
+throwing hooks still propagate errors through their existing cleanup paths.
+
+Operations that allocate, submit work to an executor, construct user values, or acquire a potentially throwing mutex are not generally
+`noexcept`. Locking readiness/query operations use the mutex's exception specification, preserving nonthrowing `_st` variants.
+Final suspension and destructors must remain nonthrowing: failure to deliver a continuation there is unrecoverable, and user value
+destructors and internal mutex `unlock()` operations must not throw. A compatible condition-variable user mutex whose `unlock()` can fail is
+handled separately: its waiter is removed, or an in-flight notification completes before the exception is rethrown at `co_await`.
+
 Apple Clang 21.0.0 (`clang-2100.3.34.2`) at `-O0` can read a freed coroutine frame while unwinding an exception
 from `initial_suspend()` when final suspension uses symmetric transfer. Keep creation-time logging hooks nonthrowing
 on that configuration. A [standalone standard C++20 probe](tools/compiler/clang_creation_cleanup.cpp) reproduces this
