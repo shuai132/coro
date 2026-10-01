@@ -8,6 +8,7 @@
 #include <new>
 #endif
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -129,22 +130,23 @@ struct debug_creation_parameter {
   }
 };
 
-async<int> debug_creation_failure([[maybe_unused]] debug_creation_parameter parameter) {
-  co_return 7;
+template <typename T>
+async<T> debug_creation_failure([[maybe_unused]] debug_creation_parameter parameter) {
+  if constexpr (std::is_void_v<T>) {
+    co_return;
+  } else {
+    co_return 7;
+  }
 }
 
+template <typename T>
 void test_debug_registration_failure() {
-  for (bool direct_promise : {true, false}) {
+  for (int i = 0; i < 2; ++i) {
     int live = 0;
     fail_debug_mutex_allocation = true;
     bool caught = false;
     try {
-      if (direct_promise) {
-        // Infrastructure allocation must fail during promise construction, before get_return_object.
-        awaitable_promise<int> promise;
-      } else {
-        auto task = debug_creation_failure(debug_creation_parameter{live});
-      }
+      auto task = debug_creation_failure<T>(debug_creation_parameter{live});
     } catch (const std::bad_alloc&) {
       caught = true;
     }
@@ -169,7 +171,8 @@ int main() {
   ASSERT(detail::async_debug_registry::head_ == nullptr);
 #ifndef CORO_DISABLE_EXCEPTION
   LOG("Testing async debug registration failure");
-  test_debug_registration_failure();
+  test_debug_registration_failure<int>();
+  test_debug_registration_failure<void>();
 #endif
   LOG("Testing async debug frame lifetime");
   {

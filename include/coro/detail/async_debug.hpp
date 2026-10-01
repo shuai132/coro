@@ -74,21 +74,20 @@ struct async_debug_node {
   std::uint_least32_t line_ = 0;
   bool completed_ = false;
 
-  async_debug_node() {
-    // Promise construction reliably unwinds its bases if allocation fails; some coroutine backends
-    // omit promise destruction when get_return_object throws.
-    (void)async_debug_registry::mutex();
-  }
+  async_debug_node() = default;
   async_debug_node(const async_debug_node&) = delete;
   async_debug_node& operator=(const async_debug_node&) = delete;
 
-  void register_frame(void* frame, async_debug_location location) {
-    async_debug_guard lock;
+  void prepare_frame(void* frame, async_debug_location location) noexcept {
     frame_ = frame;
-    id_ = ++async_debug_registry::next_id_;
     function_ = location.function_name();
     file_ = location.file_name();
     line_ = location.line();
+  }
+
+  void register_frame() {
+    async_debug_guard lock;
+    id_ = ++async_debug_registry::next_id_;
     next_ = async_debug_registry::head_;
     if (next_) {
       next_->prev_ = this;
@@ -110,7 +109,7 @@ struct async_debug_node {
   }
 
   ~async_debug_node() {
-    if (!frame_) {
+    if (!id_) {
       return;
     }
     async_debug_guard lock;

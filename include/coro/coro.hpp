@@ -240,6 +240,10 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     try {
 #endif
+#ifdef CORO_DEBUG_ASYNC_STACK
+      // Initial suspension has an owned return object and a guarded creation-failure cleanup path.
+      debug_node_.register_frame();
+#endif
       CORO_DEBUG_LIFECYCLE("promise: initial_suspend: p: %p, p.h: %p", this, parent_handle_.address());
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     } catch (...) {
@@ -452,7 +456,7 @@ awaitable<T> awaitable_promise<T>::get_return_object() {
 #endif
   auto handle = std::coroutine_handle<awaitable_promise<T>>::from_promise(*this);
 #ifdef CORO_DEBUG_ASYNC_STACK
-  debug_node_.register_frame(handle.address(), location);
+  debug_node_.prepare_frame(handle.address(), location);
 #endif
   CORO_DEBUG_LIFECYCLE("promise: get_return_object: p: %p, h: %p", this, handle.address());
   return awaitable<T>{handle};
