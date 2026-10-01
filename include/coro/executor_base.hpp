@@ -1,23 +1,59 @@
 #pragma once
 
 #include <chrono>
+#include <coroutine>
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <queue>
 #include <thread>
 #include <utility>
 
 #include "coro/detail/deadline.hpp"
+#include "coro/detail/resume.hpp"
 #include "executor.hpp"
 
 namespace coro {
 class executor_base : public coro::executor {
  protected:
+  struct queued_task {
+    std::coroutine_handle<> handle_{};
+    std::unique_ptr<std::function<void()>> callback_;
+
+    queued_task() = default;
+    explicit queued_task(std::coroutine_handle<> handle) : handle_(handle) {}
+    explicit queued_task(std::unique_ptr<std::function<void()>> callback) : callback_(std::move(callback)) {}
+
+    explicit operator bool() const noexcept {
+      return handle_ || callback_;
+    }
+
+    bool callable() const noexcept {
+      return handle_ || (callback_ && *callback_);
+    }
+
+    void operator()() {
+      if (handle_) {
+        detail::resume_handle(handle_);
+      } else {
+        (*callback_)();
+      }
+    }
+  };
+
+  static queued_task make_task(std::function<void()>&& fn) {
+#if defined(__cpp_rtti) || defined(_CPPRTTI)
+    if (auto* resume = fn.target<detail::resume_task>()) {
+      return queued_task{resume->handle_};
+    }
+#endif
+    // Moving std::function can copy a small target; keep all user code outside queue locks.
+    return queued_task{std::make_unique<std::function<void()>>(std::move(fn))};
+  }
+
   struct DelayedTask {
     std::chrono::steady_clock::time_point execute_at;
-    std::function<void()> task;
+    queued_task task;
   };
 
   struct DelayedTaskCompare {
@@ -28,16 +64,16 @@ class executor_base : public coro::executor {
 
  protected:
   std::mutex queue_mutex_;
-  std::queue<std::function<void()>> task_queue_;
+  std::queue<queued_task> task_queue_;
   std::priority_queue<DelayedTask, std::vector<DelayedTask>, DelayedTaskCompare> delayed_task_queue_;
   std::atomic<size_t> running_thread_id_{0};
   std::atomic<bool> stop_{false};
   bool prefer_delayed_{true};  // Protected by queue_mutex_.
 
  protected:
-  std::optional<std::function<void()>> get_next_task() {
+  queued_task get_next_task() {
     if (stop_.load(std::memory_order_acquire)) {
-      return std::nullopt;
+      return {};
     }
 
     std::lock_guard<std::mutex> lock(queue_mutex_);
@@ -45,7 +81,7 @@ class executor_base : public coro::executor {
   }
 
   // Alternate ready queues so neither can starve the other by replenishing itself.
-  std::optional<std::function<void()>> get_next_task_locked() {
+  queued_task get_next_task_locked() {
     if (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at <= std::chrono::steady_clock::now() &&
         (task_queue_.empty() || prefer_delayed_)) {
       auto task = std::move(const_cast<DelayedTask&>(delayed_task_queue_.top()).task);
@@ -58,7 +94,7 @@ class executor_base : public coro::executor {
       prefer_delayed_ = true;
       return task;
     }
-    return std::nullopt;
+    return {};
   }
 
   bool has_pending_tasks() {
@@ -90,16 +126,23 @@ class executor_base : public coro::executor {
   }
 
   void post(std::function<void()> fn) override {
+    if (stop_.load(std::memory_order_acquire)) {
+      return;
+    }
+    auto task = make_task(std::move(fn));
     std::lock_guard<std::mutex> lock(queue_mutex_);
     if (stop_.load(std::memory_order_acquire)) {
       return;
     }
-    task_queue_.emplace(std::move(fn));
+    task_queue_.emplace(std::move(task));
   }
 
   void post_delayed_ns(std::function<void()> fn, const uint64_t delay_ns) override {
-    // If queue allocation fails, release the callback only after unlocking.
-    DelayedTask task{{}, std::move(fn)};
+    if (stop_.load(std::memory_order_acquire)) {
+      return;
+    }
+    // The heap rearranges ownership pointers, leaving callback objects stationary.
+    DelayedTask task{{}, make_task(std::move(fn))};
     std::lock_guard<std::mutex> lock(queue_mutex_);
     if (stop_.load(std::memory_order_acquire)) {
       return;

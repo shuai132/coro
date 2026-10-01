@@ -56,7 +56,7 @@ class executor_loop : public executor_base {
   void run_loop() {
     running_loop_context context{this};
     for (;;) {
-      std::function<void()> task;
+      queued_task task;
 
       {
         std::unique_lock<std::mutex> lock(queue_mutex_);
@@ -66,7 +66,7 @@ class executor_loop : public executor_base {
         }
 
         if (auto next = get_next_task_locked()) {
-          task = std::move(*next);
+          task = std::move(next);
         } else {
           if (delayed_task_queue_.empty()) {
             condition_.wait(lock, [this] {
@@ -83,7 +83,7 @@ class executor_loop : public executor_base {
         }
       }
 
-      if (task) {
+      if (task.callable()) {
         task();
       }
     }
@@ -108,13 +108,17 @@ class executor_loop : public executor_base {
   }
 
   void post_continuation(std::function<void()> fn) override {
+    if (stop_.load(std::memory_order_acquire) && !running_loop_context::contains(this)) {
+      return;
+    }
+    auto task = make_task(std::move(fn));
     {
       std::lock_guard<std::mutex> lock(queue_mutex_);
       // Already accepted work may resume suspended operations while this loop drains after stop().
       if (stop_.load(std::memory_order_acquire) && !running_loop_context::contains(this)) {
         return;
       }
-      task_queue_.emplace(std::move(fn));
+      task_queue_.emplace(std::move(task));
     }
     condition_.notify_one();
   }

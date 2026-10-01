@@ -276,6 +276,8 @@ Two executor implementations are provided:
 The built-in executors and `asio_executor` saturate unrepresentable `post_delayed_ns()` deadlines at the steady clock's maximum time point.
 
 The built-in executors service both ready timers and posted tasks, so a continuously replenished queue cannot starve the other.
+User callback targets are moved and destroyed outside queue locks, allowing captured resources to post work during cleanup.
+General queued callbacks have an ownership allocation. With RTTI enabled, built-in coroutine continuations store just their handle; inline `dispatch()` calls also avoid this allocation.
 
 ### executor_loop
 

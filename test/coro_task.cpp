@@ -41,10 +41,15 @@ using namespace coro;
 #ifndef CORO_DISABLE_EXCEPTION
 // Fault injection is confined to the thread performing the timer insertion.
 thread_local bool fail_next_task_allocation = false;
+thread_local int task_allocations_before_failure = 0;
 
 void* operator new(std::size_t size) {
-  if (std::exchange(fail_next_task_allocation, false)) {
-    throw std::bad_alloc();
+  if (fail_next_task_allocation) {
+    if (task_allocations_before_failure == 0) {
+      fail_next_task_allocation = false;
+      throw std::bad_alloc();
+    }
+    --task_allocations_before_failure;
   }
   if (auto* memory = std::malloc(size ? size : 1)) {
     return memory;
@@ -74,7 +79,7 @@ struct post_on_timer_cleanup {
 };
 
 template <typename EXECUTOR>
-void test_failed_timer_cleanup_reenters_executor() {
+void test_failed_timer_cleanup_reenters_executor(int allocations_before_failure = 0) {
   EXECUTOR exec;
   bool cleanup_called = false;
   auto resource = std::make_shared<post_on_timer_cleanup>(exec, cleanup_called);
@@ -86,6 +91,7 @@ void test_failed_timer_cleanup_reenters_executor() {
   bool allocation_failed = false;
   std::atomic<bool> finished{false};
   std::thread worker([&] {
+    task_allocations_before_failure = allocations_before_failure;
     fail_next_task_allocation = true;
     try {
       exec.post_delayed_ns(std::move(callback), 0);
@@ -112,6 +118,91 @@ void test_failed_timer_cleanup_reenters_executor() {
   ASSERT(cleanup_called);
 }
 #endif
+
+struct reentrant_task_state {
+  executor* exec_;
+  std::atomic<bool> armed_{false};
+  bool reenter_on_copy_;
+  bool called_ = false;
+  int cleanup_posts_ = 0;
+};
+
+struct reentrant_task_target {
+  reentrant_task_state* state_;
+
+  explicit reentrant_task_target(reentrant_task_state& state) noexcept : state_(&state) {}
+  reentrant_task_target(const reentrant_task_target& other) noexcept : state_(other.state_) {
+    if (state_->armed_.load(std::memory_order_acquire) && state_->reenter_on_copy_) {
+      post_cleanup();
+    }
+  }
+  ~reentrant_task_target() {
+    if (state_->armed_.load(std::memory_order_acquire) && !state_->reenter_on_copy_) {
+      post_cleanup();
+    }
+  }
+  void operator()() const {
+    state_->called_ = true;
+  }
+
+ private:
+  void post_cleanup() const {
+    state_->exec_->post([state = state_] {
+      ++state->cleanup_posts_;
+    });
+  }
+};
+
+enum class queued_task_kind { posted, timed, continuation };
+
+template <typename EXECUTOR>
+void test_queued_callback_reenters_executor(queued_task_kind kind, bool reenter_on_copy) {
+  EXECUTOR exec;
+  reentrant_task_state state{&exec, false, reenter_on_copy};
+  std::function<void()> callback{reentrant_task_target{state}};
+  // A move can copy the small target even during insertion, before its first invocation.
+  state.armed_.store(reenter_on_copy, std::memory_order_release);
+  std::atomic<bool> finished{false};
+  std::thread worker([&] {
+    switch (kind) {
+      case queued_task_kind::posted:
+        exec.post(std::move(callback));
+        break;
+      case queued_task_kind::timed:
+        exec.post_delayed_ns(std::move(callback), 0);
+        break;
+      case queued_task_kind::continuation:
+        exec.post_continuation(std::move(callback));
+        break;
+    }
+    if constexpr (std::is_same_v<EXECUTOR, executor_loop>) {
+      exec.post([&exec] {
+        exec.stop();
+      });
+    }
+    // libc++ can retain a small target in the moved-from std::function.
+    state.armed_.store(true, std::memory_order_release);
+    if constexpr (std::is_same_v<EXECUTOR, executor_loop>) {
+      exec.run_loop();
+    } else {
+      for (int i = 0; i < 16; ++i) {
+        exec.poll();
+      }
+    }
+    finished.store(true, std::memory_order_release);
+  });
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (!finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  ASSERT(finished.load(std::memory_order_acquire));
+  worker.join();
+  state.armed_.store(false, std::memory_order_release);
+  ASSERT(state.called_);
+  if (!reenter_on_copy) {
+    ASSERT(state.cleanup_posts_ > 0);
+  }
+}
 
 async<int> coro_fun() {
   {
@@ -856,9 +947,17 @@ void test_time_count_duration() {
 }
 
 int main() {
+  for (auto kind : {queued_task_kind::posted, queued_task_kind::timed, queued_task_kind::continuation}) {
+    for (bool reenter_on_copy : {false, true}) {
+      test_queued_callback_reenters_executor<executor_poll>(kind, reenter_on_copy);
+      test_queued_callback_reenters_executor<executor_loop>(kind, reenter_on_copy);
+    }
+  }
 #ifndef CORO_DISABLE_EXCEPTION
   test_failed_timer_cleanup_reenters_executor<executor_poll>();
+  test_failed_timer_cleanup_reenters_executor<executor_poll>(1);
   test_failed_timer_cleanup_reenters_executor<executor_loop>();
+  test_failed_timer_cleanup_reenters_executor<executor_loop>(1);
 #endif
   test_time_count_duration();
   test_bound_children_with_unbound_parent<int>();

@@ -19,9 +19,9 @@ class executor_poll : public executor_base {
       running_thread_id_.store(std::hash<std::thread::id>{}(std::this_thread::get_id()), std::memory_order_release);
     }
 
-    auto task_opt = get_next_task();
-    if (task_opt.has_value()) {
-      task_opt.value()();
+    auto task = get_next_task();
+    if (task) {
+      task();
     }
   }
 };
