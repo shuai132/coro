@@ -6,6 +6,7 @@
 #include "detail/assert_def.h"
 #include "detail/log.h"
 #include "detail/utils.hpp"
+#include "registration_lifetime.hpp"
 
 using namespace coro;
 
@@ -15,6 +16,16 @@ async<void> wait_for_event_waiters(const int& completed, int expected) {
     co_await sleep(1ms);
   }
   ASSERT(completed == expected);
+}
+
+async<void> event_registration_lifetime(registration_lifetime_state& state) {
+  event_t<registration_lifetime_mutex> event;
+  state.release = [&] {
+    event.set();
+  };
+  state.armed = true;
+  co_await event;
+  state.completed = true;
 }
 
 // Test 1: Basic event - set wakes all waiters
@@ -242,6 +253,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  check_registration_lifetime(event_registration_lifetime);
   LOG("Event test init");
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {
