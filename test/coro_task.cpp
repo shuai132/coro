@@ -24,6 +24,7 @@
 #include "assert_def.h"
 #include "coro/coro.hpp"
 #include "coro/time.hpp"
+#include "noinline.hpp"
 #include "utils.hpp"
 
 /// config executor
@@ -43,7 +44,7 @@ using namespace coro;
 thread_local bool fail_next_task_allocation = false;
 thread_local int task_allocations_before_failure = 0;
 
-void* operator new(std::size_t size) {
+CORO_TEST_NOINLINE void* operator new(std::size_t size) {
   if (fail_next_task_allocation) {
     if (task_allocations_before_failure == 0) {
       fail_next_task_allocation = false;
@@ -57,11 +58,11 @@ void* operator new(std::size_t size) {
   throw std::bad_alloc();
 }
 
-void operator delete(void* memory) noexcept {
+CORO_TEST_NOINLINE void operator delete(void* memory) noexcept {
   std::free(memory);
 }
 
-void operator delete(void* memory, std::size_t) noexcept {
+CORO_TEST_NOINLINE void operator delete(void* memory, std::size_t) noexcept {
   std::free(memory);
 }
 

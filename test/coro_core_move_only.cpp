@@ -67,7 +67,10 @@ async<T> completed_failure(int& runs, bool delayed) {
   if (delayed) {
     co_await sleep(0ns);
   }
-  throw std::runtime_error("completed task failed");
+  // An explicit co_return also identifies the result path to MSVC's coroutine diagnostics.
+  co_return []() -> T {
+    throw std::runtime_error("completed task failed");
+  }();
 }
 
 template <typename T>

@@ -17,6 +17,7 @@
 #include "coro/executor_loop.hpp"
 #include "coro/when.hpp"
 #include "log.h"
+#include "noinline.hpp"
 #include "utils.hpp"
 
 using namespace coro;
@@ -26,7 +27,7 @@ namespace {
 bool fail_debug_mutex_allocation = false;
 }
 
-void* operator new(std::size_t size) {
+CORO_TEST_NOINLINE void* operator new(std::size_t size) {
   if (fail_debug_mutex_allocation && size == sizeof(std::mutex)) {
     fail_debug_mutex_allocation = false;
     throw std::bad_alloc();
@@ -37,11 +38,11 @@ void* operator new(std::size_t size) {
   throw std::bad_alloc();
 }
 
-void operator delete(void* memory) noexcept {
+CORO_TEST_NOINLINE void operator delete(void* memory) noexcept {
   std::free(memory);
 }
 
-void operator delete(void* memory, std::size_t) noexcept {
+CORO_TEST_NOINLINE void operator delete(void* memory, std::size_t) noexcept {
   std::free(memory);
 }
 #endif

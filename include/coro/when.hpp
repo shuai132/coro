@@ -450,7 +450,7 @@ awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_im
   size_t launched_count = 0;
   std::exception_ptr launch_failure;
 #endif
-  auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw& aw) {
+  [[maybe_unused]] auto launch_task = [&]<size_t I, typename Aw>(executor* parent_exec, Aw& aw) {
     auto* exec = aw.get_executor() ? aw.get_executor() : parent_exec;
     assert(exec && "when_all requires an executor unless every child awaitable is already bound to one");
     auto task = when_all_task<I>(std::move(aw), state);

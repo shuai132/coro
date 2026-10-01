@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "log.h"
+#include "noinline.hpp"
 // #define CORO_DEBUG_LEAK_LOG LOG
 // #define CORO_DEBUG_LIFECYCLE LOG
 
@@ -230,7 +231,7 @@ void test_stopped_loop_channel_continuation() {
 
 thread_local size_t* channel_allocation_bytes = nullptr;
 
-void* operator new(std::size_t size) {
+CORO_TEST_NOINLINE void* operator new(std::size_t size) {
   if (auto* memory = std::malloc(size ? size : 1)) {
     if (channel_allocation_bytes) {
       *channel_allocation_bytes += size;
@@ -244,11 +245,11 @@ void* operator new(std::size_t size) {
 #endif
 }
 
-void operator delete(void* memory) noexcept {
+CORO_TEST_NOINLINE void operator delete(void* memory) noexcept {
   std::free(memory);
 }
 
-void operator delete(void* memory, std::size_t) noexcept {
+CORO_TEST_NOINLINE void operator delete(void* memory, std::size_t) noexcept {
   std::free(memory);
 }
 
