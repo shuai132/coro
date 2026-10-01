@@ -188,6 +188,7 @@ jobs:
           cmake -S . -B build \
           "${build_type_options[@]}" \
           -DCORO_WARNINGS_AS_ERRORS=ON \
+          -DCORO_BUILD_EXAMPLES=ON \
           -DCORO_DISABLE_EXCEPTION=${{ matrix.disable_exception }} \
           -DCORO_ENABLE_SANITIZE_ADDRESS=${{ matrix.sanitize_address }} \
           -DCORO_ENABLE_SANITIZE_THREAD=${{ matrix.sanitize_thread }} \
@@ -201,6 +202,10 @@ jobs:
 
       - name: Build with ${{ matrix.compiler }}
         run: cmake --build build --config ${{ matrix.build_type }} -j
+
+      - name: Run examples
+        working-directory: build
+        run: ctest -C ${{ matrix.build_type }} -L examples --output-on-failure
 
       - name: Windows-MSVC Compatible
         if: matrix.os == 'windows-latest' && matrix.compiler == 'msvc'

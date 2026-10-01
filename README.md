@@ -16,6 +16,7 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Minimal Runnable Examples](#minimal-runnable-examples)
 - [Executors](#executors)
 - [Timer](#timer)
 - [Concurrency Operations](#concurrency-operations)
@@ -274,6 +275,37 @@ async<void> example() {
 
 `bind_executor(exec)` selects a task's executor. When directly awaiting a child bound to another executor, the child runs on its selected executor and the caller continues on its own executor. Unbound children inherit their caller's executor.
 These direct cross-executor awaits queue both child starts and caller continuations, avoiding recursive dispatch when the executors share a thread.
+
+## Minimal Runnable Examples
+
+Each file demonstrates basic component usage with a complete `main()` and no test utilities. Start with [task.cpp](examples/task.cpp).
+
+| File | Usage |
+|------|-------|
+| [task.cpp](examples/task.cpp) | Create a task, await a result, inherit the executor |
+| [mutex.cpp](examples/mutex.cpp) | RAII locking and contention |
+| [channel.cpp](examples/channel.cpp) | Send, receive, and close |
+| [broadcast.cpp](examples/broadcast.cpp) | Broadcast to waiting receivers with a polling executor |
+| [semaphore.cpp](examples/semaphore.cpp) | Limit concurrent work |
+| [condition_variable.cpp](examples/condition_variable.cpp) | Wait for a predicate under a lock and notify |
+| [wait_group.cpp](examples/wait_group.cpp) | Register tasks and wait for completion |
+| [latch.cpp](examples/latch.cpp) | One-shot rendezvous |
+| [event.cpp](examples/event.cpp) | Wait for and set a signal |
+| [when.cpp](examples/when.cpp) | Wait for all tasks or the first completion |
+| [timer.cpp](examples/timer.cpp) | Asynchronous delay |
+| [callback.cpp](examples/callback.cpp) | Adapt an asynchronous callback to co_await |
+| [coro_local.cpp](examples/coro_local.cpp) | Set and inherit coroutine-local values |
+
+```bash
+cmake -S . -B build -DCORO_BUILD_TEST=OFF -DCORO_BUILD_EXAMPLES=ON
+cmake --build build --config Debug -j
+ctest --test-dir build -C Debug -L examples --output-on-failure
+
+# Run one example (Windows/MSVC: build/Debug/coro_example_task.exe)
+./build/coro_example_task
+```
+
+Examples default to ON when built as the main project and OFF when included as a subproject, just like tests. Override with `-DCORO_BUILD_EXAMPLES=ON/OFF`. Add `-DCORO_DISABLE_EXCEPTION=ON` for a no-exceptions build. Examples use one executor thread; synchronization primitives can also use their `_st` variants. `coro_local.cpp` enables local storage itself. CI builds and runs every example across the existing desktop Debug/Release, exception, and sanitizer matrix.
 
 ## Executors
 
@@ -1372,7 +1404,8 @@ an empty value to disable the ASIO test. Disabling exceptions still selects the 
 | Option                         | Default              | Description               |
 |--------------------------------|----------------------|---------------------------|
 | `CORO_BUILD_TEST`              | ON (as main project) | Build tests               |
-| `CORO_WARNINGS_AS_ERRORS`      | ON (when building tests) | Treat project build warnings as errors |
+| `CORO_BUILD_EXAMPLES` | ON (as main project) | Build standalone usage examples |
+| `CORO_WARNINGS_AS_ERRORS`      | ON (tests or examples) | Treat project build warnings as errors |
 | `CORO_TEST_RUNNER_VERY_SLOW`   | OFF                  | Relax test timing for slow runners |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF                  | Enable AddressSanitizer   |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF                  | Enable ThreadSanitizer    |
@@ -1393,6 +1426,7 @@ use-after-free warnings. These test settings do not affect library consumers.
 
 ```
 coro/
+├── examples/                 # Minimal runnable examples
 ├── include/
 │   ├── coro.hpp              # Main header (includes all components)
 │   └── coro/

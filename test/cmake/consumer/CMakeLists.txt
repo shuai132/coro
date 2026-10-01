@@ -13,6 +13,10 @@ if (coro_interface_options MATCHES "-Werror|/WX")
     message(FATAL_ERROR "The library must not export warnings-as-errors to consumers")
 endif ()
 
+if (TARGET coro_example_task)
+    message(FATAL_ERROR "Subproject examples should be disabled by default")
+endif ()
+
 if (TARGET coro_task)
     message(FATAL_ERROR "Subproject tests should be disabled by default")
 endif ()

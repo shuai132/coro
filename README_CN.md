@@ -16,6 +16,7 @@
 - [要求](#要求)
 - [安装](#安装)
 - [快速开始](#快速开始)
+- [最小可运行示例](#最小可运行示例)
 - [执行器 (Executor)](#执行器-executor)
 - [定时器](#定时器)
 - [并发操作](#并发操作)
@@ -254,6 +255,37 @@ async<void> example() {
 
 `bind_executor(exec)` 指定任务的执行器。直接 `co_await` 绑定到其他执行器的子任务时，子任务在指定执行器上运行，等待方在自己的执行器上继续；未绑定的子任务继承调用方的执行器。
 这种跨执行器的直接等待通过队列启动子任务并恢复等待方，避免共用线程的执行器之间发生递归调度。
+
+## 最小可运行示例
+
+每个文件只展示一个组件的基本用法，包含完整的 `main()`，不依赖测试工具。建议从 [task.cpp](examples/task.cpp) 开始。
+
+| 文件 | 用法 |
+|------|------|
+| [task.cpp](examples/task.cpp) | 创建任务、等待结果、执行器继承 |
+| [mutex.cpp](examples/mutex.cpp) | RAII 加锁与竞争等待 |
+| [channel.cpp](examples/channel.cpp) | 发送、接收、关闭 |
+| [broadcast.cpp](examples/broadcast.cpp) | 广播给等待者，使用轮询执行器 |
+| [semaphore.cpp](examples/semaphore.cpp) | 限制同时运行的任务数 |
+| [condition_variable.cpp](examples/condition_variable.cpp) | 持锁等待谓词与通知 |
+| [wait_group.cpp](examples/wait_group.cpp) | 登记任务并等待全部完成 |
+| [latch.cpp](examples/latch.cpp) | 一次性集合点 |
+| [event.cpp](examples/event.cpp) | 等待与发出信号 |
+| [when.cpp](examples/when.cpp) | 等待所有任务或最先完成者 |
+| [timer.cpp](examples/timer.cpp) | 异步延时 |
+| [callback.cpp](examples/callback.cpp) | 将异步回调转成 co_await |
+| [coro_local.cpp](examples/coro_local.cpp) | 设置并继承协程本地值 |
+
+```bash
+cmake -S . -B build -DCORO_BUILD_TEST=OFF -DCORO_BUILD_EXAMPLES=ON
+cmake --build build --config Debug -j
+ctest --test-dir build -C Debug -L examples --output-on-failure
+
+# 运行单个示例（Windows/MSVC：build/Debug/coro_example_task.exe）
+./build/coro_example_task
+```
+
+示例与测试保持一致：作为主项目时默认开启，作为子项目引入时默认关闭，可通过 `-DCORO_BUILD_EXAMPLES=ON/OFF` 覆盖。无异常模式额外传入 `-DCORO_DISABLE_EXCEPTION=ON`。示例使用单个执行器线程；同步原语也可以换成对应的 `_st` 类型。`coro_local.cpp` 自行开启本地存储。CI 会在现有桌面平台的 Debug/Release、异常开关及 sanitizer 矩阵中编译并运行全部示例。
 
 ## 执行器 (Executor)
 
@@ -1319,7 +1351,8 @@ ASIO 测试。禁用异常时仍使用占位测试。
 | 选项                             | 默认值         | 说明                  |
 |--------------------------------|-------------|---------------------|
 | `CORO_BUILD_TEST`              | ON (当作为主项目) | 构建测试                |
-| `CORO_WARNINGS_AS_ERRORS`      | 构建测试时 ON | 将项目构建警告视为错误       |
+| `CORO_BUILD_EXAMPLES` | 作为主项目时 ON | 构建最小可运行示例 |
+| `CORO_WARNINGS_AS_ERRORS`      | 构建测试或示例时 ON | 将项目构建警告视为错误       |
 | `CORO_TEST_RUNNER_VERY_SLOW`   | OFF         | 为慢速测试环境放宽时间限制      |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF         | 启用 AddressSanitizer |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF         | 启用 ThreadSanitizer  |
@@ -1338,6 +1371,7 @@ GCC 15 MinGW 的 ASIO 测试另行禁用内联，避开其协程帧清理诊断�
 
 ```
 coro/
+├── examples/                 # 最小可运行示例
 ├── include/
 │   ├── coro.hpp              # 主头文件（包含所有组件）
 │   └── coro/
