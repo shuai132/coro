@@ -155,6 +155,33 @@ struct reentrant_task_target {
 
 enum class queued_task_kind { posted, timed, continuation };
 
+void test_loop_destruction_after_published_task(queued_task_kind kind) {
+  for (int i = 0; i < 32; ++i) {
+    auto loop = std::make_unique<executor_loop>();
+    auto* exec = loop.get();
+    std::thread producer([exec, kind] {
+      auto finish = [exec] {
+        exec->stop();
+      };
+      switch (kind) {
+        case queued_task_kind::posted:
+          exec->post(std::move(finish));
+          break;
+        case queued_task_kind::timed:
+          exec->post_delayed_ns(std::move(finish), 0);
+          break;
+        case queued_task_kind::continuation:
+          exec->post_continuation(std::move(finish));
+          break;
+      }
+    });
+    loop->run_loop();
+    // Publishing the final task must finish notification before the loop can consume it and return.
+    loop.reset();
+    producer.join();
+  }
+}
+
 template <typename EXECUTOR>
 void test_queued_callback_reenters_executor(queued_task_kind kind, bool reenter_on_copy) {
   EXECUTOR exec;
@@ -948,6 +975,7 @@ void test_time_count_duration() {
 
 int main() {
   for (auto kind : {queued_task_kind::posted, queued_task_kind::timed, queued_task_kind::continuation}) {
+    test_loop_destruction_after_published_task(kind);
     for (bool reenter_on_copy : {false, true}) {
       test_queued_callback_reenters_executor<executor_poll>(kind, reenter_on_copy);
       test_queued_callback_reenters_executor<executor_loop>(kind, reenter_on_copy);

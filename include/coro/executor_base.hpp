@@ -71,6 +71,9 @@ class executor_base : public coro::executor {
   bool prefer_delayed_{true};  // Protected by queue_mutex_.
 
  protected:
+  // Notify before releasing queue_mutex_, so consuming the task also observes notification completion.
+  virtual void notify_waiters([[maybe_unused]] bool stopping) {}
+
   queued_task get_next_task() {
     if (stop_.load(std::memory_order_acquire)) {
       return {};
@@ -135,6 +138,7 @@ class executor_base : public coro::executor {
       return;
     }
     task_queue_.emplace(std::move(task));
+    notify_waiters(false);
   }
 
   void post_delayed_ns(std::function<void()> fn, const uint64_t delay_ns) override {
@@ -149,11 +153,13 @@ class executor_base : public coro::executor {
     }
     task.execute_at = detail::delayed_deadline(delay_ns);
     delayed_task_queue_.push(std::move(task));
+    notify_waiters(false);
   }
 
   void stop() override {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     stop_.store(true, std::memory_order_release);
+    notify_waiters(true);
   }
 
   bool stopped() {

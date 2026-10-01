@@ -42,6 +42,15 @@ class executor_loop : public executor_base {
 
   std::condition_variable condition_;
 
+ protected:
+  void notify_waiters(bool stopping) override {
+    if (stopping) {
+      condition_.notify_all();
+    } else {
+      condition_.notify_one();
+    }
+  }
+
  public:
   executor_loop() = default;
   ~executor_loop() override {
@@ -89,22 +98,12 @@ class executor_loop : public executor_base {
     }
   }
 
-  void post_delayed_ns(std::function<void()> fn, const uint64_t delay_ns) override {
-    executor_base::post_delayed_ns(std::move(fn), delay_ns);
-    condition_.notify_one();
-  }
-
   void dispatch(std::function<void()> fn) override {
     if (running_loop_context::contains(this)) {
       fn();
     } else {
       post(std::move(fn));
     }
-  }
-
-  void post(std::function<void()> fn) override {
-    executor_base::post(std::move(fn));
-    condition_.notify_one();
   }
 
   void post_continuation(std::function<void()> fn) override {
@@ -119,13 +118,8 @@ class executor_loop : public executor_base {
         return;
       }
       task_queue_.emplace(std::move(task));
+      notify_waiters(false);
     }
-    condition_.notify_one();
-  }
-
-  void stop() override {
-    executor_base::stop();
-    condition_.notify_all();
   }
 };
 }  // namespace coro
