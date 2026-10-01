@@ -27,8 +27,21 @@ if (NOT "${ASIO_INCLUDE_DIR}" STREQUAL "")
 endif ()
 
 set(output "${BINARY_DIR}/noexcept-source-${DISABLE_EXCEPTION}.ii")
+set(command "${COMPILER}" ${flags} "${SOURCE}")
+if (COMPILER_ID STREQUAL "MSVC" AND NOT "${MSVC_ENV_SCRIPT}" STREQUAL "")
+    # Keep environment setup and preprocessing in the same cmd.exe process. Quote each
+    # argument separately so compiler, SDK, and checkout paths can contain spaces.
+    set(driver "${BINARY_DIR}/noexcept-source-${DISABLE_EXCEPTION}.cmd")
+    set(invocation "call \"${COMPILER}\"")
+    foreach (argument IN LISTS flags)
+        string(APPEND invocation " \"${argument}\"")
+    endforeach ()
+    string(APPEND invocation " \"${SOURCE}\"")
+    file(WRITE "${driver}" "@echo off\r\ncall \"${MSVC_ENV_SCRIPT}\" -no_logo -arch=${MSVC_TARGET_ARCH} >nul\r\nif errorlevel 1 exit /b %errorlevel%\r\n${invocation}\r\n")
+    set(command cmd /d /c "${driver}")
+endif ()
 execute_process(
-    COMMAND "${COMPILER}" ${flags} "${SOURCE}"
+    COMMAND ${command}
     OUTPUT_FILE "${output}"
     ERROR_VARIABLE error
     RESULT_VARIABLE result

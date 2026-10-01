@@ -28,6 +28,12 @@ add_test(NAME noexcept_source_scanner
     COMMAND "${CMAKE_COMMAND}" "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
         -P "${CMAKE_CURRENT_LIST_DIR}/noexcept_source_scan_test.cmake"
 )
+if (WIN32)
+    add_test(NAME noexcept_msvc_environment
+        COMMAND "${CMAKE_COMMAND}" "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+            -P "${CMAKE_CURRENT_LIST_DIR}/noexcept_msvc_environment_test.cmake"
+    )
+endif ()
 
 # Preprocess with compiler exceptions enabled to distinguish the public macro from -fno-exceptions.
 set(CORO_SOURCE_ASIO_INCLUDE_DIR "")
@@ -52,12 +58,27 @@ if (NOT "${CORO_SOURCE_ASIO_INCLUDE_DIR}" STREQUAL "")
         target_compile_definitions(noexcept_source_consumer PRIVATE _WIN32_WINNT=0x0601)
     endif ()
 endif ()
+set(CORO_SOURCE_MSVC_ENV_SCRIPT "")
+set(CORO_SOURCE_MSVC_TARGET_ARCH "${CMAKE_VS_PLATFORM_NAME}")
+if (MSVC AND CMAKE_GENERATOR MATCHES "^Visual Studio")
+    # MSBuild initializes SDK paths for builds, but a direct cl.exe invocation in CTest does not.
+    string(REGEX REPLACE ",.*$" "" vs_instance "${CMAKE_GENERATOR_INSTANCE}")
+    set(CORO_SOURCE_MSVC_ENV_SCRIPT "${vs_instance}/Common7/Tools/VsDevCmd.bat")
+    if (NOT EXISTS "${CORO_SOURCE_MSVC_ENV_SCRIPT}")
+        message(FATAL_ERROR "Cannot locate the selected Visual Studio developer environment script")
+    endif ()
+    if (CORO_SOURCE_MSVC_TARGET_ARCH STREQUAL "Win32")
+        set(CORO_SOURCE_MSVC_TARGET_ARCH x86)
+    endif ()
+endif ()
 foreach (disabled ON OFF)
     add_test(NAME noexcept_source_${disabled}
         COMMAND "${CMAKE_COMMAND}"
             "-DCOMPILER=${CMAKE_CXX_COMPILER}"
             "-DCOMPILER_ID=${CMAKE_CXX_COMPILER_ID}"
             "-DCOMPILER_VERSION=${CMAKE_CXX_COMPILER_VERSION}"
+            "-DMSVC_ENV_SCRIPT=${CORO_SOURCE_MSVC_ENV_SCRIPT}"
+            "-DMSVC_TARGET_ARCH=${CORO_SOURCE_MSVC_TARGET_ARCH}"
             "-DINCLUDE_DIR=${CMAKE_CURRENT_LIST_DIR}/../../../include"
             "-DSOURCE=${CMAKE_CURRENT_LIST_DIR}/noexcept_source.cpp"
             "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
