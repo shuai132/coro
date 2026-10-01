@@ -34,7 +34,7 @@ template <typename T>
 struct coro_local {
  private:
   // Nonempty keys cannot share an address through empty-base or no_unique_address optimization.
-  [[maybe_unused]] char identity_{};
+  char identity_{};
 
   // Helper to find value in storage or parent chain
   template <typename Promise>
