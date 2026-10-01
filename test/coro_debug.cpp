@@ -8,6 +8,7 @@
 #include <new>
 #endif
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "assert_def.h"
@@ -114,18 +115,45 @@ void test_async_debug_static_lifetime() {
 }
 
 #ifndef CORO_DISABLE_EXCEPTION
-void test_debug_registration_failure() {
-  fail_debug_mutex_allocation = true;
-  bool caught = false;
-  try {
-    auto task = debug_immediate();
-  } catch (const std::bad_alloc&) {
-    caught = true;
+struct debug_creation_parameter {
+  int* live_;
+
+  explicit debug_creation_parameter(int& live) : live_(&live) {
+    ++*live_;
   }
-  ASSERT(caught);
-  ASSERT(!fail_debug_mutex_allocation);
-  ASSERT(detail::async_debug_registry::head_ == nullptr);
-  ASSERT(debug_coro_promise::debug_coro_leak.empty());
+  debug_creation_parameter(debug_creation_parameter&& other) noexcept : live_(std::exchange(other.live_, nullptr)) {}
+  ~debug_creation_parameter() {
+    if (live_) {
+      --*live_;
+    }
+  }
+};
+
+async<int> debug_creation_failure([[maybe_unused]] debug_creation_parameter parameter) {
+  co_return 7;
+}
+
+void test_debug_registration_failure() {
+  for (bool direct_promise : {true, false}) {
+    int live = 0;
+    fail_debug_mutex_allocation = true;
+    bool caught = false;
+    try {
+      if (direct_promise) {
+        // Infrastructure allocation must fail during promise construction, before get_return_object.
+        awaitable_promise<int> promise;
+      } else {
+        auto task = debug_creation_failure(debug_creation_parameter{live});
+      }
+    } catch (const std::bad_alloc&) {
+      caught = true;
+    }
+    ASSERT(caught);
+    ASSERT(!fail_debug_mutex_allocation);
+    ASSERT(live == 0);
+    ASSERT(detail::async_debug_registry::head_ == nullptr);
+    ASSERT(debug_coro_promise::debug_coro_leak.empty());
+  }
 }
 #endif
 

@@ -74,7 +74,11 @@ struct async_debug_node {
   std::uint_least32_t line_ = 0;
   bool completed_ = false;
 
-  async_debug_node() = default;
+  async_debug_node() {
+    // Promise construction reliably unwinds its bases if allocation fails; some coroutine backends
+    // omit promise destruction when get_return_object throws.
+    (void)async_debug_registry::mutex();
+  }
   async_debug_node(const async_debug_node&) = delete;
   async_debug_node& operator=(const async_debug_node&) = delete;
 
