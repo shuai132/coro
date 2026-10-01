@@ -9,12 +9,180 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
+#include <thread>
 
 #include "assert_def.h"
 #include "coro.hpp"
 #include "utils.hpp"
 
 using namespace coro;
+
+#ifndef CORO_DISABLE_EXCEPTION
+struct failing_unlock_mutex {
+  std::function<void()> before_failure_;
+  bool fail_ = true;
+
+  void unlock() {
+    if (std::exchange(fail_, false)) {
+      if (before_failure_) {
+        before_failure_();
+      }
+      throw std::runtime_error("user unlock failed");
+    }
+  }
+};
+
+template <typename CV>
+async<void> await_unlock_failure(CV& cv, failing_unlock_mutex& mutex, bool& caught) {
+  try {
+    co_await cv.wait(mutex);
+  } catch (const std::runtime_error&) {
+    caught = true;
+  }
+}
+
+template <typename CV>
+async<void> await_after_unlock_failure(CV& cv, bool& completed) {
+  dummy_mutex mutex;
+  co_await cv.wait(mutex);
+  completed = true;
+}
+
+template <typename CV>
+void test_unlock_failure_cleanup() {
+  for (bool notify_during_unlock : {false, true}) {
+    CV cv;
+    failing_unlock_mutex mutex;
+    if (notify_during_unlock) {
+      mutex.before_failure_ = [&] {
+        cv.notify_all();
+      };
+    }
+    bool caught = false;
+    {
+      auto failed = await_unlock_failure(cv, mutex, caught);
+      failed.current_coro_handle_.resume();
+      ASSERT(failed.current_coro_handle_.done());
+      failed.await_resume();
+    }
+    ASSERT(caught);
+    // Exercise notification after the failed frame has been destroyed.
+    cv.notify_one();
+    cv.notify_all();
+    bool completed = false;
+    {
+      auto next = await_after_unlock_failure(cv, completed);
+      next.current_coro_handle_.resume();
+      ASSERT(!completed);
+      cv.notify_one();
+      ASSERT(completed);
+      next.await_resume();
+    }
+    check_coro_leak();
+  }
+}
+
+struct unlock_failure_handoff_state {
+  std::atomic<bool> notifier_dequeued_{false};
+  std::atomic<bool> release_notifier_{false};
+  std::atomic<bool> armed_{false};
+};
+
+static unlock_failure_handoff_state* current_unlock_failure_handoff_state;
+
+struct paused_notification_mutex {
+  std::mutex mutex_;
+  unlock_failure_handoff_state* state_ = current_unlock_failure_handoff_state;
+
+  void lock() {
+    mutex_.lock();
+  }
+  void unlock() noexcept {
+    mutex_.unlock();
+    if (state_->armed_.exchange(false, std::memory_order_acq_rel)) {
+      state_->notifier_dequeued_.store(true, std::memory_order_release);
+      while (!state_->release_notifier_.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+    }
+  }
+};
+
+void test_unlock_failure_during_notification_handoff() {
+  unlock_failure_handoff_state state;
+  current_unlock_failure_handoff_state = &state;
+  condition_variable_t<paused_notification_mutex> cv;
+  std::thread notifier;
+  failing_unlock_mutex mutex;
+  mutex.before_failure_ = [&] {
+    state.armed_.store(true, std::memory_order_release);
+    notifier = std::thread([&] {
+      cv.notify_one();
+    });
+    while (!state.notifier_dequeued_.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+  };
+  bool caught = false;
+  {
+    auto task = await_unlock_failure(cv, mutex, caught);
+    task.current_coro_handle_.resume();
+    // The notifier owns the node, so the frame must stay alive until it finishes.
+    ASSERT(!task.current_coro_handle_.done());
+    ASSERT(!caught);
+    state.release_notifier_.store(true, std::memory_order_release);
+    notifier.join();
+    ASSERT(task.current_coro_handle_.done());
+    ASSERT(caught);
+    task.await_resume();
+  }
+  current_unlock_failure_handoff_state = nullptr;
+  check_coro_leak();
+}
+
+template <typename CV>
+void test_unlock_failure_preserves_other_waiters() {
+  for (int failed_index : {0, 1, 2}) {
+    CV cv;
+    bool completed[2]{};
+    auto first = await_after_unlock_failure(cv, completed[0]);
+    auto second = await_after_unlock_failure(cv, completed[1]);
+    auto enqueue = [&] {
+      if (!completed[0] && !first.current_coro_handle_.promise().started_) {
+        first.current_coro_handle_.resume();
+      } else {
+        second.current_coro_handle_.resume();
+      }
+    };
+    failing_unlock_mutex mutex;
+    for (int i = 0; i < failed_index; ++i) {
+      enqueue();
+    }
+    mutex.before_failure_ = [&] {
+      for (int i = failed_index; i < 2; ++i) {
+        enqueue();
+      }
+    };
+    bool caught = false;
+    {
+      auto failed = await_unlock_failure(cv, mutex, caught);
+      failed.current_coro_handle_.resume();
+      ASSERT(failed.current_coro_handle_.done());
+      ASSERT(caught);
+      failed.await_resume();
+    }
+    cv.notify_one();
+    ASSERT(completed[0]);
+    ASSERT(!completed[1]);
+    cv.notify_all();
+    ASSERT(completed[1]);
+    first.await_resume();
+    second.await_resume();
+  }
+  check_coro_leak();
+}
+#endif
 
 struct ready_awaitable {
   bool await_ready() noexcept {
@@ -502,6 +670,13 @@ async<void> run_all_tests() {
 }
 
 int main() {
+#ifndef CORO_DISABLE_EXCEPTION
+  test_unlock_failure_cleanup<condition_variable_mt>();
+  test_unlock_failure_cleanup<condition_variable_st>();
+  test_unlock_failure_preserves_other_waiters<condition_variable_mt>();
+  test_unlock_failure_preserves_other_waiters<condition_variable_st>();
+  test_unlock_failure_during_notification_handoff();
+#endif
   test_notification_from_internal_unlock();
   LOG("Condition Variable test init");
   executor_loop executor;

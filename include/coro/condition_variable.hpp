@@ -3,7 +3,9 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
+#include <exception>
 #include <mutex>
+#include <utility>
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
@@ -58,6 +60,9 @@ struct condition_variable_t {
     void* mtx_{};                 // Type-erased mutex pointer
     void (*unlock_fn_)(void*){};  // Function pointer to unlock
     waiter_node node_{};
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    std::exception_ptr unlock_exception_{};
+#endif
 
     bool await_ready() noexcept {
       // Never ready - always suspend to release lock
@@ -90,13 +95,35 @@ struct condition_variable_t {
       }
 
       // Release the user's mutex before this waiter is allowed to resume.
-      unlock_fn(mtx);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+      try {
+#endif
+        unlock_fn(mtx);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+      } catch (...) {
+        unlock_exception_ = std::current_exception();
+        if (cv_->remove_waiter(&node_)) {
+          return false;
+        }
+        // A notifier already owns the node. Finish the handoff before propagating,
+        // so unwinding cannot destroy a frame that the notifier still accesses.
+      }
+#endif
 
       // Publish suspension only after all mutex operations return. A notification can now destroy this awaiter.
       return node_.registration_.suspend();
     }
 
-    void await_resume() noexcept {
+    void await_resume()
+#if !defined(__cpp_exceptions) && !defined(_CPPUNWIND)
+        noexcept
+#endif
+    {
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+      if (auto error = std::exchange(unlock_exception_, {})) {
+        std::rethrow_exception(error);
+      }
+#endif
       // Mutex has been released, not re-acquired
       // User must manually re-lock
     }
@@ -108,7 +135,7 @@ struct condition_variable_t {
   //   co_await mtx.lock();  // Must re-lock manually
   // Works with coro::mutex and compatible types providing unlock().
   template <typename MutexType>
-  auto wait(MutexType& mtx) {
+  auto wait(MutexType& mtx) noexcept {
     return wait_awaitable{this, static_cast<void*>(&mtx), [](void* m) {
                             static_cast<MutexType*>(m)->unlock();
                           }};
@@ -183,6 +210,27 @@ struct condition_variable_t {
   }
 
  private:
+  bool remove_waiter(waiter_node* node) {
+    std::lock_guard<MUTEX> lock(mutex_);
+    waiter_node* previous = nullptr;
+    for (auto* current = head_; current; current = current->next) {
+      if (current == node) {
+        if (previous) {
+          previous->next = current->next;
+        } else {
+          head_ = current->next;
+        }
+        if (tail_ == current) {
+          tail_ = previous;
+        }
+        current->next = nullptr;
+        return true;
+      }
+      previous = current;
+    }
+    return false;
+  }
+
   mutable MUTEX mutex_;  // Internal mutex to protect the queue
   waiter_node* head_;    // Head of waiting list
   waiter_node* tail_;    // Tail of waiting list
