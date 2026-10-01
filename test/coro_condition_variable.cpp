@@ -6,6 +6,9 @@
 // #define CORO_DEBUG_LIFECYCLE LOG
 
 #include <coroutine>
+#include <functional>
+#include <memory>
+#include <mutex>
 
 #include "assert_def.h"
 #include "coro.hpp"
@@ -36,6 +39,97 @@ struct notify_on_unlock_mutex {
     return {};
   }
 };
+
+struct internal_unlock_state {
+  std::unique_ptr<async<void>> owner;
+  std::function<void()> notify;
+  int unlock_count = 0;
+  int trigger_unlock = 0;
+  bool mutex_destroyed = false;
+  bool completed = false;
+};
+
+static internal_unlock_state* current_internal_unlock_state;
+
+struct observed_internal_mutex {
+  std::mutex mutex_;
+  internal_unlock_state* state_ = current_internal_unlock_state;
+
+  ~observed_internal_mutex() {
+    state_->mutex_destroyed = true;
+  }
+  void lock() {
+    mutex_.lock();
+  }
+  void unlock() {
+    auto* state = state_;
+    mutex_.unlock();
+    if (++state->unlock_count == state->trigger_unlock) {
+      state->owner.reset();
+      state->notify();
+      // The unlock implementation is still using its mutex object until it returns.
+      ASSERT(!state->mutex_destroyed);
+    }
+  }
+};
+
+async<void> wait_for_internal_unlock(internal_unlock_state& state, bool notify_all) {
+  condition_variable_t<observed_internal_mutex> cv;
+  dummy_mutex user_mutex;
+  state.notify = [&cv, notify_all] {
+    if (notify_all) {
+      cv.notify_all();
+    } else {
+      cv.notify_one();
+    }
+  };
+  user_mutex.lock();
+  co_await cv.wait(user_mutex);
+  state.completed = true;
+}
+
+void test_notification_from_internal_unlock() {
+  for (bool notify_all : {false, true}) {
+    for (int trigger_unlock : {1, 2}) {
+      internal_unlock_state state;
+      state.trigger_unlock = trigger_unlock;
+      current_internal_unlock_state = &state;
+      state.owner = std::make_unique<async<void>>(wait_for_internal_unlock(state, notify_all));
+      state.owner->current_coro_handle_.resume();
+      if (!state.completed) {
+        state.notify();
+      }
+      ASSERT(state.completed);
+      ASSERT(state.mutex_destroyed);
+      ASSERT(!state.owner);
+      current_internal_unlock_state = nullptr;
+      check_coro_leak();
+    }
+  }
+}
+
+template <typename CV>
+async<void> cv_reused_waiter_test() {
+  CV cv;
+  coro::mutex mutex;
+  auto waiter = cv.wait(mutex);
+  auto copied = waiter;
+  auto moved = std::move(copied);
+  moved = waiter;
+  auto* executor = co_await current_executor();
+  for (int iteration = 0; iteration < 32; ++iteration) {
+    co_await mutex.lock();
+    executor->post([&cv, iteration] {
+      if (iteration % 2) {
+        cv.notify_all();
+      } else {
+        cv.notify_one();
+      }
+    });
+    co_await moved;
+    ASSERT(!mutex.is_locked());
+  }
+}
 
 // Test basic notify_one functionality
 async<void> cv_basic_test() {
@@ -364,6 +458,8 @@ async<void> cv_wait_predicate_complex_test() {
 }
 
 async<void> run_all_tests() {
+  co_await cv_reused_waiter_test<condition_variable_mt>();
+  co_await cv_reused_waiter_test<condition_variable_st>();
   {
     co_await cv_basic_test();
     LOG("Basic test completed\n");
@@ -406,6 +502,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_notification_from_internal_unlock();
   LOG("Condition Variable test init");
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {

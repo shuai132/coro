@@ -545,7 +545,8 @@ async<void> notifier() {
 ```
 
 Waiters must stay alive until they are notified. Notifications that race with the waiter's unlock path are handled, but
-the non-predicate `wait()` still returns without re-acquiring the user mutex.
+the non-predicate `wait()` still returns without re-acquiring the user mutex. Notifications cannot resume a waiter until
+its internal queue locking and user mutex unlocking have returned.
 
 ### semaphore
 
