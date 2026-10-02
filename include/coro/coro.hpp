@@ -12,7 +12,6 @@
 #include <variant>
 
 #include "coro/detail/async_debug.hpp"
-#include "coro/detail/debug_log.hpp"
 #include "coro/detail/resume.hpp"
 #include "executor.hpp"
 
@@ -24,6 +23,7 @@
 // #define CORO_DISABLE_EXCEPTION
 // #define CORO_ENABLE_LOCAL_STORAGE
 
+// Debug logging hooks must not throw, including during coroutine creation and explicit dumps.
 #ifndef CORO_DEBUG_LEAK_LOG
 #define CORO_DEBUG_LEAK_LOG(...) (void)(0)
 #endif
@@ -79,17 +79,7 @@ struct debug_coro_promise {
       count = state.promises_.size();
     }
     // User logging may create another coroutine; never call it while holding the tracking lock.
-#ifndef CORO_DISABLE_EXCEPTION
-    try {
-#endif
-      CORO_DEBUG_LEAK_LOG("new promise: %p, num: %zu", this, count);
-#ifndef CORO_DISABLE_EXCEPTION
-    } catch (...) {
-      std::lock_guard<std::mutex> lock(state.mutex_);
-      state.promises_.erase(this);
-      throw;
-    }
-#endif
+    CORO_DEBUG_LEAK_LOG("new promise: %p, num: %zu", this, count);
   }
 
   ~debug_coro_promise() {
@@ -100,7 +90,7 @@ struct debug_coro_promise {
       state.promises_.erase(this);
       count = state.promises_.size();
     }
-    CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LEAK_LOG, "free promise: %p, num: %zu", this, count);
+    CORO_DEBUG_LEAK_LOG("free promise: %p, num: %zu", this, count);
   }
 };
 #else
@@ -188,14 +178,13 @@ struct final_awaitable {
   awaitable_promise<T>* self;
 
   bool await_ready() noexcept {
-    CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LIFECYCLE, "final_awaitable: await_ready: p: %p, p.h: %p", self, self->parent_handle_.address());
+    CORO_DEBUG_LIFECYCLE("final_awaitable: await_ready: p: %p, p.h: %p", self, self->parent_handle_.address());
     return false;
   }
 
   std::coroutine_handle<> await_suspend(std::coroutine_handle<awaitable_promise<T>> h) noexcept {
-    CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LIFECYCLE, "final_awaitable: await_suspend: p: %p, h: %p, p.h: %p", self, h.address(),
-                             h.promise().parent_handle_.address());
-    CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LIFECYCLE, "done: %d", h.done());
+    CORO_DEBUG_LIFECYCLE("final_awaitable: await_suspend: p: %p, h: %p, p.h: %p", self, h.address(), h.promise().parent_handle_.address());
+    CORO_DEBUG_LIFECYCLE("done: %d", h.done());
     // h.promise() is self
     if (h.promise().parent_handle_) {
       if (h.promise().parent_executor_ != h.promise().executor_) {
@@ -215,7 +204,7 @@ struct final_awaitable {
   }
 
   void await_resume() noexcept {
-    CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LIFECYCLE, "final_awaitable: await_resume: %p, p.h: %p", self, self->parent_handle_.address());
+    CORO_DEBUG_LIFECYCLE("final_awaitable: await_resume: %p, p.h: %p", self, self->parent_handle_.address());
   }
 };
 
@@ -241,26 +230,24 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
   };
 
   initial_awaitable initial_suspend()
-#ifdef CORO_DISABLE_EXCEPTION
+#if !defined(CORO_DEBUG_ASYNC_STACK) || defined(CORO_DISABLE_EXCEPTION)
       noexcept
 #endif
   {
-    // Disabled exception handling requires creation hooks and infrastructure to be nonthrowing.
+#ifdef CORO_DEBUG_ASYNC_STACK
 #ifndef CORO_DISABLE_EXCEPTION
     try {
 #endif
-#ifdef CORO_DEBUG_ASYNC_STACK
-      // Exception-enabled initial suspension has an owned return object and a guarded failure-cleanup path.
       debug_node_.register_frame();
-#endif
-      CORO_DEBUG_LIFECYCLE("promise: initial_suspend: p: %p, p.h: %p", this, parent_handle_.address());
 #ifndef CORO_DISABLE_EXCEPTION
     } catch (...) {
-      // Creation failure destroys the frame even if the compiler also destroys the return object.
+      // Registration can allocate or lock. Creation failure destroys the frame and its return object.
       awaitable_->current_coro_handle_ = nullptr;
       throw;
     }
 #endif
+#endif
+    CORO_DEBUG_LIFECYCLE("promise: initial_suspend: p: %p, p.h: %p", this, parent_handle_.address());
     return {this};
   }
 
@@ -268,7 +255,7 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
 #ifdef CORO_DEBUG_ASYNC_STACK
     debug_node_.complete();
 #endif
-    CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LIFECYCLE, "promise: final_suspend: p: %p, p.h: %p", this, parent_handle_.address());
+    CORO_DEBUG_LIFECYCLE("promise: final_suspend: p: %p, p.h: %p", this, parent_handle_.address());
     return final_awaitable<T>{this};
   }
 
@@ -289,13 +276,12 @@ struct awaitable {
   using promise_type = awaitable_promise<T>;
 
   explicit awaitable(std::coroutine_handle<promise_type> h) noexcept : current_coro_handle_(h) {
-    CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LIFECYCLE, "awaitable: new: %p, h: %p", this, h.address());
+    CORO_DEBUG_LIFECYCLE("awaitable: new: %p, h: %p", this, h.address());
     h.promise().awaitable_ = this;
   }
   ~awaitable() {
-    CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LIFECYCLE, "awaitable: free: %p, h: %p, done: %s", this,
-                             current_coro_handle_ ? current_coro_handle_.address() : nullptr,
-                             current_coro_handle_ ? current_coro_handle_.done() ? "yes" : "no" : "null");
+    CORO_DEBUG_LIFECYCLE("awaitable: free: %p, h: %p, done: %s", this, current_coro_handle_ ? current_coro_handle_.address() : nullptr,
+                         current_coro_handle_ ? current_coro_handle_.done() ? "yes" : "no" : "null");
     if (current_coro_handle_) {
       if (current_coro_handle_.done() || !current_coro_handle_.promise().started_) {
         current_coro_handle_.destroy();
@@ -313,14 +299,14 @@ struct awaitable {
 
   /// enable move
   awaitable(awaitable&& other) noexcept : current_coro_handle_(other.current_coro_handle_) {
-    CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LIFECYCLE, "awaitable: move(c): %p to %p, h: %p", &other, this, current_coro_handle_.address());
+    CORO_DEBUG_LIFECYCLE("awaitable: move(c): %p to %p, h: %p", &other, this, current_coro_handle_.address());
     if (current_coro_handle_) {
       current_coro_handle_.promise().awaitable_ = this;
     }
     other.current_coro_handle_ = nullptr;
   }
   awaitable& operator=(awaitable&& other) noexcept {
-    CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LIFECYCLE, "awaitable: move(=): %p to %p, h: %p", &other, this, current_coro_handle_.address());
+    CORO_DEBUG_LIFECYCLE("awaitable: move(=): %p to %p, h: %p", &other, this, current_coro_handle_.address());
     if (this != &other) {
       if (current_coro_handle_) {
         if (current_coro_handle_.done() || !current_coro_handle_.promise().started_) {
@@ -340,7 +326,7 @@ struct awaitable {
 
   /// co_await
   [[nodiscard]] bool await_ready() const noexcept {
-    CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LIFECYCLE, "awaitable: await_ready: %p, h: %p", this, current_coro_handle_.address());
+    CORO_DEBUG_LIFECYCLE("awaitable: await_ready: %p, h: %p", this, current_coro_handle_.address());
     return current_coro_handle_.done();
   }
 
@@ -395,7 +381,6 @@ struct awaitable {
   void detach(auto& executor) {
     auto* exec_to_use = current_coro_handle_.promise().executor_ ? current_coro_handle_.promise().executor_ : &executor;
     exec_to_use->dispatch([coro = std::make_shared<awaitable<T>>(std::move(*this)), exec_to_use]() mutable {
-      // Keep ownership until logging succeeds, so a failure still releases the unstarted frame.
       CORO_DEBUG_LIFECYCLE("awaitable: resume begin: %p, h: %p", coro.get(), coro->current_coro_handle_.address());
       auto handle = std::exchange(coro->current_coro_handle_, {});
       handle.promise().awaitable_ = nullptr;
@@ -468,7 +453,7 @@ awaitable<T> awaitable_promise<T>::get_return_object() noexcept {
 #ifdef CORO_DEBUG_ASYNC_STACK
   debug_node_.prepare_frame(handle.address(), location);
 #endif
-  CORO_DETAIL_LOG_NOEXCEPT(CORO_DEBUG_LIFECYCLE, "promise: get_return_object: p: %p, h: %p", this, handle.address());
+  CORO_DEBUG_LIFECYCLE("promise: get_return_object: p: %p, h: %p", this, handle.address());
   return awaitable<T>{handle};
 }
 

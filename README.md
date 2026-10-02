@@ -1313,10 +1313,9 @@ alive until all related objects have been destroyed.
 
 Logging hooks run on the calling thread and may be invoked concurrently; use a thread-safe logger. Leak counts are snapshots taken when each event is recorded.
 
-Exceptions from diagnostic hooks during return-object construction, task moves, readiness checks, destruction, and final suspension
-are caught and discarded when `CORO_DISABLE_EXCEPTION` is not defined. These operations retain their `noexcept` guarantees and complete
-ownership transfer or cleanup even if logging fails. Promise-construction, initial-suspension, explicit dump, and other potentially
-throwing hooks still propagate errors through their existing cleanup paths.
+`CORO_DEBUG_LIFECYCLE` and `CORO_DEBUG_LEAK_LOG` hooks must not throw in any configuration, including during coroutine
+creation, destruction, and explicit dumps. Logging implementations must handle their own failures; the library provides
+no propagation, suppression, or recovery guarantees for logging exceptions.
 
 Operations that allocate, submit work to an executor, construct user values, or acquire a potentially throwing mutex are not generally
 `noexcept`. Locking readiness/query operations use the mutex's exception specification, preserving nonthrowing `_st` variants.
@@ -1324,11 +1323,6 @@ Final suspension and destructors must remain nonthrowing: failure to deliver a c
 destructors and internal mutex `unlock()` operations must not throw. A compatible condition-variable user mutex whose `unlock()` can fail is
 handled separately when exception handling is enabled: its waiter is removed, or an in-flight notification completes before
 the exception is rethrown at `co_await`.
-
-Apple Clang 21.0.0 (`clang-2100.3.34.2`) at `-O0` can read a freed coroutine frame while unwinding an exception
-from `initial_suspend()` when final suspension uses symmetric transfer. Keep creation-time logging hooks nonthrowing
-on that configuration. A [standalone standard C++20 probe](tools/compiler/clang_creation_cleanup.cpp) reproduces this
-compiler limitation without library headers; the same probe passed at `-O1` and `-O2`, which does not establish a general workaround.
 
 The debug tracker retains its shared registry until process exit so static constructors and destructors can safely create coroutines.
 

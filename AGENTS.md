@@ -218,6 +218,8 @@ int main() {
 #define CORO_DEBUG_LIFECYCLE LOG     // 协程生命周期日志
 ```
 
+日志钩子 `CORO_DEBUG_LIFECYCLE` 和 `CORO_DEBUG_LEAK_LOG` 在所有配置下都不得抛异常；可能失败的日志实现应在钩子内部处理，不为日志异常添加传播、忽略或恢复机制。
+
 测试结束时调用 `check_coro_leak()` 验证无泄漏。
 
 ## 提交规范
