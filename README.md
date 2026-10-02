@@ -32,6 +32,7 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 - [Coroutine-Local Storage](#coroutine-local-storage)
 - [Callback to Coroutine](#callback-to-coroutine)
 - [ASIO Adaptor](#asio-adaptor)
+- [MCU Deployment: coro and an RTOS](#mcu-deployment-coro-and-an-rtos)
 - [Configuration Options](#configuration-options)
 - [Building Tests](#building-tests)
 - [Project Structure](#project-structure)
@@ -1190,6 +1191,39 @@ int main() {
     return 0;
 }
 ```
+
+## MCU Deployment: coro and an RTOS
+
+For MCU applications dominated by peripheral interaction and I/O waits, **coro combined with interrupts is often
+a lightweight, straightforward first choice**. Interrupts respond promptly to hardware events, while coro organizes
+multiple workflows in the main loop. This provides convenient concurrency while reducing RTOS task management
+and the memory reserved for a separate task stack per workflow.
+
+More precisely, coro excels at **complex workflows with many waits that do not each need an independent preemption
+priority**, such as sensor acquisition, serial communication, device initialization, and communication retries.
+An RTOS such as FreeRTOS is a better fit when task priorities, preemptive scheduling, or an existing RTOS ecosystem
+are needed. Both have strengths: projects already using an RTOS can also use coro to make asynchronous workflows
+within tasks easier to follow.
+
+### Where coro Helps
+
+- **Clear workflows:** Use `co_await` to express asynchronous steps in order, retaining local variables and RAII while reducing callbacks and manual state machines.
+- **Flexible memory use:** Multiple coroutines share an execution context without reserving separate task stacks. Include frames, queues, and the execution stack in the budget; see [memory deployment guidance](#coroutine-frame-memory-and-mcu-deployment).
+- **Easy composition and integration:** Compose workflows with `async<T>`, `when_all`, and other primitives; connect existing drivers through executors and callback adaptation. The library is header-only and supports disabling exceptions.
+
+### Choosing and Combining Them
+
+- **Bare metal with mostly I/O waits:** Consider coro + interrupts first, with the main loop driving the executor.
+- **Task-level preemption and priorities:** Use an RTOS; coro itself does not provide preemptive scheduling.
+- **Real-time control alongside complex workflows:** Use high-priority RTOS tasks for control and another task hosting a coro executor for concurrent communication, acquisition, and similar workflows.
+
+Keep interrupt handlers limited to necessary data capture and notification, and resume coroutines in the main loop
+or RTOS task context; `_mt` does not imply ISR safety. Lengthy computation or blocking calls on one serial executor
+delay other coroutines, so bound continuous execution time.
+
+The library currently has no built-in FreeRTOS adaptor. Implement `coro::executor` for the platform, integrating
+event queues, clocks, and wakeups. Built-in executors depend on standard-library threading, mutexes, and related
+facilities; for bare-metal deployment, verify toolchain support or use a platform executor.
 
 ## Configuration Options
 
