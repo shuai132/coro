@@ -11,8 +11,9 @@ namespace detail {
 // Each coroutine can have its own storage map, and child coroutines
 // can optionally inherit from parent coroutines
 struct coro_local_map {
+  // Keep inherited storage alive until local values have been destroyed.
+  std::shared_ptr<coro_local_map> parent;
   std::unordered_map<const void*, std::any> data;
-  std::shared_ptr<coro_local_map> parent;  // Parent storage for inheritance
 
   // Look up a value by key, checking parent chain if not found locally
   template <typename T>

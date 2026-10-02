@@ -4,6 +4,7 @@
 
 #include <any>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -21,6 +22,72 @@ using namespace coro;
 static coro_local<int> int_storage;
 static coro_local<std::string> string_storage;
 static coro_local<double> double_storage;
+
+struct local_cleanup_state {
+  std::weak_ptr<int> inherited_resource;
+  bool checking = false;
+  bool ancestor_expired_during_cleanup = false;
+  int checked_destructors = 0;
+};
+
+struct local_cleanup_observer {
+  local_cleanup_state* state;
+  std::weak_ptr<int> inherited_resource;
+
+  ~local_cleanup_observer() {
+    if (state->checking) {
+      state->ancestor_expired_during_cleanup |= inherited_resource.expired();
+      ++state->checked_destructors;
+    }
+  }
+};
+
+async<void> local_cleanup_child(coro_local<std::shared_ptr<int>>& resource, coro_local<local_cleanup_observer>& observer,
+                                local_cleanup_state& state) {
+  auto* inherited = co_await resource.get_ptr();
+  ASSERT(inherited && *inherited && **inherited == 42);
+  state.inherited_resource = *inherited;
+  co_await observer.set(local_cleanup_observer{&state, *inherited});
+}
+
+async<void> local_cleanup_parent(async<void>& child, coro_local<std::shared_ptr<int>>& resource, bool initialize) {
+  if (initialize) {
+    co_await resource.set(std::make_shared<int>(42));
+  }
+  co_await child;
+}
+
+void test_inherited_local_cleanup(int depth, bool release_parents_first) {
+  coro_local<std::shared_ptr<int>> resource;
+  coro_local<local_cleanup_observer> observer;
+  local_cleanup_state state;
+  std::vector<std::optional<async<void>>> tasks;
+  tasks.reserve(static_cast<size_t>(depth) + 1);
+  tasks.emplace_back(local_cleanup_child(resource, observer, state));
+  for (int i = 1; i <= depth; ++i) {
+    tasks.emplace_back(local_cleanup_parent(*tasks.back(), resource, i == depth));
+  }
+  tasks.back()->current_coro_handle_.resume();
+  for (const auto& task : tasks) {
+    ASSERT(task->current_coro_handle_.done());
+  }
+  auto release_parents = [&] {
+    for (int i = depth; i > 0; --i) {
+      tasks[static_cast<size_t>(i)].reset();
+    }
+  };
+  if (release_parents_first) {
+    release_parents();
+  }
+  ASSERT(!state.inherited_resource.expired());
+  state.checking = true;
+  tasks.front().reset();
+  ASSERT(state.checked_destructors == 1);
+  ASSERT(!state.ancestor_expired_during_cleanup);
+  release_parents();
+  ASSERT(state.inherited_resource.expired());
+  check_coro_leak();
+}
 
 async<void> check_distinct_local_keys(coro_local<int>& number, coro_local<std::string>& text) {
   co_await number.set(42);
@@ -702,6 +769,11 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  for (int depth : {1, 4}) {
+    for (bool release_parents_first : {false, true}) {
+      test_inherited_local_cleanup(depth, release_parents_first);
+    }
+  }
   test_deep_local_storage_lookup();
   LOG("Local Storage test init");
   executor_loop executor;
