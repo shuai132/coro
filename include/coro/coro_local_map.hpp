@@ -3,6 +3,7 @@
 #include <any>
 #include <memory>
 #include <unordered_map>
+#include <utility>
 
 namespace coro {
 namespace detail {
@@ -14,6 +15,15 @@ struct coro_local_map {
   // Keep inherited storage alive until local values have been destroyed.
   std::shared_ptr<coro_local_map> parent;
   std::unordered_map<const void*, std::any> data;
+
+  ~coro_local_map() {
+    data.clear();
+    // Release exclusively owned ancestors iteratively; shared ancestors keep their links.
+    while (parent && parent.use_count() == 1) {
+      auto ancestor = std::move(parent);
+      parent = std::move(ancestor->parent);
+    }
+  }
 
   // Look up a value by key, checking parent chain if not found locally
   template <typename T>

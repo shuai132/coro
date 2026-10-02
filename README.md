@@ -904,6 +904,7 @@ Directly awaited child coroutines automatically inherit access to parent values.
 value without changing the parent. Detached tasks start with independent storage.
 `inherit_coro_local()` only ensures the current coroutine has a storage map; it is optional for inheritance and local writes.
 Inherited storage remains alive until the child's local values have been destroyed, even if the parent task is released first.
+Releasing a retained child also releases exclusively owned ancestor storage iteratively, without recursion proportional to inheritance depth.
 
 ```cpp
 static coro::coro_local<int> context_id;
