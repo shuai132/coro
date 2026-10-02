@@ -67,6 +67,16 @@ add_test(NAME threaded_consumer_run COMMAND threaded_consumer)
 add_library(threadless_consumer OBJECT ../threadless.cpp)
 target_link_libraries(threadless_consumer PRIVATE coro)
 
+# Local read awaiters must compile for consumers enabling extra aggregate-initialization warnings.
+add_executable(local_storage_consumer local_storage.cpp)
+target_link_libraries(local_storage_consumer PRIVATE coro)
+target_include_directories(local_storage_consumer PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../detail")
+target_compile_definitions(local_storage_consumer PRIVATE CORO_ENABLE_LOCAL_STORAGE)
+if (NOT MSVC)
+    target_compile_options(local_storage_consumer PRIVATE -Wextra)
+endif ()
+add_test(NAME local_storage_consumer_run COMMAND local_storage_consumer)
+
 # The public macro removes library exception handling even when compiler exceptions remain enabled.
 add_executable(noexcept_failure_consumer noexcept_failure.cpp)
 target_link_libraries(noexcept_failure_consumer PRIVATE coro)

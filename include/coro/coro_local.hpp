@@ -57,7 +57,7 @@ struct coro_local {
   // Awaiter for getting the stored value
   struct get_awaiter {
     const coro_local* self_;
-    std::optional<T> result_;
+    std::optional<T> result_{};
 
     [[nodiscard]] bool await_ready() const noexcept {
       return false;
@@ -82,7 +82,7 @@ struct coro_local {
   // Awaiter for getting optional value (returns std::optional<T>)
   struct get_optional_awaiter {
     const coro_local* self_;
-    std::optional<T> result_;
+    std::optional<T> result_{};
 
     [[nodiscard]] bool await_ready() const noexcept {
       return false;
