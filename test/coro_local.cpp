@@ -3,11 +3,14 @@
 #include "coro/coro_local.hpp"
 
 #include <any>
+#include <array>
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -99,6 +102,57 @@ void test_inherited_local_cleanup(int depth, bool release_parents_first, int ret
   ASSERT(state.checked_destructors == depth);
   ASSERT(!state.ancestor_expired_during_cleanup);
   ASSERT(state.inherited_resource.expired());
+  check_coro_leak();
+}
+
+using local_cleanup_children = std::array<std::optional<async<void>>, 2>;
+
+async<void> local_cleanup_shared_parent(local_cleanup_children& children, coro_local<std::shared_ptr<int>>& resource,
+                                        coro_local<local_cleanup_observer>& observer, std::array<local_cleanup_state, 2>& states) {
+  co_await resource.set(std::make_shared<int>(42));
+  for (size_t index = 0; index < children.size(); ++index) {
+    children[index].emplace(local_cleanup_child(resource, observer, states[index]));
+    co_await *children[index];
+  }
+}
+
+void test_parallel_inherited_local_cleanup() {
+  coro_local<std::shared_ptr<int>> resource;
+  coro_local<local_cleanup_observer> observer;
+  std::array<local_cleanup_state, 2> states;
+  local_cleanup_children children;
+  {
+    auto parent = local_cleanup_shared_parent(children, resource, observer, states);
+    parent.current_coro_handle_.resume();
+    ASSERT(parent.current_coro_handle_.done());
+    parent.await_resume();
+  }
+  for (const auto& child : children) {
+    ASSERT(child->current_coro_handle_.done());
+  }
+  for (auto& state : states) {
+    ASSERT(!state.inherited_resource.expired());
+    state.checking = true;
+  }
+  std::atomic<bool> release{false};
+  std::array<std::thread, 2> workers;
+  for (size_t index = 0; index < workers.size(); ++index) {
+    workers[index] = std::thread([&, index] {
+      while (!release.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      children[index].reset();
+    });
+  }
+  release.store(true, std::memory_order_release);
+  for (auto& worker : workers) {
+    worker.join();
+  }
+  for (const auto& state : states) {
+    ASSERT(state.checked_destructors == 1);
+    ASSERT(!state.ancestor_expired_during_cleanup);
+    ASSERT(state.inherited_resource.expired());
+  }
   check_coro_leak();
 }
 
@@ -782,6 +836,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_parallel_inherited_local_cleanup();
   for (int depth : {1, 4}) {
     for (bool release_parents_first : {false, true}) {
       test_inherited_local_cleanup(depth, release_parents_first);
