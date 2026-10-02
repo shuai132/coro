@@ -850,6 +850,11 @@ unique key for storing values, similar to `thread_local` but for coroutines.
 Enable `CORO_ENABLE_LOCAL_STORAGE` before including any coro header, consistently across all translation units.
 With CMake, configure `-DCORO_ENABLE_LOCAL_STORAGE=ON` and link the `coro` target to propagate this definition.
 
+Keys are identified by address. Keep a key alive at a stable address while the current coroutine or its descendants may use its entries.
+Destroying the key does not erase values, and constructing a new key at that address can find the old entries.
+For shorter key lifetimes, erase the relevant entries or finish all their users before reusing the address.
+`erase()` only removes the current coroutine's local entry; inherited entries can remain. Global or static keys usually provide the required lifetime.
+
 ```cpp
 #ifndef CORO_ENABLE_LOCAL_STORAGE
 #define CORO_ENABLE_LOCAL_STORAGE

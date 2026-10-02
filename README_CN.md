@@ -829,6 +829,11 @@ async<void> setter() {
 在包含任何 coro 头文件前启用 `CORO_ENABLE_LOCAL_STORAGE`，并确保所有编译单元的配置一致。
 使用 CMake 时，配置 `-DCORO_ENABLE_LOCAL_STORAGE=ON` 并链接 `coro` 目标即可传递此定义。
 
+存储键按对象地址识别。当前协程或其子协程仍可能访问相关存储项时，键应保持存活且地址稳定。
+销毁键不会删除已存储的值；若在同一地址构造新键，新键可能读到旧存储项。
+使用短生命周期的键时，应在复用地址前删除相关存储项，或等所有可能访问这些存储项的协程结束。
+`erase()` 只删除当前协程的本地项，继承项可能仍然存在。全局或 static 键通常更容易满足这一生命周期要求。
+
 ```cpp
 #ifndef CORO_ENABLE_LOCAL_STORAGE
 #define CORO_ENABLE_LOCAL_STORAGE
