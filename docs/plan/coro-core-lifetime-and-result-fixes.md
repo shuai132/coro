@@ -91,3 +91,11 @@
   - Full exception-enabled test suite passed.
   - `CORO_DISABLE_EXCEPTION=ON` build passed.
   - Full no-exception test suite passed.
+
+## Open lifetime contract question
+
+Releasing a task's owner from inside its own running coroutine body, on the same thread, remains a contract question. This differs from dropping an unstarted task or dropping a started task while it is suspended; the documented suspended-task behavior remains unchanged.
+
+The current `awaitable` destructor and move assignment query `coroutine_handle::done()` before deciding whether to destroy or detach the frame. The [standard's observer precondition](https://eel.is/c++draft/coroutine.handle.observers) requires the coroutine to be suspended when `done()` is called. No failing runtime regression for the running-owner scenario has been confirmed on the checked toolchains.
+
+Defer implementation changes until the supported contract and a suitable regression are established. Do not add lifecycle state solely to support this unresolved scenario; continue checking the documented ownership and suspension paths.
