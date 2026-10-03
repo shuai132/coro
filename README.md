@@ -383,6 +383,39 @@ Children inherit the parent's executor unless explicitly bound; bound coroutines
 `stop()` does not cancel coroutines: `executor_loop` drains queued tasks and timers, while `executor_poll` stops dequeuing.
 Wait for coroutines and external callbacks to finish before stopping executors, joining threads, and destroying related objects.
 
+### Choosing Default Names, `_mt`, and `_st`
+
+For primitives with these variants, the default name and `_mt` use the same thread-safe implementation; `_st`
+requires single-threaded use. For example:
+
+| Name | Actual type | Intended use |
+|------|-------------|--------------|
+| `wait_group` | `wait_group_t<std::mutex>` | General-purpose default, protecting internal state with a mutex |
+| `wait_group_mt` | `wait_group_t<std::mutex>` | Exactly the same type as the default, explicitly expressing cross-thread use |
+| `wait_group_st` | `wait_group_t<dummy_mutex>` | No internal mutex locking; the caller keeps all operations and notifications on one thread |
+
+`event`, `latch`, `condition_variable`, `counting_semaphore`, and `binary_semaphore` follow the same convention.
+When the standard library supports `std::mutex`, `channel<T>` also defaults to `std::mutex` and is the same type as
+`channel_mt<T>`; `channel_st<T>` uses `dummy_mutex`. `coro::mutex` is a separate implementation based on atomics
+and does not provide `mutex_mt` / `mutex_st` aliases.
+
+Selection guidelines:
+
+- Prefer the default name for general-purpose code or when the calling threads are uncertain. Use `_mt` to make
+  intentional cross-thread sharing explicit.
+- Choose `_st` explicitly when every operation stays on one thread, such as an event loop run by one fixed thread,
+  to avoid internal mutex overhead. The default version also works on one thread; `_st` does not imply that all
+  atomic operations, allocations, or other overhead disappear.
+- Consider the calling thread of every operation, including `done()`, `set()`, queries, and notifications, not just
+  the thread running the waiting coroutine. A worker thread directly calling `done()` requires the default or `_mt`
+  version even if only one thread waits. Alternatively, external threads can use a thread-safe submission API to
+  post operations to the thread owning an `_st` primitive.
+- Thread safety protects the primitive's internal state, not application data. It does not permit concurrent
+  operations on the same task / awaiter or destruction while an object is still in use.
+- When the standard library does not provide `std::mutex`, the corresponding default aliases, `_mt`
+  aliases, and default template arguments are unavailable. Include component headers and use `_st`, or explicitly
+  supply a platform-appropriate mutex type. Default names do not silently switch to single-threaded versions.
+
 ## Timer
 
 ```cpp
