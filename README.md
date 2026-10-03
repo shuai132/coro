@@ -29,6 +29,7 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
     - [wait_group](#wait_group)
     - [latch](#latch)
     - [event](#event)
+- [Cooperative Stop and Cleanup](#cooperative-stop-and-cleanup)
 - [Coroutine-Local Storage](#coroutine-local-storage)
 - [Callback to Coroutine](#callback-to-coroutine)
 - [ASIO Adaptor](#asio-adaptor)
@@ -458,6 +459,7 @@ async<void> example() {
 
 `when_any()` requires at least one awaitable. It returns when the first task completes and does not cancel the remaining
 tasks; slower tasks continue running on their executors.
+To stop remaining tasks and safely release shared resources, see [Cooperative Stop and Cleanup](docs/cooperative-stop.md).
 
 ## Mutex
 
@@ -839,6 +841,13 @@ async<void> setter() {
 `event` is a manual-reset event: `set()` and `clear()` are idempotent state changes. `set()` releases all current waiters
 and lets future waiters pass until `clear()` is called.
 For suspended waiters associated with an executor, `set()` queues their continuation on that executor. A waiter without an executor resumes directly on the calling thread.
+
+## Cooperative Stop and Cleanup
+
+Use an `event` to broadcast a stop request and a `wait_group` to wait for tasks to finish cleanup.
+After `when_any` returns, remaining branches still run and must be explicitly notified and joined.
+
+See [Cooperative Stop and Cleanup](docs/cooperative-stop.md) for the complete example, exception handling, and lifetime rules.
 
 ## Coroutine-Local Storage
 

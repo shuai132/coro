@@ -29,6 +29,7 @@
     - [wait_group](#wait_group)
     - [latch](#latch)
     - [event](#event)
+- [协作式停止与收尾](#协作式停止与收尾)
 - [协程本地存储](#协程本地存储)
 - [回调转协程](#回调转协程)
 - [ASIO 适配器](#asio-适配器)
@@ -438,6 +439,7 @@ async<void> example() {
 
 `when_any()` 至少需要一个 awaitable。它会在第一个任务完成时返回，但不会取消其他任务；较慢的任务会继续在各自
 executor 上运行。
+如需停止剩余任务并安全释放共享资源，参见[协作式停止与收尾](docs/cooperative-stop_CN.md)。
 
 ## Mutex
 
@@ -818,6 +820,13 @@ async<void> setter() {
 `event` 是 manual-reset event：`set()` 和 `clear()` 都是幂等的状态切换。`set()` 会释放所有当前等待者，
 并让后续等待者直接通过，直到调用 `clear()`。
 对于绑定了执行器的已挂起等待者，`set()` 将后续执行加入对应执行器的队列。没有执行器的等待者则直接在调用线程恢复。
+
+## 协作式停止与收尾
+
+使用 `event` 广播停止请求，由任务协作收尾，再用 `wait_group` 等待全部退出。
+`when_any` 返回后，其余分支仍会运行，需要显式通知并等待收尾。
+
+完整示例、异常处理和生命周期说明见[协作式停止与收尾](docs/cooperative-stop_CN.md)。
 
 ## 协程本地存储
 
