@@ -1424,6 +1424,21 @@ make
 构建目录会保留该路径，供后续重新配置使用。需要更换路径时重新设置该环境变量；显式设为空值可禁用
 ASIO 测试。禁用异常时仍使用占位测试。
 
+### WebAssembly
+
+CI 使用 Emscripten 4.0.23 和 Node.js 运行 13 个示例及核心 move-only 回归测试，
+覆盖异常传播、协程泄漏检查，以及 Debug/Release 和异常开关组合。
+测试范围为单线程 WebAssembly 执行，不包含浏览器集成或 WebAssembly pthreads。
+激活 Emscripten SDK 后可运行：
+
+```bash
+emcmake cmake -S test/cmake/wasm -B build_wasm -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS=-fexceptions -DCORO_DISABLE_EXCEPTION=OFF
+cmake --build build_wasm -j 2
+ctest --test-dir build_wasm --output-on-failure
+```
+
+无异常配置请在独立构建目录中使用 `-DCMAKE_CXX_FLAGS=-fno-exceptions -DCORO_DISABLE_EXCEPTION=ON`。
+
 ### CMake 选项
 
 | 选项                             | 默认值         | 说明                  |

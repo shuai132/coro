@@ -1487,6 +1487,21 @@ include directory containing `asio.hpp`. The build directory remembers this path
 reconfiguration. Set `ASIO_PATH` to a new path when configuring to change it, or explicitly set it to
 an empty value to disable the ASIO test. Disabling exceptions still selects the placeholder test.
 
+### WebAssembly
+
+CI uses Emscripten 4.0.23 and Node.js to run the 13 examples and the core move-only regression,
+including exception propagation and promise leak checks, in Debug/Release with exceptions on/off.
+This covers single-threaded WebAssembly execution; browser integration and WebAssembly pthreads are not tested.
+After activating the Emscripten SDK, run:
+
+```bash
+emcmake cmake -S test/cmake/wasm -B build_wasm -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS=-fexceptions -DCORO_DISABLE_EXCEPTION=OFF
+cmake --build build_wasm -j 2
+ctest --test-dir build_wasm --output-on-failure
+```
+
+For the no-exception configuration, use `-DCMAKE_CXX_FLAGS=-fno-exceptions -DCORO_DISABLE_EXCEPTION=ON` in a separate build directory.
+
 ### CMake Options
 
 | Option                         | Default              | Description               |

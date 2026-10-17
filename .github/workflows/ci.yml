@@ -11,6 +11,46 @@ on:
       - 'docs/**'
 
 jobs:
+  wasm:
+    name: WebAssembly ${{ matrix.build_type }} disable_exception:${{ matrix.disable_exception }}
+    runs-on: ubuntu-24.04
+    env:
+      EMSCRIPTEN_VERSION: 4.0.23
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Debug, Release]
+        disable_exception: [OFF, ON]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check out Emscripten SDK
+        uses: actions/checkout@v5
+        with:
+          repository: emscripten-core/emsdk
+          ref: ${{ env.EMSCRIPTEN_VERSION }}
+          path: emsdk
+          persist-credentials: false
+      - name: Install Emscripten SDK
+        run: |
+          ./emsdk/emsdk install "$EMSCRIPTEN_VERSION"
+          ./emsdk/emsdk activate "$EMSCRIPTEN_VERSION"
+      - name: Configure WebAssembly consumer
+        shell: bash
+        run: |
+          source emsdk/emsdk_env.sh
+          exception_flags=-fexceptions
+          if [[ "${{ matrix.disable_exception }}" == "ON" ]]; then
+            exception_flags=-fno-exceptions
+          fi
+          emcmake cmake -S test/cmake/wasm -B build_wasm \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_CXX_FLAGS="$exception_flags" \
+            -DCORO_DISABLE_EXCEPTION=${{ matrix.disable_exception }}
+      - name: Build WebAssembly consumer and examples
+        run: cmake --build build_wasm -j 2
+      - name: Run WebAssembly tests with Node.js
+        run: ctest --test-dir build_wasm --output-on-failure
+
   arm-threadless:
     name: ARM bare-metal components (${{ matrix.cpu }})
     runs-on: ubuntu-24.04
