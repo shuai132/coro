@@ -372,8 +372,8 @@ int main(int argc, char** argv) {
     if (argc - first_argument > 2) {
       throw std::invalid_argument("usage: coro_benchmark [--diagnostics|--executors] [iterations<=1000000000] [rounds<=1000]");
     }
-    const auto count = argc > first_argument ? parse(argv[first_argument], 1000000000) : 100000;
-    const auto rounds = argc > first_argument + 1 ? parse(argv[first_argument + 1], 1000) : 7;
+    const auto count = argc > first_argument ? parse(argv[first_argument], 1000000000) : 1000000;
+    const auto rounds = argc > first_argument + 1 ? parse(argv[first_argument + 1], 1000) : 11;
     const std::span<const unsigned> libraries = executors     ? std::span<const unsigned>(executor_libraries)
                                                 : diagnostics ? std::span<const unsigned>(diagnostic_libraries)
                                                               : std::span<const unsigned>(primary_libraries);

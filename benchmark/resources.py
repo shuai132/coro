@@ -47,7 +47,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary")
     parser.add_argument("allocations")
-    parser.add_argument("count", type=int, nargs="?", default=200000)
+    parser.add_argument("count", type=int, nargs="?", default=1000000)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--diagnostics", action="store_true")
     modes.add_argument("--executors", action="store_true")
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     for work in (("executor_post",) if args.executors else ("immediate", "nested_8", "post")):
         selected = [row for row in rows if row["workload"] == work]
         print(f"## {work}\n")
-        print("| Library | CPU ms | Peak RSS MiB | C++ new calls | Requested B | Peak live B |")
+        print("| Library | CPU ms | Peak RSS MiB | C++ new calls | Requested bytes | Peak live bytes |")
         print("|---|---:|---:|---:|---:|---:|")
         for row in selected:
             cpu_ms = (int(row["user_cpu_us"]) + int(row["system_cpu_us"])) / 1000
