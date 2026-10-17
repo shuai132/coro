@@ -1290,9 +1290,14 @@ CMake 会缓存选定值；修改编译器选项后，如需重新自动探测�
 
 ### 协程帧内存与 MCU 部署
 
-本库不内置独立的内存管理器。协程帧默认通过全局 `operator new/delete` 分配和回收，
-应用已替换这些入口时，可直接复用现有内存管理，`async<T>` 用法不变。
-这样既避免重复维护内存池，也不为一般场景增加额外配置和管理开销；MCU 应用可按容量和实时性要求选择分配策略。
+协程帧默认通过全局 `operator new/delete` 分配和回收，应用可复用现有分配器，`async<T>` 用法不变。
+
+可选的 `CORO_ENABLE_FRAME_CACHE` 默认关闭；开启后按相同尺寸复用协程帧。
+可通过 CMake 或预处理宏设置正整数 `CORO_FRAME_CACHE_SLOTS`（默认 2）和 `CORO_FRAME_CACHE_MAX_BYTES`（默认 512）。
+保留帧内存上限为两者乘积，另有少量 TLS 元数据，不预分配全部容量。大帧和超对齐帧仍走全局分配器。
+缓存依赖线程本地存储，不增加帧头部，在线程退出时释放。
+帧跨线程销毁时可复用销毁线程已初始化的缓存；缓存销毁后的其他 TLS 析构函数仍可创建协程。
+所有编译单元必须保持宏设置一致。需要立即归还内存或使用应用自有内存池时，保持关闭。
 
 RTOS 任务所需的栈上限同样需要分析和运行验证，为每个任务独立预留的余量可能长期闲置。
 协程帧按生命周期统一分配和回收，让先后执行的任务复用存储，有机会提高有限 RAM 的利用率，
@@ -1454,6 +1459,9 @@ ctest --test-dir build_wasm --output-on-failure
 | `CORO_BUILD_TEST`              | ON (当作为主项目) | 构建测试                |
 | `CORO_BUILD_EXAMPLES` | 作为主项目时 ON | 构建最小可运行示例 |
 | `CORO_BUILD_BENCHMARKS` | OFF | 构建可选协程性能与资源对比 |
+| `CORO_ENABLE_FRAME_CACHE` | OFF | 启用每线程协程帧缓存 |
+| `CORO_FRAME_CACHE_SLOTS` | 2 | 每线程最多缓存帧数（正整数） |
+| `CORO_FRAME_CACHE_MAX_BYTES` | 512 | 可缓存的单帧字节上限（正整数） |
 | `CORO_WARNINGS_AS_ERRORS`      | 构建测试或示例时 ON | 将项目构建警告视为错误       |
 | `CORO_TEST_RUNNER_VERY_SLOW`   | OFF         | 为慢速测试环境放宽时间限制      |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF         | 启用 AddressSanitizer |

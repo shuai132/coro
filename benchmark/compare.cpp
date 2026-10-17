@@ -148,8 +148,8 @@ class erased_simple_asio_executor final : public simple_asio_executor {
   asio::any_io_executor executor_;
 };
 
-constexpr std::array library_names{"coro_asio", "async_simple_asio", "asio", "coro_native", "coro_asio_concrete", "async_simple_asio_erased"};
-constexpr std::array primary_libraries{3u, 0u, 1u, 2u};
+constexpr std::array library_names{"coro", "async_simple", "Asio", "coro_native", "coro_asio_concrete", "async_simple_asio_erased"};
+constexpr std::array primary_libraries{0u, 1u, 2u};
 constexpr std::array diagnostic_libraries{0u, 1u, 2u, 3u, 4u, 5u};
 constexpr std::array workload_names{"immediate", "nested_8", "post"};
 
@@ -336,8 +336,12 @@ int main(int argc, char** argv) {
     const auto& names = library_names;
     constexpr std::array works{workload::immediate, workload::nested, workload::post};
     const auto& work_names = workload_names;
-    std::cout << "# Coroutine benchmark\n\n"
-                 "| workload | library | iterations | rounds | median_ns_per_op | min_ns_per_op | max_ns_per_op | checksum |\n"
+    std::cout << "# Coroutine benchmark\n\n";
+#ifdef CORO_ENABLE_FRAME_CACHE
+    std::cout << "coro frame cache: enabled (" << CORO_FRAME_CACHE_SLOTS << " slots, at most " << CORO_FRAME_CACHE_MAX_BYTES
+              << " bytes per frame).\n\n";
+#endif
+    std::cout << "| workload | library | iterations | rounds | median_ns_per_op | min_ns_per_op | max_ns_per_op | checksum |\n"
                  "|---|---|---:|---:|---:|---:|---:|---:|\n";
     std::cout << std::fixed << std::setprecision(2);
     for (unsigned w = 0; w < works.size(); ++w) {

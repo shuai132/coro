@@ -39,6 +39,9 @@ endif ()
 option(CORO_DISABLE_EXCEPTION "Disable exception support" ${CORO_DISABLE_EXCEPTION_DEFAULT})
 unset(CORO_DISABLE_EXCEPTION_DEFAULT)
 option(CORO_ENABLE_LOCAL_STORAGE "Enable coroutine local storage" OFF)
+option(CORO_ENABLE_FRAME_CACHE "Cache small coroutine frames per thread" OFF)
+set(CORO_FRAME_CACHE_SLOTS 2 CACHE STRING "Maximum cached coroutine frames per thread")
+set(CORO_FRAME_CACHE_MAX_BYTES 512 CACHE STRING "Maximum cacheable coroutine frame size")
 option(CORO_DEBUG_ASYNC_STACK "Enable asynchronous debugger metadata" OFF)
 
 add_library(${PROJECT_NAME} INTERFACE)
@@ -76,6 +79,11 @@ endif ()
 
 if (CORO_DISABLE_EXCEPTION)
     target_compile_definitions(${PROJECT_NAME} INTERFACE CORO_DISABLE_EXCEPTION)
+endif ()
+if (CORO_ENABLE_FRAME_CACHE)
+    target_compile_definitions(${PROJECT_NAME} INTERFACE CORO_ENABLE_FRAME_CACHE
+        CORO_FRAME_CACHE_SLOTS=${CORO_FRAME_CACHE_SLOTS}
+        CORO_FRAME_CACHE_MAX_BYTES=${CORO_FRAME_CACHE_MAX_BYTES})
 endif ()
 if (CORO_ENABLE_LOCAL_STORAGE)
     target_compile_definitions(${PROJECT_NAME} INTERFACE CORO_ENABLE_LOCAL_STORAGE)

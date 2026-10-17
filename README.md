@@ -1330,11 +1330,18 @@ Keep all translation units configured consistently.
 
 ### Coroutine Frame Memory and MCU Deployment
 
-The library does not provide a separate memory manager. Coroutine frames use global
-`operator new/delete` by default, so applications replacing these functions can reuse their
-existing allocator without changing `async<T>` usage. This avoids duplicating memory pools or
-adding configuration and management overhead to ordinary applications, while MCU applications
-can choose an allocation strategy suited to their capacity and real-time requirements.
+Coroutine frames use global `operator new/delete` by default, so applications can reuse their
+existing allocator without changing `async<T>` usage.
+
+`CORO_ENABLE_FRAME_CACHE` (default OFF) enables per-thread reuse of exact-size frames.
+Configure the positive compile-time values
+`CORO_FRAME_CACHE_SLOTS` (default 2) and `CORO_FRAME_CACHE_MAX_BYTES` (default 512)
+through CMake or preprocessor definitions. Retained frame memory is bounded by their product,
+plus TLS bookkeeping; capacity is not preallocated. Large and over-aligned frames use the global allocator.
+The cache needs thread-local storage, adds no per-frame metadata, and releases retained memory at
+thread exit. A frame destroyed on another thread can use that thread's already initialized cache. Allocation
+also remains valid during later TLS destruction. Keep these macros consistent across translation units;
+leave it disabled when immediate reclamation or an application-managed pool is preferred.
 
 An RTOS task's required stack upper bound also needs analysis and runtime validation; headroom
 reserved separately for each task may remain idle. Allocating and reclaiming coroutine frames
@@ -1519,6 +1526,9 @@ For the no-exception configuration, use `-DCMAKE_CXX_FLAGS=-fno-exceptions -DCOR
 | `CORO_BUILD_TEST`              | ON (as main project) | Build tests               |
 | `CORO_BUILD_EXAMPLES` | ON (as main project) | Build standalone usage examples |
 | `CORO_BUILD_BENCHMARKS` | OFF | Build optional coroutine and resource comparisons |
+| `CORO_ENABLE_FRAME_CACHE` | OFF | Enable per-thread coroutine frame caching |
+| `CORO_FRAME_CACHE_SLOTS` | 2 | Maximum cached frames per thread (positive integer) |
+| `CORO_FRAME_CACHE_MAX_BYTES` | 512 | Maximum cacheable frame size in bytes (positive integer) |
 | `CORO_WARNINGS_AS_ERRORS`      | ON (tests or examples) | Treat project build warnings as errors |
 | `CORO_TEST_RUNNER_VERY_SLOW`   | OFF                  | Relax test timing for slow runners |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF                  | Enable AddressSanitizer   |

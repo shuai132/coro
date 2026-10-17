@@ -3,7 +3,7 @@ import argparse
 import subprocess
 
 
-PRIMARY_LIBRARIES = (3, 0, 1, 2)
+PRIMARY_LIBRARIES = (0, 1, 2)
 
 
 def parse_table(text):
@@ -39,7 +39,7 @@ def collect(binary, allocations, count, diagnostics=False):
             assert int(row["peak_rss_bytes"]) > 0
             assert int(row["new_calls"]) > 0
             assert int(row["new_peak_live_bytes"]) <= int(row["new_requested_bytes"])
-            assert int(row["new_retained_bytes"]) == 0
+            assert 0 <= int(row["new_retained_bytes"]) <= int(row["new_peak_live_bytes"])
             rows.append(row)
     return rows
 

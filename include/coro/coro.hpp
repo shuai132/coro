@@ -15,6 +15,10 @@
 #include "coro/detail/resume.hpp"
 #include "executor.hpp"
 
+#ifdef CORO_ENABLE_FRAME_CACHE
+#include "coro/detail/frame_cache.hpp"
+#endif
+
 #ifdef CORO_ENABLE_LOCAL_STORAGE
 #include "coro_local_map.hpp"
 #endif
@@ -210,6 +214,29 @@ struct final_awaitable {
 
 template <typename T>
 struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
+#ifdef CORO_ENABLE_FRAME_CACHE
+  static void* operator new(std::size_t size) {
+    return detail::allocate_frame(size, alignof(awaitable_promise));
+  }
+
+  // Coroutine parameters are lvalues: do not mistake an align_val_t parameter for allocation alignment.
+  template <typename ALIGNMENT>
+    requires std::is_same_v<ALIGNMENT, std::align_val_t>
+  static void* operator new(std::size_t size, ALIGNMENT&& alignment) {
+    auto requested = static_cast<std::size_t>(alignment);
+    return detail::allocate_frame(size, requested < alignof(awaitable_promise) ? alignof(awaitable_promise) : requested);
+  }
+
+  static void operator delete(void* frame, std::size_t size) noexcept {
+    detail::release_frame(frame, size, alignof(awaitable_promise));
+  }
+
+  static void operator delete(void* frame, std::size_t size, std::align_val_t alignment) noexcept {
+    auto requested = static_cast<std::size_t>(alignment);
+    detail::release_frame(frame, size, requested < alignof(awaitable_promise) ? alignof(awaitable_promise) : requested);
+  }
+#endif
+
 #ifdef CORO_DEBUG_ASYNC_STACK
   awaitable<T> get_return_object(detail::async_debug_location location = detail::async_debug_location::current()) noexcept;
   detail::async_debug_node debug_node_;

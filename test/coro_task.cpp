@@ -66,6 +66,60 @@ CORO_TEST_NOINLINE void operator delete(void* memory, std::size_t) noexcept {
   std::free(memory);
 }
 
+#ifdef CORO_ENABLE_FRAME_CACHE
+void test_frame_cache_bound_and_reuse() {
+  std::thread worker([] {
+    using promise = awaitable_promise<void>;
+    constexpr std::size_t size = CORO_FRAME_CACHE_MAX_BYTES;
+    constexpr std::size_t slots = CORO_FRAME_CACHE_SLOTS;
+    std::array<void*, slots> frames;
+    for (auto& frame : frames) {
+      frame = promise::operator new(size);
+    }
+    auto* overflow = promise::operator new(size);
+    auto* large = promise::operator new(size + 1);
+    for (auto* frame : frames) {
+      promise::operator delete(frame, size);
+    }
+    promise::operator delete(overflow, size);
+
+    fail_next_task_allocation = true;
+    for (auto* expected : frames) {
+      ASSERT(promise::operator new(size) == expected);
+    }
+    ASSERT(fail_next_task_allocation);
+    fail_next_task_allocation = false;
+    promise::operator delete(large, size + 1);
+    for (std::size_t requested : {size, size + 1}) {
+      bool failed = false;
+      fail_next_task_allocation = true;
+      try {
+        auto* frame = promise::operator new(requested);
+        promise::operator delete(frame, requested);
+      } catch (const std::bad_alloc&) {
+        failed = true;
+      }
+      fail_next_task_allocation = false;
+      ASSERT(failed);
+    }
+    for (auto* frame : frames) {
+      promise::operator delete(frame, size);
+    }
+    if constexpr (size > 1) {
+      auto* different_size = promise::operator new(size - 1);
+      promise::operator delete(different_size, size - 1);
+      fail_next_task_allocation = true;
+      auto* reused = promise::operator new(size - 1);
+      ASSERT(reused == different_size);
+      ASSERT(fail_next_task_allocation);
+      fail_next_task_allocation = false;
+      promise::operator delete(reused, size - 1);
+    }
+  });
+  worker.join();
+}
+#endif
+
 struct post_on_timer_cleanup {
   executor& exec_;
   bool& called_;
@@ -971,6 +1025,9 @@ void test_time_count_duration() {
 }
 
 int main() {
+#if defined(CORO_ENABLE_FRAME_CACHE) && !defined(CORO_DISABLE_EXCEPTION)
+  test_frame_cache_bound_and_reuse();
+#endif
   for (auto kind : {queued_task_kind::posted, queued_task_kind::timed, queued_task_kind::continuation}) {
     test_loop_destruction_after_published_task(kind);
     for (bool reenter_on_copy : {false, true}) {

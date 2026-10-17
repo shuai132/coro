@@ -241,6 +241,7 @@ jobs:
           fi
           cmake -S . -B build \
           "${build_type_options[@]}" \
+          -DCORO_ENABLE_FRAME_CACHE=${{ matrix.build_type == 'Release' && 'ON' || 'OFF' }} \
           -DCORO_WARNINGS_AS_ERRORS=ON \
           -DCORO_BUILD_EXAMPLES=ON \
           -DCORO_DISABLE_EXCEPTION=${{ matrix.disable_exception }} \

@@ -5,6 +5,7 @@ void test_leak_log(const char*, ...) noexcept;
 #include <atomic>
 #include <cstdint>
 #include <future>
+#include <limits>
 #include <new>
 #include <stdexcept>
 #include <string_view>
@@ -609,10 +610,62 @@ void test_combined_exception_cleanup() {
 }
 #endif
 
+void test_frame_thread_transfer_and_teardown() {
+  std::vector<async<int>> tasks;
+  std::thread producer([&] {
+    for (int i = 0; i < 16; ++i) {
+      tasks.push_back(lazy_value());
+    }
+  });
+  producer.join();
+  std::thread consumer([&] {
+    auto local = lazy_value();  // Initialize this thread's cache while keeping its frame in use.
+    for (auto& task : tasks) {
+      task.current_coro_handle_.resume();
+      ASSERT(task.await_resume() == 42);
+    }
+    tasks.clear();
+    auto reused = lazy_value();  // May reuse a frame allocated by the exited producer thread.
+    reused.current_coro_handle_.resume();
+    ASSERT(reused.await_resume() == 42);
+  });
+  consumer.join();
+
+  int completed = 0;
+  std::thread teardown([&] {
+    struct late_task {
+      int& completed_;
+      ~late_task() {
+#ifdef CORO_ENABLE_FRAME_CACHE
+        ASSERT(!detail::cached_frames.available_);
+#endif
+        auto task = child_without_executor(completed_);
+        task.current_coro_handle_.resume();
+      }
+    };
+    // Initialized before the frame cache, so its destructor runs after the cache's destructor.
+    thread_local late_task late{completed};
+    (void)late;
+#ifdef CORO_ENABLE_FRAME_CACHE
+    // Initialize cleanup even when the configured limit excludes all coroutine frames.
+    auto* frame = awaitable_promise<void>::operator new(1);
+    awaitable_promise<void>::operator delete(frame, 1);
+#endif
+    auto task = lazy_value();
+    task.current_coro_handle_.resume();
+    ASSERT(task.await_resume() == 42);
+  });
+  teardown.join();
+  ASSERT(completed == 42);
+  check_coro_leak();
+}
+
 void test_alignment_argument() {
-  auto task = alignment_argument(std::align_val_t{0});
-  task.current_coro_handle_.resume();
-  ASSERT(task.current_coro_handle_.done());
+  for (auto alignment : {std::size_t{0}, std::size_t{64}, std::size_t{4096}, std::numeric_limits<std::size_t>::max()}) {
+    auto task = alignment_argument(std::align_val_t{static_cast<std::size_t>(alignment)});
+    task.current_coro_handle_.resume();
+    ASSERT(task.current_coro_handle_.done());
+  }
 }
 
 #ifdef CORO_TEST_ALIGNED_COROUTINE_ALLOCATION
@@ -624,7 +677,22 @@ async<aligned_result> aligned_value() {
   co_return aligned_result{42};
 }
 
+async<void> aligned_local(std::uintptr_t& address) {
+  alignas(256) char storage[256]{};
+  storage[0] = 42;
+  address = reinterpret_cast<std::uintptr_t>(storage);
+  co_await std::suspend_always{};
+  ASSERT(reinterpret_cast<std::uintptr_t>(storage) == address);
+  ASSERT(storage[0] == 42);
+}
+
 void test_aligned_promise() {
+  std::uintptr_t address = 0;
+  auto local = aligned_local(address);
+  local.current_coro_handle_.resume();
+  ASSERT(address % 256 == 0);
+  local.current_coro_handle_.resume();
+  ASSERT(local.current_coro_handle_.done());
   std::vector<async<aligned_result>> tasks;
   for (int index = 0; index < 128; ++index) {
     tasks.push_back(aligned_value());
@@ -673,6 +741,7 @@ int main() {
   test_combined_exception_cleanup<true, void>();
 #endif
   test_alignment_argument();
+  test_frame_thread_transfer_and_teardown();
 #ifdef CORO_TEST_ALIGNED_COROUTINE_ALLOCATION
   test_aligned_promise();
 #endif
