@@ -282,3 +282,10 @@ if (CORO_BUILD_EXAMPLES)
         set_tests_properties(${TARGET_NAME} PROPERTIES TIMEOUT 15 LABELS examples)
     endforeach ()
 endif ()
+
+# Optional comparisons; dependencies are fetched only when explicitly enabled.
+option(CORO_BUILD_BENCHMARKS "Build comparisons with async_simple and standalone Asio" OFF)
+if (CORO_BUILD_BENCHMARKS)
+    enable_testing()
+    add_subdirectory(benchmark)
+endif ()

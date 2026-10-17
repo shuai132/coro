@@ -36,6 +36,7 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 - [MCU Deployment: coro and an RTOS](#mcu-deployment-coro-and-an-rtos)
 - [Configuration Options](#configuration-options)
 - [Building Tests](#building-tests)
+- [Benchmarks](#benchmarks)
 - [Project Structure](#project-structure)
 
 ## Preface
@@ -1517,6 +1518,7 @@ For the no-exception configuration, use `-DCMAKE_CXX_FLAGS=-fno-exceptions -DCOR
 |--------------------------------|----------------------|---------------------------|
 | `CORO_BUILD_TEST`              | ON (as main project) | Build tests               |
 | `CORO_BUILD_EXAMPLES` | ON (as main project) | Build standalone usage examples |
+| `CORO_BUILD_BENCHMARKS` | OFF | Build optional coroutine and resource comparisons |
 | `CORO_WARNINGS_AS_ERRORS`      | ON (tests or examples) | Treat project build warnings as errors |
 | `CORO_TEST_RUNNER_VERY_SLOW`   | OFF                  | Relax test timing for slow runners |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF                  | Enable AddressSanitizer   |
@@ -1533,6 +1535,10 @@ system includes. GCC TSan's documented inability to instrument ASIO's `atomic_th
 `-Wno-tsan` on the ASIO test target only; the fences and sanitizer instrumentation remain enabled.
 The GCC 15 MinGW ASIO test disables inlining to avoid its coroutine-frame cleanup diagnostic while retaining
 use-after-free warnings. These test settings do not affect library consumers.
+
+## Benchmarks
+
+Compare coro with its native executor, coro with Asio, async_simple, and Asio. See [benchmark](benchmark/README.md) for performance and memory measurements.
 
 ## Project Structure
 

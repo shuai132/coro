@@ -11,6 +11,20 @@ on:
       - 'docs/**'
 
 jobs:
+  benchmark-smoke:
+    name: Benchmark correctness (Release)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure optional comparisons
+        run: >-
+          cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release
+          -DCORO_BUILD_TEST=OFF -DCORO_BUILD_EXAMPLES=OFF -DCORO_BUILD_BENCHMARKS=ON
+      - name: Build comparisons
+        run: cmake --build build_release -j 2
+      - name: Verify workloads and resource measurements
+        run: ctest --test-dir build_release --output-on-failure
+
   wasm:
     name: WebAssembly ${{ matrix.build_type }} disable_exception:${{ matrix.disable_exception }}
     runs-on: ubuntu-24.04

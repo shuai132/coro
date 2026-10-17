@@ -36,6 +36,7 @@
 - [MCU 场景：coro 与 RTOS](#mcu-场景coro-与-rtos)
 - [配置选项](#配置选项)
 - [构建测试](#构建测试)
+- [性能基准](#性能基准)
 - [项目结构](#项目结构)
 
 ## 前言
@@ -1452,6 +1453,7 @@ ctest --test-dir build_wasm --output-on-failure
 |--------------------------------|-------------|---------------------|
 | `CORO_BUILD_TEST`              | ON (当作为主项目) | 构建测试                |
 | `CORO_BUILD_EXAMPLES` | 作为主项目时 ON | 构建最小可运行示例 |
+| `CORO_BUILD_BENCHMARKS` | OFF | 构建可选协程性能与资源对比 |
 | `CORO_WARNINGS_AS_ERRORS`      | 构建测试或示例时 ON | 将项目构建警告视为错误       |
 | `CORO_TEST_RUNNER_VERY_SLOW`   | OFF         | 为慢速测试环境放宽时间限制      |
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF         | 启用 AddressSanitizer |
@@ -1466,6 +1468,10 @@ macOS GitHub Actions runner 会自动启用 `CORO_TEST_RUNNER_VERY_SLOW`。
 `atomic_thread_fence`，仅在 ASIO 测试目标使用 `-Wno-tsan` 处理这一已知工具链限制，保留内存屏障和 sanitizer 插桩。
 GCC 15 MinGW 的 ASIO 测试另行禁用内联，避开其协程帧清理诊断，同时保留释放后使用的警告检查。
 这些测试设置不会影响库的消费者。
+
+## 性能基准
+
+对比 coro 原生执行器、coro + Asio、async_simple 和 Asio，性能与内存数据见 [benchmark](benchmark/README.md)。
 
 ## 项目结构
 
