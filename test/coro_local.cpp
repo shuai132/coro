@@ -224,18 +224,27 @@ async<void> coro_local_erased_type_test() {
   ASSERT(co_await tag_storage.get_optional());
 }
 
-void test_deep_local_storage_lookup() {
+void test_deep_local_storage_lookup_and_cleanup() {
+  // Build the deep chain directly: GCC sanitizer instrumentation can prevent tail
+  // calls during coroutine transfers, overflowing the stack before cleanup starts.
   using storage_map = detail::coro_local_map;
   std::vector<std::shared_ptr<storage_map>> maps;
   constexpr int depth = 200000;
+  local_cleanup_state state;
   maps.reserve(depth);
   maps.push_back(std::make_shared<storage_map>());
   int key = 0;
   int missing_key = 0;
+  int resource_key = 0;
+  int observer_key = 0;
   maps.front()->set<int>(&key, 42);
+  auto resource = std::make_shared<int>(42);
+  state.inherited_resource = resource;
+  maps.front()->set<std::shared_ptr<int>>(&resource_key, std::move(resource));
   for (int index = 1; index < depth; ++index) {
     auto map = std::make_shared<storage_map>();
     map->parent = maps.back();
+    map->set<local_cleanup_observer>(&observer_key, local_cleanup_observer{&state, state.inherited_resource});
     maps.push_back(std::move(map));
   }
   auto* value = maps.back()->find<int>(&key);
@@ -243,10 +252,16 @@ void test_deep_local_storage_lookup() {
   ASSERT(!maps.back()->find<int>(&missing_key));
   ASSERT(maps.back()->contains(&key));
   ASSERT(!maps.back()->contains(&missing_key));
-  // Release links explicitly so cleanup itself does not recurse through shared_ptr.
-  for (auto& map : maps) {
-    map->parent.reset();
+  // Drop ancestor owners first so the leaf must release the entire inherited chain.
+  for (int index = 0; index < depth - 1; ++index) {
+    maps[static_cast<size_t>(index)].reset();
   }
+  ASSERT(!state.inherited_resource.expired());
+  state.checking = true;
+  maps.back().reset();
+  ASSERT(state.checked_destructors == depth - 1);
+  ASSERT(!state.ancestor_expired_during_cleanup);
+  ASSERT(state.inherited_resource.expired());
 }
 
 // Test 1: Basic set and get
@@ -842,9 +857,8 @@ int main() {
       test_inherited_local_cleanup(depth, release_parents_first);
     }
   }
-  test_inherited_local_cleanup(50000, true);
   test_inherited_local_cleanup(4, true, 2);
-  test_deep_local_storage_lookup();
+  test_deep_local_storage_lookup_and_cleanup();
   LOG("Local Storage test init");
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {
