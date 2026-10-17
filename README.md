@@ -8,8 +8,28 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 
 [中文文档](README_CN.md)
 
+## Benchmark
+
+**Fast coroutine execution, low allocation overhead, and a rich set of easy-to-use coroutine components.** In the current single-threaded benchmarks, coro stands out with faster coroutine calls and nested calls than both Asio and async_simple, while matching Asio in coroutine switching performance. It outperforms async_simple across all three workloads.
+
+Apple M2 / Apple Clang 21 / Release. Median of 11 rounds with 1 million operations per round. Values are ns/op; lower is better.
+
+| Frame cache | Workload | coro | async_simple | Asio |
+|---|---|---:|---:|---:|
+| On | Coroutine call | **10.21** | 28.97 | 16.80 |
+| On | 8-level nesting | **222.42** | 262.86 | 256.52 |
+| On | Coroutine switch | **47.41** | 57.98 | 50.01 |
+| Off | Coroutine call | **25.01** | 28.30 | 30.17 |
+| Off | 8-level nesting | **241.11** | 258.66 | 263.01 |
+| Off | Coroutine switch | 48.88 | 55.14 | **47.33** |
+
+The frame cache setting applies to both coro and Asio; coro defaults to off, and async_simple uses its default allocator without a frame cache. For 1 million posts, coro and Asio each make just **9 C++ allocations**, compared with 1,000,007 for async_simple. See [benchmark](benchmark/README.md) for full resource measurements, native executor comparisons, and reproduction steps.
+
+Beyond async tasks, coro provides `when_all` / `when_any`, channels, mutexes, condition variables, semaphores, events, latches, wait groups, timers, and coroutine-local storage. RAII, callback-to-coroutine conversion, and Asio interoperability help compose asynchronous workflows through simple, consistent APIs. The library is header-only and supports builds without exceptions, from desktop and server applications to MCUs.
+
 ## Table of Contents
 
+- [Benchmark](#benchmark)
 - [Preface](#preface)
 - [API Overview](#api-overview)
 - [Features](#features)
@@ -36,7 +56,6 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 - [MCU Deployment: coro and an RTOS](#mcu-deployment-coro-and-an-rtos)
 - [Configuration Options](#configuration-options)
 - [Building Tests](#building-tests)
-- [Benchmarks](#benchmarks)
 - [Project Structure](#project-structure)
 
 ## Preface
@@ -1546,10 +1565,6 @@ system includes. GCC TSan's documented inability to instrument ASIO's `atomic_th
 `-Wno-tsan` on the ASIO test target only; the fences and sanitizer instrumentation remain enabled.
 The GCC 15 MinGW ASIO test disables inlining to avoid its coroutine-frame cleanup diagnostic while retaining
 use-after-free warnings. These test settings do not affect library consumers.
-
-## Benchmarks
-
-Compare coro with its native executor, coro with Asio, async_simple, and Asio. See [benchmark](benchmark/README.md) for performance and memory measurements.
 
 ## Project Structure
 

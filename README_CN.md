@@ -8,8 +8,28 @@
 
 [English](README.md)
 
+## Benchmark
+
+**兼顾性能、低分配开销与丰富易用的协程组件。** 在当前单线程基准测试中，coro 的协程调用与嵌套调用性能优势突出，均领先于 Asio 和 async_simple，协程切换性能与 Asio 相当；三项性能测试全面领先 async_simple。
+
+Apple M2 / Apple Clang 21 / Release；每轮 100 万次，11 轮中位数。单位 ns/op，越低越好。
+
+| 帧缓存 | 用例 | coro | async_simple | Asio |
+|---|---|---:|---:|---:|
+| 开启 | 协程调用 | **10.21** | 28.97 | 16.80 |
+| 开启 | 8 层嵌套 | **222.42** | 262.86 | 256.52 |
+| 开启 | 协程切换 | **47.41** | 57.98 | 50.01 |
+| 关闭 | 协程调用 | **25.01** | 28.30 | 30.17 |
+| 关闭 | 8 层嵌套 | **241.11** | 258.66 | 263.01 |
+| 关闭 | 协程切换 | 48.88 | 55.14 | **47.33** |
+
+帧缓存开关同时应用于 coro 和 Asio；coro 默认关闭，async_simple 保持默认无帧缓存。100 万次 post 中，coro 与 Asio 均仅发生 **9 次 C++ 分配**，async_simple 为 1,000,007 次。完整资源数据、原生执行器对比与复现方法见 [benchmark](benchmark/README.md)。
+
+除异步任务外，coro 还提供 `when_all` / `when_any`、channel、互斥锁、条件变量、信号量、event、latch、wait_group、定时器和协程本地存储，配合 RAII、回调转协程与 Asio 互操作，用简洁一致的 API 组合异步流程。纯头文件、可选无异常模式，兼顾桌面、服务端与 MCU 场景。
+
 ## 目录
 
+- [Benchmark](#benchmark)
 - [前言](#前言)
 - [API 概览](#api-概览)
 - [特性](#特性)
@@ -36,7 +56,6 @@
 - [MCU 场景：coro 与 RTOS](#mcu-场景coro-与-rtos)
 - [配置选项](#配置选项)
 - [构建测试](#构建测试)
-- [性能基准](#性能基准)
 - [项目结构](#项目结构)
 
 ## 前言
@@ -1477,10 +1496,6 @@ macOS GitHub Actions runner 会自动启用 `CORO_TEST_RUNNER_VERY_SLOW`。
 `atomic_thread_fence`，仅在 ASIO 测试目标使用 `-Wno-tsan` 处理这一已知工具链限制，保留内存屏障和 sanitizer 插桩。
 GCC 15 MinGW 的 ASIO 测试另行禁用内联，避开其协程帧清理诊断，同时保留释放后使用的警告检查。
 这些测试设置不会影响库的消费者。
-
-## 性能基准
-
-对比 coro 原生执行器、coro + Asio、async_simple 和 Asio，性能与内存数据见 [benchmark](benchmark/README.md)。
 
 ## 项目结构
 
