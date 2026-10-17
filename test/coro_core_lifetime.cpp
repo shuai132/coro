@@ -636,6 +636,14 @@ void test_frame_thread_transfer_and_teardown() {
     struct late_task {
       int& completed_;
       ~late_task() {
+        ASSERT(!detail::cached_callbacks.available_);
+        executor_poll exec;
+        bool called = false;
+        exec.post([&called] {
+          called = true;
+        });
+        exec.poll();
+        ASSERT(called);
 #ifdef CORO_ENABLE_FRAME_CACHE
         ASSERT(!detail::cached_frames.available_);
 #endif
@@ -646,6 +654,9 @@ void test_frame_thread_transfer_and_teardown() {
     // Initialized before the frame cache, so its destructor runs after the cache's destructor.
     thread_local late_task late{completed};
     (void)late;
+    executor_poll exec;
+    exec.post([] {});
+    exec.poll();
 #ifdef CORO_ENABLE_FRAME_CACHE
     // Initialize cleanup even when the configured limit excludes all coroutine frames.
     auto* frame = awaitable_promise<void>::operator new(1);

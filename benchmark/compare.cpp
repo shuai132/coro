@@ -4,11 +4,14 @@
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <span>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #ifdef CORO_BENCH_POSIX_RESOURCES
@@ -58,7 +61,7 @@ CORO_BENCH_NOINLINE asio::awaitable<value_type> asio_call(value_type value, unsi
   co_return co_await asio_call(value, depth - 1);
 }
 
-enum class workload { immediate, nested, post };
+enum class workload { immediate, nested, post, executor_post };
 
 coro::async<value_type> coro_work(value_type count, workload work) {
   value_type sum = 0;
@@ -92,7 +95,8 @@ asio::awaitable<value_type> asio_work(value_type count, workload work) {
   value_type sum = 0;
   for (value_type i = 1; i <= count; ++i) {
     if (work == workload::post) {
-      co_await asio::post(asio::use_awaitable);
+      // Await the operation directly; use_awaitable adds a separate coroutine frame.
+      co_await asio::post(asio::deferred);
       sum += i;
     } else {
       sum += co_await asio_call(i, work == workload::nested ? 8 : 0);
@@ -148,10 +152,11 @@ class erased_simple_asio_executor final : public simple_asio_executor {
   asio::any_io_executor executor_;
 };
 
-constexpr std::array library_names{"coro", "async_simple", "Asio", "coro_native", "coro_asio_concrete", "async_simple_asio_erased"};
+constexpr std::array library_names{"coro", "async_simple", "Asio", "executor_loop", "coro_asio_concrete", "async_simple_asio_erased", "io_context"};
 constexpr std::array primary_libraries{0u, 1u, 2u};
-constexpr std::array diagnostic_libraries{0u, 1u, 2u, 3u, 4u, 5u};
-constexpr std::array workload_names{"immediate", "nested_8", "post"};
+constexpr std::array diagnostic_libraries{0u, 1u, 2u, 4u, 5u};
+constexpr std::array executor_libraries{3u, 6u};
+constexpr std::array workload_names{"immediate", "nested_8", "post", "executor_post"};
 
 template <typename EXECUTOR>
 void start_coro(EXECUTOR& executor, value_type count, workload work, value_type& sum, bool& completed, std::exception_ptr& error) {
@@ -168,27 +173,64 @@ void start_coro(EXECUTOR& executor, value_type count, workload work, value_type&
           });
 }
 
+template <typename EXECUTOR>
+value_type run_executor(value_type count) {
+  EXECUTOR executor;
+  struct post_chain {
+    EXECUTOR& executor_;
+    value_type count_;
+    value_type current_ = 0;
+    value_type sum_ = 0;
+
+    void post() {
+      // Both backends receive the same std::function target and capture size.
+      std::function<void()> callback = [this] {
+        (*this)();
+      };
+      if constexpr (std::is_same_v<EXECUTOR, coro::executor_loop>) {
+        executor_.post(std::move(callback));
+      } else {
+        asio::post(executor_, std::move(callback));
+      }
+    }
+    void operator()() {
+      sum_ += ++current_;
+      if (current_ < count_) {
+        post();
+      } else {
+        executor_.stop();
+      }
+    }
+  } chain{executor, count};
+  chain.post();
+  if constexpr (std::is_same_v<EXECUTOR, coro::executor_loop>) {
+    executor.run_loop();
+  } else {
+    executor.run();
+  }
+  if (chain.current_ != count || chain.sum_ != count * (count + 1) / 2) {
+    throw std::runtime_error("executor workload did not complete");
+  }
+  return chain.sum_;
+}
+
 value_type run(unsigned library, value_type count, workload work) {
+  if (work == workload::executor_post) {
+    if (library == 3) {
+      return run_executor<coro::executor_loop>(count);
+    }
+    if (library == 6) {
+      return run_executor<asio::io_context>(count);
+    }
+    throw std::invalid_argument("executor_post requires an executor backend");
+  }
+  if (library == 3 || library == 6) {
+    throw std::invalid_argument("executor backends require executor_post");
+  }
   value_type sum = 0;
   bool completed = false;
   std::exception_ptr error;
-  if (library == 3) {
-    coro::executor_loop executor;
-    coro_work(count, work)
-        .detach_with_callback(
-            executor,
-            [&](value_type result) {
-              sum = result;
-              completed = true;
-              executor.stop();
-            },
-            [&](std::exception_ptr failure) {
-              error = failure;
-              completed = true;
-              executor.stop();
-            });
-    executor.run_loop();
-  } else {
+  {
     asio::io_context context;
     coro::asio_executor coro_executor(context);
     simple_asio_executor simple_executor(context);
@@ -292,17 +334,17 @@ void resource_run(unsigned library, unsigned work, value_type count) {
   const auto& work_names = workload_names;
   std::cout << "| workload | library | iterations | user_cpu_us | system_cpu_us | peak_rss_bytes | checksum";
 #ifdef CORO_BENCH_ALLOCATIONS
-  std::cout << " | new_calls | new_requested_bytes | new_peak_live_bytes | new_retained_bytes";
+  std::cout << " | new_calls | new_requested_bytes | new_peak_live_bytes";
 #endif
   std::cout << " |\n|---|---|---:|---:|---:|---:|---:";
 #ifdef CORO_BENCH_ALLOCATIONS
-  std::cout << "|---:|---:|---:|---:";
+  std::cout << "|---:|---:|---:";
 #endif
   std::cout << "|\n| " << work_names[work] << " | " << names[library] << " | " << count << " | "
             << microseconds(after.ru_utime) - microseconds(before.ru_utime) << " | " << microseconds(after.ru_stime) - microseconds(before.ru_stime)
             << " | " << rss << " | " << sum;
 #ifdef CORO_BENCH_ALLOCATIONS
-  std::cout << " | " << allocation.calls << " | " << allocation.requested << " | " << allocation.peak << " | " << allocation.live;
+  std::cout << " | " << allocation.calls << " | " << allocation.requested << " | " << allocation.peak;
 #endif
   std::cout << " |\n";
 }
@@ -319,27 +361,38 @@ int main(int argc, char** argv) {
       // Reuse positive-integer parsing while allowing zero-based case indices.
       const std::string_view library_text(argv[2]), work_text(argv[3]);
       const auto library = library_text == "0" ? 0 : parse(library_text, library_names.size() - 1);
-      const auto work = work_text == "0" ? 0 : parse(work_text, 2);
+      const auto work = work_text == "0" ? 0 : parse(work_text, workload_names.size() - 1);
       resource_run(static_cast<unsigned>(library), static_cast<unsigned>(work), parse(argv[4], 1000000000));
       return 0;
     }
 #endif
     const bool diagnostics = argc > 1 && std::string_view(argv[1]) == "--diagnostics";
-    const int first_argument = diagnostics ? 2 : 1;
+    const bool executors = argc > 1 && std::string_view(argv[1]) == "--executors";
+    const int first_argument = diagnostics || executors ? 2 : 1;
     if (argc - first_argument > 2) {
-      throw std::invalid_argument("usage: coro_benchmark [--diagnostics] [iterations<=1000000000] [rounds<=1000]");
+      throw std::invalid_argument("usage: coro_benchmark [--diagnostics|--executors] [iterations<=1000000000] [rounds<=1000]");
     }
     const auto count = argc > first_argument ? parse(argv[first_argument], 1000000000) : 100000;
     const auto rounds = argc > first_argument + 1 ? parse(argv[first_argument + 1], 1000) : 7;
-    const std::span<const unsigned> libraries =
-        diagnostics ? std::span<const unsigned>(diagnostic_libraries) : std::span<const unsigned>(primary_libraries);
+    const std::span<const unsigned> libraries = executors     ? std::span<const unsigned>(executor_libraries)
+                                                : diagnostics ? std::span<const unsigned>(diagnostic_libraries)
+                                                              : std::span<const unsigned>(primary_libraries);
     const auto& names = library_names;
-    constexpr std::array works{workload::immediate, workload::nested, workload::post};
+    constexpr std::array coroutine_works{workload::immediate, workload::nested, workload::post};
+    constexpr std::array executor_works{workload::executor_post};
+    const std::span<const workload> works = executors ? std::span<const workload>(executor_works) : std::span<const workload>(coroutine_works);
     const auto& work_names = workload_names;
-    std::cout << "# Coroutine benchmark\n\n";
+    std::cout << (executors ? "# Executor benchmark\n\n" : "# Coroutine benchmark\n\n");
 #ifdef CORO_ENABLE_FRAME_CACHE
-    std::cout << "coro frame cache: enabled (" << CORO_FRAME_CACHE_SLOTS << " slots, at most " << CORO_FRAME_CACHE_MAX_BYTES
-              << " bytes per frame).\n\n";
+    if (!executors) {
+      std::cout << "coro frame cache: enabled (" << CORO_FRAME_CACHE_SLOTS << " slots, at most " << CORO_FRAME_CACHE_MAX_BYTES
+                << " bytes per frame).\n\n";
+    }
+#endif
+#ifdef ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING
+    if (!executors) {
+      std::cout << "Asio awaitable frame recycling: disabled.\n\n";
+    }
 #endif
     std::cout << "| workload | library | iterations | rounds | median_ns_per_op | min_ns_per_op | max_ns_per_op | checksum |\n"
                  "|---|---|---:|---:|---:|---:|---:|---:|\n";
@@ -363,8 +416,8 @@ int main(int argc, char** argv) {
         auto& values = samples[lib];
         std::sort(values.begin(), values.end());
         const double median = (values[(values.size() - 1) / 2] + values[values.size() / 2]) / 2;
-        std::cout << "| " << work_names[w] << " | " << names[lib] << " | " << count << " | " << rounds << " | " << median << " | " << values.front()
-                  << " | " << values.back() << " | " << count * (count + 1) / 2 << " |\n";
+        std::cout << "| " << work_names[static_cast<unsigned>(works[w])] << " | " << names[lib] << " | " << count << " | " << rounds << " | "
+                  << median << " | " << values.front() << " | " << values.back() << " | " << count * (count + 1) / 2 << " |\n";
       }
     }
   } catch (const std::exception& error) {

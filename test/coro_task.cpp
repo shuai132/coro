@@ -120,6 +120,34 @@ void test_frame_cache_bound_and_reuse() {
 }
 #endif
 
+void test_repeated_post_reuses_callback_storage() {
+  std::thread worker([] {
+    executor_poll exec;
+    int completed = 0;
+    auto resource = std::make_shared<int>(42);
+    std::weak_ptr<int> released = resource;
+    exec.post([resource = std::move(resource)] {
+      ASSERT(*resource == 42);
+    });
+    exec.poll();
+    ASSERT(released.expired());
+    auto post_one = [&] {
+      exec.post([&completed] {
+        ++completed;
+      });
+      exec.poll();
+    };
+    for (int i = 0; i < 8; ++i) {
+      post_one();
+    }
+    fail_next_task_allocation = true;
+    post_one();
+    ASSERT(fail_next_task_allocation && completed == 9);
+    fail_next_task_allocation = false;
+  });
+  worker.join();
+}
+
 struct post_on_timer_cleanup {
   executor& exec_;
   bool& called_;
@@ -1036,6 +1064,7 @@ int main() {
     }
   }
 #ifndef CORO_DISABLE_EXCEPTION
+  test_repeated_post_reuses_callback_storage();
   test_failed_timer_cleanup_reenters_executor<executor_poll>();
   test_failed_timer_cleanup_reenters_executor<executor_poll>(1);
   test_failed_timer_cleanup_reenters_executor<executor_loop>();

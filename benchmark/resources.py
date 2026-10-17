@@ -20,10 +20,10 @@ def parse_table(text):
     return rows
 
 
-def collect(binary, allocations, count, diagnostics=False):
+def collect(binary, allocations, count, diagnostics=False, executors=False):
     rows = []
-    for work in range(3):
-        for library in (range(6) if diagnostics else PRIMARY_LIBRARIES):
+    for work in ([3] if executors else range(3)):
+        for library in ((3, 6) if executors else (0, 1, 2, 4, 5) if diagnostics else PRIMARY_LIBRARIES):
             fields = []
             for executable in (binary, allocations):
                 result = subprocess.run(
@@ -39,7 +39,6 @@ def collect(binary, allocations, count, diagnostics=False):
             assert int(row["peak_rss_bytes"]) > 0
             assert int(row["new_calls"]) > 0
             assert int(row["new_peak_live_bytes"]) <= int(row["new_requested_bytes"])
-            assert 0 <= int(row["new_retained_bytes"]) <= int(row["new_peak_live_bytes"])
             rows.append(row)
     return rows
 
@@ -49,20 +48,22 @@ if __name__ == "__main__":
     parser.add_argument("binary")
     parser.add_argument("allocations")
     parser.add_argument("count", type=int, nargs="?", default=200000)
-    parser.add_argument("--diagnostics", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--diagnostics", action="store_true")
+    modes.add_argument("--executors", action="store_true")
     args = parser.parse_args()
-    rows = collect(args.binary, args.allocations, args.count, args.diagnostics)
+    rows = collect(args.binary, args.allocations, args.count, args.diagnostics, args.executors)
     print("# Benchmark resource report\n")
     print(f"Iterations per workload: {args.count}. CPU/RSS and allocations use separate fresh processes.\n")
     print("C++ new counters exclude direct malloc/aligned_alloc. RSS includes process startup and runtime libraries.\n")
-    for work in ("immediate", "nested_8", "post"):
+    for work in (("executor_post",) if args.executors else ("immediate", "nested_8", "post")):
         selected = [row for row in rows if row["workload"] == work]
         print(f"## {work}\n")
-        print("| Library | CPU ms | Peak RSS MiB | C++ new calls | Requested B | Peak live B | Retained B |")
-        print("|---|---:|---:|---:|---:|---:|---:|")
+        print("| Library | CPU ms | Peak RSS MiB | C++ new calls | Requested B | Peak live B |")
+        print("|---|---:|---:|---:|---:|---:|")
         for row in selected:
             cpu_ms = (int(row["user_cpu_us"]) + int(row["system_cpu_us"])) / 1000
             print(f"| {row['library']} | {cpu_ms:.3f} | {int(row['peak_rss_bytes']) / 1048576:.3f} | "
                   f"{row['new_calls']} | {row['new_requested_bytes']} | "
-                  f"{row['new_peak_live_bytes']} | {row['new_retained_bytes']} |")
+                  f"{row['new_peak_live_bytes']} |")
         print()

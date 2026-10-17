@@ -9,6 +9,7 @@
 #include <thread>
 #include <utility>
 
+#include "coro/detail/callback_cache.hpp"
 #include "coro/detail/deadline.hpp"
 #include "coro/detail/resume.hpp"
 #include "executor.hpp"
@@ -18,11 +19,11 @@ class executor_base : public coro::executor {
  protected:
   struct queued_task {
     std::coroutine_handle<> handle_{};
-    std::unique_ptr<std::function<void()>> callback_;
+    detail::queued_callback callback_;
 
     queued_task() = default;
     explicit queued_task(std::coroutine_handle<> handle) noexcept : handle_(handle) {}
-    explicit queued_task(std::unique_ptr<std::function<void()>> callback) noexcept : callback_(std::move(callback)) {}
+    explicit queued_task(detail::queued_callback callback) noexcept : callback_(std::move(callback)) {}
 
     explicit operator bool() const noexcept {
       return handle_ || callback_;
@@ -48,7 +49,7 @@ class executor_base : public coro::executor {
     }
 #endif
     // Moving std::function can copy a small target; keep all user code outside queue locks.
-    return queued_task{std::make_unique<std::function<void()>>(std::move(fn))};
+    return queued_task{detail::make_queued_callback(std::move(fn))};
   }
 
   struct DelayedTask {

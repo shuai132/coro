@@ -319,7 +319,8 @@ The built-in executors and `asio_executor` saturate unrepresentable `post_delaye
 
 The built-in executors service both ready timers and posted tasks, so a continuously replenished queue cannot starve the other.
 User callback targets are moved and destroyed outside queue locks, allowing captured resources to post work during cleanup.
-General queued callbacks have an ownership allocation. With RTTI enabled, built-in coroutine continuations store just their handle; inline `dispatch()` calls also avoid this allocation.
+General queued callbacks reuse up to two empty `std::function<void()>` objects per thread, allocating on a miss and releasing the cache at thread exit.
+Captured resources are released immediately; this cache is independent of the optional frame cache. Large captures and queue growth may still allocate. With RTTI enabled, built-in coroutine continuations store just their handle; inline `dispatch()` calls also avoid this allocation.
 
 ### executor_loop
 
