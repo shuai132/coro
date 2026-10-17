@@ -45,11 +45,20 @@ class asio_executor : public executor {
   explicit asio_executor(asio::any_io_executor exec) : asio_exec_(std::move(exec)) {}
 
   void dispatch(std::function<void()> fn) override {
-    asio::dispatch(asio_exec_, std::move(fn));
+    // Preserve executor properties: only unwrap the exact default io_context executor type.
+    if (auto* concrete = asio_exec_.target<asio::io_context::executor_type>()) {
+      asio::dispatch(*concrete, std::move(fn));
+    } else {
+      asio::dispatch(asio_exec_, std::move(fn));
+    }
   }
 
   void post(std::function<void()> fn) override {
-    asio::post(asio_exec_, std::move(fn));
+    if (auto* concrete = asio_exec_.target<asio::io_context::executor_type>()) {
+      asio::post(*concrete, std::move(fn));
+    } else {
+      asio::post(asio_exec_, std::move(fn));
+    }
   }
 
   void post_delayed_ns(std::function<void()> fn, uint64_t delay_ns) override {

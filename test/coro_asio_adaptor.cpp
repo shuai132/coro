@@ -1100,7 +1100,48 @@ async<void> run_all_tests() {
   LOG("=== All coro-side tests passed ===");
 }
 
+// Exercise concrete io_context dispatch and the strand/property-preserving fallback.
+void test_executor_submission(int kind) {
+  asio::io_context context;
+  int calls = 0;
+  {
+    asio::any_io_executor selected = context.get_executor();
+    if (kind == 1) {
+      selected = asio::make_strand(context);
+    } else if (kind == 2) {
+      selected = asio::prefer(context.get_executor(), asio::execution::outstanding_work.tracked);
+    }
+    asio_executor exec(selected);
+    ASSERT(exec.get_asio_executor() == selected);
+    exec.dispatch([&] {
+      ASSERT(calls == 0);
+      exec.dispatch([&] {
+        ++calls;
+      });
+      ASSERT(calls == 1);
+      exec.post([&] {
+        ASSERT(calls == 2);
+        ++calls;
+      });
+      ASSERT(calls == 1);
+      ++calls;
+    });
+    ASSERT(calls == 0);
+    context.poll();
+    ASSERT(calls == 3);
+    if (kind == 2) {
+      ASSERT(!context.stopped());
+    }
+  }
+  context.run();
+  ASSERT(context.stopped());
+  check_coro_leak();
+}
+
 int main() {
+  for (int kind = 0; kind < 3; ++kind) {
+    test_executor_submission(kind);
+  }
   test_concurrent_with_stalled_loop();
 #ifndef CORO_DISABLE_EXCEPTION
   for (bool delayed : {false, true}) {
