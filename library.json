@@ -1,0 +1,7 @@
+{
+  "name": "coro",
+  "build": {
+    "srcDir": "include",
+    "srcFilter": "-<*>"
+  }
+}
