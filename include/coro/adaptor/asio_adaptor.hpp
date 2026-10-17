@@ -60,10 +60,6 @@ class asio_executor : public executor {
     });
   }
 
-  void stop() override {
-    io_context_.stop();
-  }
-
   asio::io_context& get_io_context() {
     return io_context_;
   }

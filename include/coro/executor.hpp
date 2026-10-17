@@ -14,6 +14,5 @@ struct executor {
     post(std::move(fn));
   }
   virtual void post_delayed_ns(std::function<void()> fn, uint64_t delay_ns) = 0;
-  virtual void stop() = 0;
 };
 }  // namespace coro

@@ -369,9 +369,11 @@ struct my_executor : coro::executor {
     // Optional: override post_continuation(fn) to queue already accepted work while draining after stop().
     void post(std::function<void()> fn) override;          // Execute later
     void post_delayed_ns(std::function<void()> fn, uint64_t delay_ns) override;  // Delayed execution
-    void stop() override;                                  // Stop executor
 };
 ```
+
+`coro::executor` only defines scheduling operations. `stop()` belongs to concrete event-loop types such as
+`executor_loop` and `executor_poll`; stop an external event loop through its owning context.
 
 ## Thread Safety Contract
 

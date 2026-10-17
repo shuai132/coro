@@ -816,10 +816,6 @@ struct forwarding_executor : executor {
   void post_delayed_ns(std::function<void()> fn, uint64_t delay_ns) override {
     target_.post_delayed_ns(std::move(fn), delay_ns);
   }
-
-  void stop() override {
-    target_.stop();
-  }
 };
 
 template <typename T>

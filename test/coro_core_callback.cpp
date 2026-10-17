@@ -275,8 +275,6 @@ struct concurrent_completion_executor : executor {
   void post_delayed_ns(std::function<void()>, uint64_t) override {
     ASSERT(false);
   }
-
-  void stop() override {}
 };
 
 async<void> finish_while_detach_returns(detached_completion_state& state) {

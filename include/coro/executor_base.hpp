@@ -156,7 +156,7 @@ class executor_base : public coro::executor {
     notify_waiters(false);
   }
 
-  void stop() override {
+  virtual void stop() {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     stop_.store(true, std::memory_order_release);
     notify_waiters(true);

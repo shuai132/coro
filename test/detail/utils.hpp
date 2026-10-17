@@ -8,7 +8,8 @@ inline void check_coro_leak() {
 #endif
 }
 
-inline void delay_stop(coro::executor& executor, int wait_ms = 1000) {
+template <typename EXECUTOR>
+inline void delay_stop(EXECUTOR& executor, int wait_ms = 1000) {
   executor.post_delayed_ns(
       [&executor] {
         executor.stop();
