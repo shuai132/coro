@@ -156,6 +156,12 @@ async<T> owned_completed_task(int& runs, bool delayed, [[maybe_unused]] bool fai
 }
 
 template <typename T>
+async<void> release_completed_task(async<T> task) {
+  ASSERT(task.await_ready());
+  co_return;
+}
+
+template <typename T>
 async<void> launch_completed_task(bool delayed, bool fail, completed_launch mode) {
   auto frame_token = std::make_shared<int>(0);
   int runs = 0;
@@ -192,7 +198,8 @@ async<void> launch_completed_task(bool delayed, bool fail, completed_launch mode
       if (mode == completed_launch::stopped_detach) {
         target.stop();
       }
-      task.bind_executor(target).detach(target);
+      // Bind a fresh owner: completed tasks also fall outside bind_executor's pre-start contract.
+      release_completed_task(std::move(task)).bind_executor(target).detach(target);
       if (mode == completed_launch::queued_detach) {
         ASSERT(frame_token.use_count() == 2);
         target.poll();

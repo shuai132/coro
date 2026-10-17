@@ -19,6 +19,61 @@
 
 using namespace coro;
 
+template <bool EXECUTOR_AWARE, bool VALUE>
+async<void> await_callback_with_bound_executor(std::function<void()>& complete, bool& completed) {
+  auto registration = [&complete](auto callback) {
+    complete = [callback = std::move(callback)]() mutable {
+      if constexpr (VALUE) {
+        callback(42);
+      } else {
+        callback();
+      }
+    };
+  };
+  using result_type = std::conditional_t<VALUE, int, void>;
+  auto awaiter = [&] {
+    if constexpr (EXECUTOR_AWARE) {
+      return callback_awaiter<result_type>([registration](executor*, auto callback) {
+        registration(std::move(callback));
+      });
+    } else {
+      return callback_awaiter<result_type>(registration);
+    }
+  }();
+  if constexpr (VALUE) {
+    ASSERT(co_await std::move(awaiter) == 42);
+  } else {
+    co_await std::move(awaiter);
+  }
+  completed = true;
+}
+
+template <bool EXECUTOR_AWARE, bool VALUE>
+void test_callback_uses_prestart_binding() {
+  executor_poll original;
+  executor_poll rebound;
+  bool completed = false;
+  std::function<void()> complete;
+  {
+    auto task = await_callback_with_bound_executor<EXECUTOR_AWARE, VALUE>(complete, completed).bind_executor(original);
+    ASSERT(!task.current_coro_handle_.promise().started_);
+    auto rebound_task = task.bind_executor(rebound);
+    ASSERT(rebound_task.get_executor() == &rebound);
+    ASSERT(!rebound_task.current_coro_handle_.promise().started_);
+    rebound_task.current_coro_handle_.resume();
+    ASSERT(complete);
+    ASSERT(!completed);
+    complete();
+    ASSERT(!completed);
+    original.poll();
+    ASSERT(!completed);
+    rebound.poll();
+    ASSERT(completed);
+    complete = nullptr;
+  }
+  check_coro_leak();
+}
+
 struct callback_handoff_state {
   std::atomic<bool> moving_result{false};
   std::atomic<bool> release_result{false};
@@ -646,6 +701,10 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
 }
 
 int main() {
+  test_callback_uses_prestart_binding<false, false>();
+  test_callback_uses_prestart_binding<false, true>();
+  test_callback_uses_prestart_binding<true, false>();
+  test_callback_uses_prestart_binding<true, true>();
 #ifndef CORO_DISABLE_EXCEPTION
   test_nothrow_move_callback_storage_failure();
 #endif

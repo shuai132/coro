@@ -276,7 +276,7 @@ async<void> example() {
 }
 ```
 
-`bind_executor(exec)` selects a task's executor. When directly awaiting a child bound to another executor, the child runs on its selected executor and the caller continues on its own executor. Unbound children inherit their caller's executor.
+Call `bind_executor(exec)` before starting the task. When directly awaiting a child bound to another executor, the child runs on its selected executor and the caller continues on its own executor. Unbound children inherit their caller's executor.
 These direct cross-executor awaits queue both child starts and caller continuations, avoiding recursive dispatch when the executors share a thread.
 
 ## Minimal Runnable Examples
@@ -1084,7 +1084,7 @@ spawn(exec, my_coro_task());
 io_ctx.run();
 ```
 
-Use `spawn(exec, task)` or `task.bind_executor(exec)` to select the executor; explicit bindings take precedence.
+Use `spawn(exec, task)` or call `task.bind_executor(exec)` before task start to select the executor; explicit bindings take precedence.
 Unbound child tasks inherit their parent's executor. Strand affinity is preserved across suspension and nested
 bridge calls. A strand serializes execution without fixing a thread; tasks can still interleave at suspension points.
 

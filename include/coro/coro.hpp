@@ -369,7 +369,9 @@ struct awaitable {
     return current_coro_handle_.promise().get_value();
   }
 
+  // Precondition: bind before the task is started or submitted for execution.
   auto bind_executor(executor& exec) noexcept {
+    assert(current_coro_handle_ && !current_coro_handle_.promise().started_ && "bind_executor may only be called before task start");
     current_coro_handle_.promise().executor_ = &exec;
     return std::move(*this);
   }
@@ -533,26 +535,26 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
       case 0: {
         auto& func = std::get<0>(callback_function_);
         if constexpr (std::is_void_v<T>) {
-          func([handle, this, executor]() {
-            complete(handle, executor);
+          func([handle, this]() {
+            complete(handle);
           });
         } else {
-          func([handle, this, executor](T&& value) {
+          func([handle, this](T&& value) {
             this->set_result(std::move(value));
-            complete(handle, executor);
+            complete(handle);
           });
         }
       } break;
       case 1: {
         auto& func = std::get<1>(callback_function_);
         if constexpr (std::is_void_v<T>) {
-          func(executor, [handle, this, executor]() {
-            complete(handle, executor);
+          func(executor, [handle, this]() {
+            complete(handle);
           });
         } else {
-          func(executor, [handle, this, executor](T&& value) {
+          func(executor, [handle, this](T&& value) {
             this->set_result(std::move(value));
-            complete(handle, executor);
+            complete(handle);
           });
         }
       } break;
@@ -565,11 +567,13 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
   enum class phase { registering, suspended, completed };
   std::atomic<phase> phase_{phase::registering};
 
-  void complete(std::coroutine_handle<> handle, executor* exec) {
+  template <typename Promise>
+  void complete(std::coroutine_handle<Promise> handle) {
     // Exactly one side owns resumption: await_suspend for inline completion,
     // or the callback once suspension has been committed.
     if (phase_.exchange(phase::completed, std::memory_order_acq_rel) == phase::suspended) {
-      detail::resume_via(exec, handle);
+      // The task's executor is fixed before start; avoid capturing another pointer in the callback.
+      detail::resume_via(handle.promise().executor_, handle);
     }
   }
 };
