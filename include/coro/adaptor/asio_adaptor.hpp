@@ -47,6 +47,11 @@ class asio_executor : public executor {
   void dispatch(std::function<void()> fn) override {
     // Preserve executor properties: only unwrap the exact default io_context executor type.
     if (auto* concrete = asio_exec_.target<asio::io_context::executor_type>()) {
+      if (concrete->running_in_this_thread()) {
+        // The default io_context executor dispatches inline here, so fn outlives the invocation.
+        asio::dispatch(*concrete, std::ref(fn));
+        return;
+      }
       asio::dispatch(*concrete, std::move(fn));
     } else {
       asio::dispatch(asio_exec_, std::move(fn));

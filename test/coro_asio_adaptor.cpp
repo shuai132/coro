@@ -1113,7 +1113,20 @@ void test_executor_submission(int kind) {
     }
     asio_executor exec(selected);
     ASSERT(exec.get_asio_executor() == selected);
+    int resumed = 0;
+    auto probe = [](asio::io_context& context, int& resumed) -> async<void> {
+      ASSERT(context.get_executor().running_in_this_thread());
+      ++resumed;
+      co_return;
+    };
+    auto queued_probe = probe(context, resumed).bind_executor(exec);
+    auto inline_probe = probe(context, resumed).bind_executor(exec);
+    exec.dispatch(detail::resume_task{queued_probe.current_coro_handle_});
+    ASSERT(resumed == 0);
     exec.dispatch([&] {
+      ASSERT(resumed == 1);
+      exec.dispatch(detail::resume_task{inline_probe.current_coro_handle_});
+      ASSERT(resumed == 2);
       ASSERT(calls == 0);
       exec.dispatch([&] {
         ++calls;
@@ -1129,6 +1142,7 @@ void test_executor_submission(int kind) {
     ASSERT(calls == 0);
     context.poll();
     ASSERT(calls == 3);
+    ASSERT(resumed == 2);
     if (kind == 2) {
       ASSERT(!context.stopped());
     }
