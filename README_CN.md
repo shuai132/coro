@@ -1033,35 +1033,40 @@ async<void> async_void_operation() {
 
 ## ASIO 适配器
 
-该库提供了 `coro::async<T>` 和 `asio::awaitable<T>` 之间的互操作适配器，让你可以无缝混合使用 coro 和 ASIO 协程。
+通过 `asio_executor` 复用 Asio 执行器，通过 `await_asio()` / `await_coro()` 在两套协程间调用。
+Asio 负责 I/O 与底层调度，coro 提供任务和同步组件，应用管理上下文与资源生命周期。
+适配层保持可选，按实际需求扩展，不重复封装 I/O 或建立通用兼容框架。
 
-两个适配器均支持只能移动的返回值，无需默认构造或赋值能力。
-
-从 ASIO strand 中等待的未绑定 coro 任务会继承该 strand，嵌套 `await_asio()` 调用也保留这一调度约束。
+双向桥接支持 move-only 结果，无需默认构造或赋值能力。
 
 ### asio_executor
 
-`asio_executor` 将 `asio::io_context` 适配为 `coro::executor` 接口，使 coro 协程可以在 ASIO 事件循环上运行：
+`asio_executor` 接受 `io_context&` 或可转换为 `asio::any_io_executor` 的执行器，包括
+`socket.get_executor()`、strand 和 `thread_pool` 执行器。`get_asio_executor()` 返回保存的执行器。
 
 ```cpp
 #include "coro/adaptor/asio_adaptor.hpp"
 
 asio::io_context io_ctx;
-coro::asio_executor exec(io_ctx);
+asio::ip::tcp::socket socket(asio::make_strand(io_ctx));
+coro::asio_executor exec(socket.get_executor());
 
-// 在 ASIO 事件循环上启动 coro 协程
 spawn(exec, my_coro_task());
-
-// 运行 ASIO 事件循环
 io_ctx.run();
 ```
+
+通过 `spawn(exec, task)` 或 `task.bind_executor(exec)` 选择执行器，显式绑定优先，未绑定的子任务继承父任务的执行器。
+挂起恢复和嵌套桥接保留 strand 约束；strand 保证串行执行但不固定线程，任务可在挂起点交错执行。
+
+- 适配器及底层上下文必须存活到所有任务和回调结束；适配器地址保持不变，期间不能从它移出或对它重新赋值。
+  销毁适配器不会取消任务。
+- 适配器不提供 `stop()`。调用方的 `io_ctx.stop()` 停止整个上下文，不取消 I/O，也不排空任务。
+  优雅退出时，先取消 I/O 并等待任务和回调结束，再销毁相关资源。
+- 如果任务等待外部回调且没有尚未完成的 Asio 工作，按需使用 `asio::make_work_guard(io_ctx)` 保持 `run()` 运行。
 
 ### await_asio
 
 `await_asio()` 允许 coro 协程 `co_await` ASIO 的可等待对象。等待中的 coro 任务必须绑定或继承 `asio_executor`：
-
-停止 `io_context` 会暂停已入队的后续执行；调用 `restart()` 并再次 `run()` 后，等待中的 coro 任务可以继续。
-执行器和任务引用的数据都必须存活到任务结束。
 
 ```cpp
 #include "coro/adaptor/asio_adaptor.hpp"
@@ -1088,11 +1093,11 @@ coro::async<void> coro_task() {
 
 ### await_coro
 
-`await_coro()` 允许 ASIO 协程 `co_await` coro 的异步任务。ASIO 协程必须运行在 `asio::io_context` 的执行器或基于该上下文的 strand 上；
-不支持 `asio::thread_pool` 等其他上下文：
+`await_coro()` 允许 ASIO 协程 `co_await` coro 的异步任务。未绑定的 coro 任务继承 ASIO 协程的执行器及其 strand 约束，
+也支持 `asio::thread_pool`：
 
-取消 ASIO 等待时，如果 coro 任务尚未完成，会报告 `asio::error::operation_aborted`。
-已分离的 coro 任务会继续执行，因此它引用的数据必须存活到任务结束。
+取消生效时，等待报告 `asio::error::operation_aborted`；已确定的完成结果不受后续取消影响。
+取消等待不会终止 coro 任务，它引用的数据必须存活到任务结束。
 
 ```cpp
 #include "coro/adaptor/asio_adaptor.hpp"

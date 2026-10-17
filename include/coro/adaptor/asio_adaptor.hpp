@@ -4,7 +4,7 @@
 /// This header provides interoperability between coro::async<T> and asio::awaitable<T>
 ///
 /// Features:
-/// 1. asio_executor: Adapts asio::io_context to coro::executor interface
+/// 1. asio_executor: Adapts asio::any_io_executor to coro::executor interface
 /// 2. await_asio(): Allows coro coroutines to co_await asio::awaitable<T>
 /// 3. await_coro(): Allows asio coroutines to co_await coro::async<T>
 ///
@@ -35,11 +35,14 @@
 
 namespace coro {
 
-/// asio_executor: Adapts asio::io_context to coro::executor interface
+/// asio_executor: Adapts asio::any_io_executor to coro::executor interface
 /// This allows coro coroutines to run on an asio event loop
+/// Non-owning: keep the context and this adapter alive until all bound tasks and callbacks finish.
 class asio_executor : public executor {
  public:
-  explicit asio_executor(asio::io_context& io_context) : asio_executor(io_context, io_context.get_executor()) {}
+  explicit asio_executor(asio::io_context& io_context) : asio_executor(io_context.get_executor()) {}
+
+  explicit asio_executor(asio::any_io_executor exec) : asio_exec_(std::move(exec)) {}
 
   void dispatch(std::function<void()> fn) override {
     asio::dispatch(asio_exec_, std::move(fn));
@@ -60,19 +63,11 @@ class asio_executor : public executor {
     });
   }
 
-  asio::io_context& get_io_context() {
-    return io_context_;
-  }
-
   const asio::any_io_executor& get_asio_executor() const noexcept {
     return asio_exec_;
   }
 
- protected:
-  asio_executor(asio::io_context& io_context, asio::any_io_executor exec) : io_context_(io_context), asio_exec_(std::move(exec)) {}
-
  private:
-  asio::io_context& io_context_;
   asio::any_io_executor asio_exec_;
 };
 
@@ -275,7 +270,6 @@ template <typename T>
 template <typename T>
 [[nodiscard]] asio::awaitable<T> await_coro(async<T> aw) {
   auto executor = co_await asio::this_coro::executor;
-  auto& io_ctx = static_cast<asio::io_context&>(executor.context());
 
   // Use a shared state to communicate between callbacks
   // Also stores asio_executor to keep it alive during coro execution
@@ -286,9 +280,9 @@ template <typename T>
 #ifndef CORO_DISABLE_EXCEPTION
     std::exception_ptr exception;
 #endif
-    state(asio::io_context& ctx, asio::any_io_executor exec) : asio_executor(ctx, std::move(exec)) {}
+    explicit state(asio::any_io_executor exec) : asio_executor(std::move(exec)) {}
   };
-  auto st = std::make_shared<state>(io_ctx, std::move(executor));
+  auto st = std::make_shared<state>(std::move(executor));
 
   // Create a deferred timer that we'll use to signal completion
   auto signal_timer = std::make_shared<asio::steady_timer>(st->get_asio_executor());
@@ -324,7 +318,6 @@ template <typename T>
 template <>
 [[nodiscard]] inline asio::awaitable<void> await_coro(async<void> aw) {
   auto executor = co_await asio::this_coro::executor;
-  auto& io_ctx = static_cast<asio::io_context&>(executor.context());
 
   // Create a deferred timer that we'll use to signal completion
   auto signal_timer = std::make_shared<asio::steady_timer>(executor);
@@ -336,9 +329,9 @@ template <>
 #ifndef CORO_DISABLE_EXCEPTION
     std::exception_ptr exception;
 #endif
-    state(asio::io_context& ctx, asio::any_io_executor exec) : asio_executor(ctx, std::move(exec)) {}
+    explicit state(asio::any_io_executor exec) : asio_executor(std::move(exec)) {}
   };
-  auto st = std::make_shared<state>(io_ctx, std::move(executor));
+  auto st = std::make_shared<state>(std::move(executor));
 
   detail::complete_coro_signal(std::move(aw), st, signal_timer).detach(*st);
 

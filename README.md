@@ -1061,38 +1061,44 @@ async<void> async_void_operation() {
 
 ## ASIO Adaptor
 
-The library provides an adaptor for interoperability between `coro::async<T>` and `asio::awaitable<T>`, allowing you to
-mix coro and ASIO coroutines seamlessly.
+Use `asio_executor` to run coro tasks on Asio, and `await_asio()` / `await_coro()` to call between coroutine types.
+Asio supplies I/O and underlying scheduling, coro supplies tasks and synchronization components, and the application
+manages contexts and resource lifetimes. The adapter is optional and grows with concrete needs, without rewrapping I/O
+or building a general compatibility framework.
 
-Both adaptors support move-only results without requiring default construction or assignment.
-
-Unbound coro tasks awaited from an ASIO strand inherit that strand, including nested calls through `await_asio()`.
+Both bridges support move-only results without requiring default construction or assignment.
 
 ### asio_executor
 
-`asio_executor` adapts `asio::io_context` to the `coro::executor` interface, enabling coro coroutines to run on an ASIO
-event loop:
+`asio_executor` accepts `io_context&` or an executor convertible to `asio::any_io_executor`, including
+`socket.get_executor()`, strands, and `thread_pool` executors. `get_asio_executor()` returns the stored executor.
 
 ```cpp
 #include "coro/adaptor/asio_adaptor.hpp"
 
 asio::io_context io_ctx;
-coro::asio_executor exec(io_ctx);
+asio::ip::tcp::socket socket(asio::make_strand(io_ctx));
+coro::asio_executor exec(socket.get_executor());
 
-// Launch coro coroutines on ASIO event loop
 spawn(exec, my_coro_task());
-
-// Run the ASIO event loop
 io_ctx.run();
 ```
+
+Use `spawn(exec, task)` or `task.bind_executor(exec)` to select the executor; explicit bindings take precedence.
+Unbound child tasks inherit their parent's executor. Strand affinity is preserved across suspension and nested
+bridge calls. A strand serializes execution without fixing a thread; tasks can still interleave at suspension points.
+
+- Keep the adapter at the same address and its context alive until all tasks and callbacks finish. Do not move from or
+  reassign the adapter during that time; destroying it does not cancel tasks.
+- The adapter has no `stop()`. The caller's `io_ctx.stop()` stops the whole context without cancelling I/O or draining
+  tasks. For graceful shutdown, cancel I/O and wait for tasks and callbacks to finish before destroying resources.
+- If tasks await external callbacks with no outstanding Asio work, keep `run()` alive as needed with
+  `asio::make_work_guard(io_ctx)`.
 
 ### await_asio
 
 `await_asio()` allows coro coroutines to `co_await` ASIO awaitables. The awaiting coro task must be bound to or inherit an
 `asio_executor`:
-
-Stopping the `io_context` pauses queued continuations. After `restart()` and another `run()`, the awaiting coro task can continue.
-Keep the executor and the task's referenced data alive until the task finishes.
 
 ```cpp
 #include "coro/adaptor/asio_adaptor.hpp"
@@ -1119,11 +1125,12 @@ coro::async<void> coro_task() {
 
 ### await_coro
 
-`await_coro()` allows ASIO coroutines to `co_await` coro asyncs. The ASIO coroutine must run on an `asio::io_context`
-executor or a strand backed by that context; other contexts such as `asio::thread_pool` are not supported:
+`await_coro()` allows ASIO coroutines to `co_await` coro asyncs. Unbound coro tasks inherit the ASIO coroutine's
+executor, including its strand. `asio::thread_pool` is also supported:
 
-Cancelling the ASIO wait reports `asio::error::operation_aborted` if the coro task has not completed.
-The detached coro task continues running, so its referenced data must remain alive until it finishes.
+If cancellation takes effect, the wait reports `asio::error::operation_aborted`; an already determined result is
+unaffected by later cancellation. Cancelling the wait does not stop the coro task, so keep its referenced data alive
+until it finishes.
 
 ```cpp
 #include "coro/adaptor/asio_adaptor.hpp"

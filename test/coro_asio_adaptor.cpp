@@ -562,6 +562,165 @@ void test_strand_interoperability(int worker_count) {
   ASSERT(debug_coro_promise::debug_coro_leak.empty());
 }
 
+template <typename T>
+concept has_stop = requires(T& value) { value.stop(); };
+
+template <typename T>
+concept has_io_context = requires(T& value) { value.get_io_context(); };
+
+static_assert(!has_stop<executor>);
+static_assert(!has_stop<asio_executor>);
+static_assert(!has_io_context<asio_executor>);
+static_assert(has_stop<executor_loop>);
+static_assert(has_stop<executor_poll>);
+static_assert(std::is_constructible_v<asio_executor, asio::any_io_executor>);
+
+async<void> publicly_bound_child(asio_executor& exec, asio::io_context& context, test_strand* strand) {
+  auto check_executor = [&exec, &context, strand](executor* inherited) {
+    ASSERT(inherited == &exec);
+    ASSERT(context.get_executor().running_in_this_thread());
+    ASSERT(!strand || strand->running_in_this_thread());
+  };
+  for (bool delayed : {false, true}) {
+    co_await callback_awaiter<void>([check_executor, delayed](executor* inherited, auto callback) {
+      check_executor(inherited);
+      if (delayed) {
+        inherited->post(std::move(callback));
+      } else {
+        callback();
+      }
+    });
+    check_executor(&exec);
+    co_await callback_awaiter<void>([&exec, delayed](auto callback) {
+      if (delayed) {
+        exec.post(std::move(callback));
+      } else {
+        callback();
+      }
+    });
+    check_executor(&exec);
+    auto value = co_await await_asio(make_asio_nonassignable_value(delayed));
+    ASSERT(value.value == 53);
+    check_executor(&exec);
+  }
+  co_await sleep(0ns);
+  check_executor(&exec);
+  if (strand) {
+    co_await coro_strand_void(*strand, true, false);
+    check_executor(&exec);
+    // A child on the plain executor must return its parent to the strand.
+    asio_executor other(context.get_executor());
+    auto value = co_await make_coro_nonassignable_value(true).bind_executor(other);
+    ASSERT(value.value == 42);
+    check_executor(&exec);
+  }
+}
+
+async<void> publicly_bound_parent(asio_executor& exec, asio::io_context& context, test_strand* strand, std::atomic<int>& completed) {
+  co_await publicly_bound_child(exec, context, strand);
+  completed.fetch_add(1, std::memory_order_relaxed);
+}
+
+void test_public_executor_binding(bool use_strand, int worker_count) {
+  asio::io_context context;
+  auto strand = asio::make_strand(context);
+  asio_executor plain_exec(asio::any_io_executor{context.get_executor()});
+  asio_executor strand_exec([&strand] {
+    asio::ip::tcp::socket socket(strand);
+    return socket.get_executor();
+  }());
+  auto& exec = use_strand ? strand_exec : plain_exec;
+  if (use_strand) {
+    ASSERT(exec.get_asio_executor() == asio::any_io_executor(strand));
+  } else {
+    ASSERT(exec.get_asio_executor() == asio::any_io_executor(context.get_executor()));
+  }
+  std::atomic<int> completed{0};
+  for (int task = 0; task < 16; ++task) {
+    auto child = publicly_bound_parent(exec, context, use_strand ? &strand : nullptr, completed);
+    if (task % 2 == 0) {
+      // Explicit binding takes precedence over the executor supplied to spawn.
+      spawn(use_strand ? plain_exec : strand_exec, child.bind_executor(exec));
+    } else {
+      spawn(exec, std::move(child));
+    }
+  }
+  std::vector<std::thread> workers;
+  for (int worker = 0; worker < worker_count; ++worker) {
+    workers.emplace_back([&context] {
+      context.run_for(5s);
+    });
+  }
+  for (auto& worker : workers) {
+    worker.join();
+  }
+  ASSERT(completed.load(std::memory_order_relaxed) == 16);
+  check_coro_leak();
+}
+
+async<void> stop_asio_context(asio::io_context& context, bool& started, bool& completed) {
+  started = true;
+  context.stop();
+  co_await sleep(0ns);
+  completed = true;
+}
+
+void test_caller_stops_context(bool use_strand) {
+  asio::io_context context;
+  asio_executor plain_exec(context.get_executor());
+  asio_executor strand_exec(asio::make_strand(context));
+  auto& exec = use_strand ? strand_exec : plain_exec;
+  bool started = false;
+  bool completed = false;
+  bool unrelated_completed = false;
+  spawn(exec, stop_asio_context(context, started, completed));
+  asio::post(context, [&unrelated_completed] {
+    unrelated_completed = true;
+  });
+  context.run();
+  ASSERT(context.stopped());
+  ASSERT(started);
+  ASSERT(!completed);
+  ASSERT(!unrelated_completed);
+  context.restart();
+  context.run();
+  ASSERT(completed);
+  ASSERT(unrelated_completed);
+  check_coro_leak();
+}
+
+async<void> pool_child() {
+  for (bool delayed : {false, true}) {
+    auto value = co_await await_asio(make_asio_nonassignable_value(delayed));
+    ASSERT(value.value == 53);
+  }
+  co_await await_asio(asio_sleep(0));
+}
+
+asio::awaitable<void> await_pool_coro(std::atomic<int>& completed) {
+  for (bool delayed : {false, true}) {
+    auto value = co_await await_coro(make_coro_nonassignable_value(delayed));
+    ASSERT(value.value == 42);
+  }
+  co_await await_coro(pool_child());
+  completed.fetch_add(1, std::memory_order_relaxed);
+}
+
+void test_thread_pool_executor(int worker_count) {
+  asio::thread_pool pool(worker_count);
+  asio_executor exec(asio::any_io_executor{pool.get_executor()});
+  std::atomic<int> completed{0};
+  pool_child().detach_with_callback(exec, [&completed] {
+    completed.fetch_add(1, std::memory_order_relaxed);
+  });
+  asio::co_spawn(pool, await_pool_coro(completed), [](std::exception_ptr error) {
+    ASSERT(!error);
+  });
+  pool.join();
+  ASSERT(completed.load(std::memory_order_relaxed) == 2);
+  check_coro_leak();
+}
+
 #ifndef CORO_DISABLE_EXCEPTION
 template <typename T>
 async<T> cancellable_wait_child(std::function<void()>& release, bool& completed) {
@@ -947,6 +1106,13 @@ int main() {
 #endif
   test_strand_interoperability(1);
   test_strand_interoperability(4);
+  for (bool use_strand : {false, true}) {
+    test_public_executor_binding(use_strand, 1);
+    test_public_executor_binding(use_strand, 4);
+    test_caller_stops_context(use_strand);
+  }
+  test_thread_pool_executor(1);
+  test_thread_pool_executor(4);
   test_large_asio_delayed_post();
   LOG("=== coro-asio adaptor test ===");
   test_multithreaded_await_coro();
