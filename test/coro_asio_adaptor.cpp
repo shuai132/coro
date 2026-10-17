@@ -303,6 +303,7 @@ void test_immediate_coro_completion(bool void_result, bool failure = false) {
     ASSERT(!exception);
   });
   context.run_for(100ms);
+  ASSERT(context.stopped());
   ASSERT(completed);
   ASSERT(debug_coro_promise::debug_coro_leak.empty());
 }
@@ -423,6 +424,7 @@ void test_multithreaded_await_coro() {
   for (auto& worker : workers) {
     worker.join();
   }
+  ASSERT(context.stopped());
   ASSERT(completed.load(std::memory_order_relaxed) == 16);
   ASSERT(debug_coro_promise::debug_coro_leak.empty());
 }
@@ -558,6 +560,7 @@ void test_strand_interoperability(int worker_count) {
   for (auto& worker : workers) {
     worker.join();
   }
+  ASSERT(context.stopped());
   ASSERT(completed.load(std::memory_order_relaxed) == 16);
   ASSERT(debug_coro_promise::debug_coro_leak.empty());
 }
@@ -654,35 +657,46 @@ void test_public_executor_binding(bool use_strand, int worker_count) {
   for (auto& worker : workers) {
     worker.join();
   }
+  ASSERT(context.stopped());
   ASSERT(completed.load(std::memory_order_relaxed) == 16);
   check_coro_leak();
 }
 
-async<void> stop_asio_context(asio::io_context& context, bool& started, bool& completed) {
+async<void> stop_asio_context(asio::io_context& context, bool& started, bool& completed, std::function<void()>& release) {
   started = true;
   context.stop();
-  co_await sleep(0ns);
+  co_await callback_awaiter<void>([&release](auto callback) {
+    release = std::move(callback);
+  });
   completed = true;
 }
 
 void test_caller_stops_context(bool use_strand) {
   asio::io_context context;
+  auto work = asio::make_work_guard(context);
   asio_executor plain_exec(context.get_executor());
   asio_executor strand_exec(asio::make_strand(context));
   auto& exec = use_strand ? strand_exec : plain_exec;
   bool started = false;
   bool completed = false;
   bool unrelated_completed = false;
-  spawn(exec, stop_asio_context(context, started, completed));
-  asio::post(context, [&unrelated_completed] {
-    unrelated_completed = true;
-  });
+  std::function<void()> release;
+  spawn(exec, stop_asio_context(context, started, completed, release));
   context.run();
   ASSERT(context.stopped());
   ASSERT(started);
   ASSERT(!completed);
+  ASSERT(release);
+  // stop() is not a barrier for ready handlers on every backend. Queue work after run() returns.
+  asio::post(context, [&unrelated_completed] {
+    unrelated_completed = true;
+  });
+  release();
+  release = nullptr;
+  ASSERT(!completed);
   ASSERT(!unrelated_completed);
   context.restart();
+  work.reset();
   context.run();
   ASSERT(completed);
   ASSERT(unrelated_completed);
@@ -763,6 +777,7 @@ void test_cancelled_await_coro() {
   release = nullptr;
   context.restart();
   context.run_for(1s);
+  ASSERT(context.stopped());
   ASSERT(child_completed);
   ASSERT(cancelled_before_child_completed);
   bool cancelled = false;
@@ -857,6 +872,7 @@ void test_asio_result_lifetime(bool delayed, bool fail) {
   });
   context.run_for(3s);
   worker.join();
+  ASSERT(context.stopped());
   ASSERT(state.parent_completed.load());
   ASSERT(state.caught == fail);
   ASSERT(state.live.load() == 0);
@@ -912,6 +928,7 @@ void test_asio_exception_lifetime(bool delayed) {
   });
   context.run_for(3s);
   worker.join();
+  ASSERT(context.stopped());
   ASSERT(state.parent_completed.load());
   ASSERT(state.caught);
   ASSERT(state.live.load() == 0);
@@ -990,6 +1007,7 @@ void test_coro_result_lifetime(bool delayed, int fail_at_move) {
   });
   context.run_for(5s);
   worker.join();
+  ASSERT(context.stopped());
   ASSERT(state.parent_completed.load());
   ASSERT(state.caught == state.move_failed);
   ASSERT(state.live.load() == 0);
@@ -1216,23 +1234,9 @@ int main() {
       });
 #endif
 
-  // Auto-stop when all tests complete or timeout after 5 seconds
-  std::thread([&io_ctx, &tests_completed] {
-    auto start = std::chrono::steady_clock::now();
-    while (tests_completed < TOTAL_TESTS) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
-      auto elapsed = std::chrono::steady_clock::now() - start;
-      if (elapsed > std::chrono::seconds(5)) {
-        LOG("ERROR: Test timeout! Only %d/%d tests completed", tests_completed.load(), TOTAL_TESTS);
-        break;
-      }
-    }
-    io_ctx.stop();
-  }).detach();
-
   LOG("Running io_context...");
-  auto work = asio::make_work_guard(io_ctx);
-  io_ctx.run();
+  io_ctx.run_for(5s);
+  ASSERT(io_ctx.stopped());
 
   // Verify all tests completed
   if (tests_completed == TOTAL_TESTS) {

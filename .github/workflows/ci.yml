@@ -393,6 +393,7 @@ jobs:
 
       - name: Test asio_adaptor
         if: always()
+        timeout-minutes: 2
         working-directory: build
         run: |
           ./coro_asio_adaptor${{ matrix.env.BIN_SUFFIX }}
