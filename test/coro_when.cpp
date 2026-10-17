@@ -885,6 +885,82 @@ async<void> test_when_all_multiple_exceptions() {
 
 #endif
 
+// Exercise cooperative stop through a nested combiner, without timer ordering.
+template <typename EVENT, typename GROUP>
+async<void> stopped_when_branch(EVENT& stop, EVENT& ready, GROUP& finished, int& started, int& cleaned) {
+  struct completion_guard {
+    GROUP& finished;
+    int& cleaned;
+    ~completion_guard() {
+      ++cleaned;
+      finished.done();
+    }
+  } guard{finished, cleaned};
+  if (++started == 2) {
+    ready.set();
+  }
+  co_await stop.wait();
+  ASSERT(stop.is_set());
+}
+
+template <typename EVENT>
+async<int> stop_race_winner(EVENT& ready, bool fail) {
+  co_await ready.wait();
+#ifndef CORO_DISABLE_EXCEPTION
+  if (fail) {
+    throw std::runtime_error("stop race failed");
+  }
+#else
+  (void)fail;
+#endif
+  co_return 42;
+}
+
+template <typename EVENT, typename GROUP>
+async<void> await_cooperative_when_stop(bool fail) {
+  EVENT stop;
+  EVENT ready;
+  GROUP finished;
+  int started = 0;
+  int cleaned = 0;
+  finished.add(2);
+#ifndef CORO_DISABLE_EXCEPTION
+  bool caught = false;
+  try {
+#endif
+    auto result = co_await when_any(stop_race_winner(ready, fail), when_all(stopped_when_branch(stop, ready, finished, started, cleaned),
+                                                                            stopped_when_branch(stop, ready, finished, started, cleaned)));
+    ASSERT(result.index == 0);
+    ASSERT(result.template get<0>() == 42);
+#ifndef CORO_DISABLE_EXCEPTION
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "stop race failed");
+    caught = true;
+  }
+  ASSERT(caught == fail);
+#endif
+  ASSERT(started == 2);
+  ASSERT(cleaned == 0);  // Neither success nor failure cancels the nested branches.
+  stop.set();
+  co_await finished.wait();
+  ASSERT(cleaned == 2);
+}
+
+template <typename EVENT, typename GROUP>
+void test_cooperative_when_stop(bool fail) {
+  executor_poll executor;
+  bool completed = false;
+  await_cooperative_when_stop<EVENT, GROUP>(fail).detach_with_callback(executor, [&] {
+    completed = true;
+  });
+  // Drain the nested combiner's completion after the branch cleanup notifications.
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    executor.poll();
+  }
+  ASSERT(completed);
+  check_coro_leak();
+}
+
 async<void> run_all_tests() {
   co_await test_when_all_values();
   co_await test_when_all_void();
@@ -928,6 +1004,12 @@ int main() {
   test_when_all_reentrant_completion();
   test_when_any_reentrant_completion();
   test_when_any_result_publication();
+  test_cooperative_when_stop<event_st, wait_group_st>(false);
+  test_cooperative_when_stop<event_mt, wait_group_mt>(false);
+#ifndef CORO_DISABLE_EXCEPTION
+  test_cooperative_when_stop<event_st, wait_group_st>(true);
+  test_cooperative_when_stop<event_mt, wait_group_mt>(true);
+#endif
   executor_loop executor;
   run_all_tests().detach_with_callback(executor, [&] {
     executor.stop();
