@@ -25,7 +25,7 @@ Apple M2 / Apple Clang 21 / Release. Median of 11 rounds with 1 million operatio
 
 The frame cache setting applies to both coro and Asio; coro defaults to off, and async_simple uses its default allocator without a frame cache. For 1 million posts, coro and Asio each make just **9 C++ allocations**, compared with 1,000,007 for async_simple. See [benchmark](benchmark/README.md) for full resource measurements, native executor comparisons, and reproduction steps.
 
-Common component workloads also have [ARM64 Linux Cachegrind and heap records](benchmark/arm64.md), saved as JSON.
+Common components are also measured across 14 scenarios for instruction counts, simulated cache misses, branch prediction, and heap allocations, with reproducible scripts and JSON results. See [ARM64 Linux performance and resource measurements](benchmark/arm64.md).
 
 Beyond async tasks, coro provides `when_all` / `when_any`, channels, mutexes, condition variables, semaphores, events, latches, wait groups, timers, and coroutine-local storage. RAII, callback-to-coroutine conversion, and Asio interoperability help compose asynchronous workflows through simple, consistent APIs. The library is header-only and supports builds without exceptions, from desktop and server applications to MCUs.
 
@@ -342,7 +342,8 @@ Examples default to ON when built as the main project and OFF when included as a
 
 ## Executors
 
-Two executor implementations are provided:
+The built-in `executor_loop` and `executor_poll` share the `executor_base` implementation. They primarily target conventional OS environments and rely on standard-library thread synchronization, clocks, and dynamic memory support.
+For bare-metal or resource-constrained MCUs, implement a [custom executor](#custom-executor) through `coro::executor` to connect task scheduling and timers to the platform's own facilities.
 
 The built-in executors and `asio_executor` saturate unrepresentable `post_delayed_ns()` deadlines at the steady clock's maximum time point.
 
