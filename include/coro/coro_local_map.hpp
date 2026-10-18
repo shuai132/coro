@@ -5,6 +5,8 @@
 #include <unordered_map>
 #include <utility>
 
+#include "coro/detail/shared_ptr.hpp"
+
 namespace coro {
 namespace detail {
 
@@ -13,7 +15,7 @@ namespace detail {
 // can optionally inherit from parent coroutines
 struct coro_local_map {
   // Keep inherited storage alive until local values have been destroyed.
-  std::shared_ptr<coro_local_map> parent;
+  shared_ptr<coro_local_map> parent;
   std::unordered_map<const void*, std::any> data;
 
   ~coro_local_map() {

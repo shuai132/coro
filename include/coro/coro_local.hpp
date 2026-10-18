@@ -138,7 +138,7 @@ struct coro_local {
     bool await_suspend(std::coroutine_handle<Promise> h) {
       auto& storage = h.promise().local_storage_;
       if (!storage) {
-        storage = std::make_shared<detail::coro_local_map>();
+        storage = detail::make_shared<detail::coro_local_map>();
       }
       storage->template set<T>(self_, std::forward<U>(value_));
       return false;
@@ -250,7 +250,7 @@ struct inherit_coro_local_awaiter {
     // This just ensures we have our own local storage for copy-on-write
     auto& storage = h.promise().local_storage_;
     if (!storage) {
-      storage = std::make_shared<coro_local_map>();
+      storage = make_shared<coro_local_map>();
     }
     return false;
   }

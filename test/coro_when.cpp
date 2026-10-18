@@ -339,6 +339,7 @@ void test_when_any_reentrant_completion() {
 }
 
 // Hold the winning result's move constructor open while the parent checks readiness.
+#ifndef CORO_SINGLE_THREAD
 struct publication_value {
   std::atomic<bool>* entered;
   std::atomic<bool>* release;
@@ -390,6 +391,7 @@ void test_when_any_result_publication() {
   ASSERT(result.template get<1>().value == 42);
   LOG("when_any result publication test: PASSED");
 }
+#endif
 
 // Optional counters track completion on the single test executor. Shared ownership keeps them
 // alive for when_any branches that outlive their caller.
@@ -1003,7 +1005,9 @@ int main() {
   test_nested_when<true, int>();
   test_when_all_reentrant_completion();
   test_when_any_reentrant_completion();
+#ifndef CORO_SINGLE_THREAD
   test_when_any_result_publication();
+#endif
   test_cooperative_when_stop<event_st, wait_group_st>(false);
   test_cooperative_when_stop<event_mt, wait_group_mt>(false);
 #ifndef CORO_DISABLE_EXCEPTION

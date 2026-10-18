@@ -11,6 +11,21 @@ on:
       - 'docs/**'
 
 jobs:
+  single-thread:
+    name: Global single-thread configuration (Release)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure global single-thread mode
+        run: >-
+          cmake -S . -B build_single_thread -DCMAKE_BUILD_TYPE=Release
+          -DCORO_SINGLE_THREAD=ON -DCORO_BUILD_TEST=ON
+          -DCORO_BUILD_EXAMPLES=ON -DCORO_WARNINGS_AS_ERRORS=ON
+      - name: Build single-thread tests and examples
+        run: cmake --build build_single_thread -j 2
+      - name: Run single-thread tests and examples
+        run: ctest --test-dir build_single_thread --output-on-failure
+
   benchmark-smoke:
     name: Benchmark correctness (Release)
     runs-on: ubuntu-24.04
@@ -80,16 +95,20 @@ jobs:
           arm-none-eabi-g++ -std=c++20 -mcpu=${{ matrix.cpu }} -mthumb \
             -Wall -Wunused-parameter -Werror -fno-exceptions -fno-rtti -DCORO_DISABLE_EXCEPTION -DCORO_TEST_NO_NATIVE_MUTEX \
             -Iinclude -c test/cmake/threadless.cpp -o threadless.o
+          arm-none-eabi-g++ -std=c++20 -mcpu=${{ matrix.cpu }} -mthumb \
+            -Wall -Wunused-parameter -Werror -fno-exceptions -fno-rtti \
+            -DCORO_DISABLE_EXCEPTION -DCORO_TEST_NO_NATIVE_MUTEX -DCORO_SINGLE_THREAD \
+            -Iinclude -c test/cmake/threadless.cpp -o single-thread.o
       - name: Configure and build a threadless CMake consumer
         run: |
           cmake -S test/cmake/threadless -B build_cmake \
             -DCMAKE_SYSTEM_NAME=Generic -DCMAKE_CXX_COMPILER=arm-none-eabi-g++ \
-            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCORO_DISABLE_EXCEPTION=ON \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCORO_DISABLE_EXCEPTION=ON -DCORO_SINGLE_THREAD=ON \
             -DCMAKE_CXX_FLAGS="-mcpu=${{ matrix.cpu }} -mthumb -fno-exceptions -fno-rtti"
           cmake --build build_cmake --target threadless_consumer -j
       - name: Check single-threaded components need no atomic runtime helpers
         run: |
-          arm-none-eabi-nm -u threadless.o > undefined-symbols.txt
+          arm-none-eabi-nm -u threadless.o single-thread.o > undefined-symbols.txt
           if grep '__atomic_' undefined-symbols.txt; then
             echo "Single-threaded components unexpectedly require an atomic runtime library"
             exit 1
@@ -351,6 +370,11 @@ jobs:
         working-directory: build
         run: |
           ./coro_when${{ matrix.env.BIN_SUFFIX }}
+
+      - name: Test single-thread coroutine state
+        if: always()
+        working-directory: build
+        run: ctest -C ${{ matrix.build_type }} -L single_thread --output-on-failure
 
       - name: Test wait_group
         if: always()

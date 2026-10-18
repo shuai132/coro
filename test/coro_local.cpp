@@ -116,7 +116,7 @@ async<void> local_cleanup_shared_parent(local_cleanup_children& children, coro_l
   }
 }
 
-void test_parallel_inherited_local_cleanup() {
+void test_shared_inherited_local_cleanup() {
   coro_local<std::shared_ptr<int>> resource;
   coro_local<local_cleanup_observer> observer;
   std::array<local_cleanup_state, 2> states;
@@ -134,6 +134,11 @@ void test_parallel_inherited_local_cleanup() {
     ASSERT(!state.inherited_resource.expired());
     state.checking = true;
   }
+#ifdef CORO_SINGLE_THREAD
+  for (auto& child : children) {
+    child.reset();
+  }
+#else
   std::atomic<bool> release{false};
   std::array<std::thread, 2> workers;
   for (size_t index = 0; index < workers.size(); ++index) {
@@ -148,6 +153,7 @@ void test_parallel_inherited_local_cleanup() {
   for (auto& worker : workers) {
     worker.join();
   }
+#endif
   for (const auto& state : states) {
     ASSERT(state.checked_destructors == 1);
     ASSERT(!state.ancestor_expired_during_cleanup);
@@ -228,11 +234,11 @@ void test_deep_local_storage_lookup_and_cleanup() {
   // Build the deep chain directly: GCC sanitizer instrumentation can prevent tail
   // calls during coroutine transfers, overflowing the stack before cleanup starts.
   using storage_map = detail::coro_local_map;
-  std::vector<std::shared_ptr<storage_map>> maps;
+  std::vector<detail::shared_ptr<storage_map>> maps;
   constexpr int depth = 200000;
   local_cleanup_state state;
   maps.reserve(depth);
-  maps.push_back(std::make_shared<storage_map>());
+  maps.push_back(detail::make_shared<storage_map>());
   int key = 0;
   int missing_key = 0;
   int resource_key = 0;
@@ -242,7 +248,7 @@ void test_deep_local_storage_lookup_and_cleanup() {
   state.inherited_resource = resource;
   maps.front()->set<std::shared_ptr<int>>(&resource_key, std::move(resource));
   for (int index = 1; index < depth; ++index) {
-    auto map = std::make_shared<storage_map>();
+    auto map = detail::make_shared<storage_map>();
     map->parent = maps.back();
     map->set<local_cleanup_observer>(&observer_key, local_cleanup_observer{&state, state.inherited_resource});
     maps.push_back(std::move(map));
@@ -254,11 +260,11 @@ void test_deep_local_storage_lookup_and_cleanup() {
   ASSERT(!maps.back()->contains(&missing_key));
   // Drop ancestor owners first so the leaf must release the entire inherited chain.
   for (int index = 0; index < depth - 1; ++index) {
-    maps[static_cast<size_t>(index)].reset();
+    maps[static_cast<size_t>(index)] = {};
   }
   ASSERT(!state.inherited_resource.expired());
   state.checking = true;
-  maps.back().reset();
+  maps.back() = {};
   ASSERT(state.checked_destructors == depth - 1);
   ASSERT(!state.ancestor_expired_during_cleanup);
   ASSERT(state.inherited_resource.expired());
@@ -851,7 +857,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
-  test_parallel_inherited_local_cleanup();
+  test_shared_inherited_local_cleanup();
   for (int depth : {1, 4}) {
     for (bool release_parents_first : {false, true}) {
       test_inherited_local_cleanup(depth, release_parents_first);

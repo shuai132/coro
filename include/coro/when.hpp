@@ -13,6 +13,7 @@
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
+#include "coro/dummy_mutex.hpp"
 
 namespace coro {
 
@@ -21,6 +22,32 @@ namespace coro {
 // ============================================================================
 
 namespace detail {
+
+#ifdef CORO_SINGLE_THREAD
+using when_mutex = dummy_mutex;
+using when_counter = size_t;
+using when_flag = bool;
+#else
+using when_mutex = std::mutex;
+using when_counter = std::atomic<size_t>;
+using when_flag = std::atomic<bool>;
+#endif
+
+inline bool when_flag_is_set(const when_flag& flag) noexcept {
+#ifdef CORO_SINGLE_THREAD
+  return flag;
+#else
+  return flag.load(std::memory_order_relaxed);
+#endif
+}
+
+inline void when_flag_set(when_flag& flag) noexcept {
+#ifdef CORO_SINGLE_THREAD
+  flag = true;
+#else
+  flag.store(true, std::memory_order_release);
+#endif
+}
 
 // Helper to extract awaitable result type
 template <typename T>
@@ -67,16 +94,16 @@ using when_all_storage_t = typename when_all_storage<T>::type;
 template <typename... Ts>
 struct when_all_state {
   std::tuple<when_all_storage_t<Ts>...> results;
-  std::atomic<size_t> completed_count{0};
+  when_counter completed_count{0};
   size_t total_count = sizeof...(Ts);
   std::coroutine_handle<> parent_handle;
   executor* parent_exec = nullptr;
 #ifdef CORO_DEBUG_ASYNC_STACK
   std::uint64_t debug_parent_id_ = 0;
 #endif
-  mutable std::mutex mtx;  // Mutex to protect shared state access
+  mutable when_mutex mtx;  // Mutex to protect shared state access
 #ifndef CORO_DISABLE_EXCEPTION
-  std::atomic<bool> exception_set{false};
+  when_flag exception_set{false};
   std::exception_ptr exception;  // Add exception support
 #endif
 
@@ -101,10 +128,15 @@ struct when_all_state {
 
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
-    bool expected = false;
     {
-      std::lock_guard<std::mutex> lock(mtx);
-      if (exception_set.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      std::lock_guard<when_mutex> lock(mtx);
+#ifdef CORO_SINGLE_THREAD
+      bool first = !std::exchange(exception_set, true);
+#else
+      bool expected = false;
+      bool first = exception_set.compare_exchange_strong(expected, true, std::memory_order_acq_rel);
+#endif
+      if (first) {
         exception = std::move(ex);
       }
     }
@@ -124,8 +156,12 @@ struct when_all_state {
   }
 
   void increment_completed() {
-    std::unique_lock<std::mutex> lock(mtx);
+    std::unique_lock<when_mutex> lock(mtx);
+#ifdef CORO_SINGLE_THREAD
+    size_t count = ++completed_count;
+#else
     size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
+#endif
     if (count == total_count) {
       if (parent_handle) {
         lock.unlock();
@@ -137,7 +173,7 @@ struct when_all_state {
 
 // Individual task wrapper for when_all
 template <size_t Index, typename T, typename State>
-awaitable<void> when_all_task(awaitable<T> task, std::shared_ptr<State> state) {
+awaitable<void> when_all_task(awaitable<T> task, shared_ptr<State> state) {
 #ifndef CORO_DISABLE_EXCEPTION
   std::exception_ptr failure;
   try {
@@ -164,7 +200,7 @@ awaitable<void> when_all_task(awaitable<T> task, std::shared_ptr<State> state) {
 // Awaiter for getting executor
 template <typename State>
 struct when_all_init_state_awaiter {
-  std::shared_ptr<State> state_;
+  shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
     return false;
@@ -173,7 +209,7 @@ struct when_all_init_state_awaiter {
   template <typename Promise>
   bool await_suspend(std::coroutine_handle<Promise> h) {
     {
-      std::lock_guard<std::mutex> lock(state_->mtx);
+      std::lock_guard<when_mutex> lock(state_->mtx);
       state_->parent_exec = h.promise().executor_;
 #ifdef CORO_DEBUG_ASYNC_STACK
       state_->debug_parent_id_ = h.promise().debug_node_.id_;
@@ -197,14 +233,14 @@ struct when_all_awaiter;
 // Awaiter for waiting all tasks to complete (empty tuple case)
 template <typename State>
 struct when_all_awaiter<State, std::tuple<>> {
-  std::shared_ptr<State> state_;
+  shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
     return state_->completed_count >= state_->total_count;
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
-    std::lock_guard<std::mutex> lock(state_->mtx);
+    std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
   }
@@ -269,14 +305,14 @@ struct result_extractor {
 // Awaiter for waiting all tasks to complete (non-empty tuple)
 template <typename State, typename... ResultTypes>
 struct when_all_awaiter<State, std::tuple<ResultTypes...>> {
-  std::shared_ptr<State> state_;
+  shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
     return state_->completed_count >= state_->total_count;
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
-    std::lock_guard<std::mutex> lock(state_->mtx);
+    std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
   }
@@ -296,14 +332,14 @@ struct when_all_awaiter<State, std::tuple<ResultTypes...>> {
 // Awaiter for waiting all tasks to complete (one non-void child result)
 template <typename State, typename ResultType>
 struct when_all_single_awaiter {
-  std::shared_ptr<State> state_;
+  shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
     return state_->completed_count >= state_->total_count;
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
-    std::lock_guard<std::mutex> lock(state_->mtx);
+    std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
   }
@@ -414,14 +450,14 @@ using when_all_result_type_t = typename when_all_result_type<Ts...>::type;
 // Void awaiter for when all tasks return void
 template <typename State>
 struct when_all_void_awaiter {
-  std::shared_ptr<State> state_;
+  shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
     return state_->completed_count >= state_->total_count;
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
-    std::lock_guard<std::mutex> lock(state_->mtx);
+    std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return state_->completed_count < state_->total_count;
   }
@@ -440,7 +476,7 @@ template <typename... Awaitables, size_t... Is>
 awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_impl(std::index_sequence<Is...>, Awaitables... awaitables) {
   using result_tuple = when_all_result_type_t<awaitable_result_t<Awaitables>...>;
   using state_type = when_all_state<awaitable_result_t<Awaitables>...>;
-  auto state = std::make_shared<state_type>();
+  auto state = make_shared<state_type>();
 
   // Init state from current coroutine context
   co_await when_all_init_state_awaiter<state_type>{state};
@@ -472,7 +508,7 @@ awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_im
   }
   if (launch_failure) {
     {
-      std::lock_guard<std::mutex> lock(state->mtx);
+      std::lock_guard<when_mutex> lock(state->mtx);
       // Count the failed launch as an error, then wait for the children already started.
       state->total_count = launched_count + 1;
     }
@@ -508,14 +544,14 @@ template <bool AllVoid, typename... Ts>
 struct when_any_state_impl {
   std::variant<std::monostate, void_to_placeholder_t<Ts>...> result;
   size_t completed_index = 0;
-  std::atomic<bool> completed{false};
+  when_flag completed{false};
   bool claimed = false;
   std::coroutine_handle<> parent_handle;
   executor* parent_exec = nullptr;
 #ifdef CORO_DEBUG_ASYNC_STACK
   std::uint64_t debug_parent_id_ = 0;
 #endif
-  mutable std::mutex mtx;  // Mutex to protect shared state access
+  mutable when_mutex mtx;  // Mutex to protect shared state access
 #ifndef CORO_DISABLE_EXCEPTION
   std::exception_ptr exception;  // Add exception support
 #endif
@@ -530,7 +566,7 @@ struct when_any_state_impl {
   };
 
   bool try_claim() {
-    std::lock_guard<std::mutex> lock(mtx);
+    std::lock_guard<when_mutex> lock(mtx);
     if (claimed) {
       return false;
     }
@@ -539,9 +575,9 @@ struct when_any_state_impl {
   }
 
   void publish_completion() {
-    std::unique_lock<std::mutex> lock(mtx);
+    std::unique_lock<when_mutex> lock(mtx);
     // Keep winner selection separate from publication: user values may resume other branches.
-    completed.store(true, std::memory_order_release);
+    when_flag_set(completed);
     if (parent_handle) {
       lock.unlock();
       detail::post_resume_via(parent_exec, parent_handle);
@@ -593,25 +629,25 @@ struct when_any_state_impl {
 template <typename... Ts>
 struct when_any_state_impl<true, Ts...> {
   size_t completed_index = 0;
-  std::atomic<bool> completed{false};
+  when_flag completed{false};
   std::coroutine_handle<> parent_handle;
   executor* parent_exec = nullptr;
 #ifdef CORO_DEBUG_ASYNC_STACK
   std::uint64_t debug_parent_id_ = 0;
 #endif
-  mutable std::mutex mtx;  // Mutex to protect shared state access
+  mutable when_mutex mtx;  // Mutex to protect shared state access
 #ifndef CORO_DISABLE_EXCEPTION
   std::exception_ptr exception;  // Add exception support
 #endif
 
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
-    std::unique_lock<std::mutex> lock(mtx);
-    if (!completed.load(std::memory_order_relaxed)) {
+    std::unique_lock<when_mutex> lock(mtx);
+    if (!when_flag_is_set(completed)) {
       exception = std::move(ex);
       ex = nullptr;
       // Publish completion only after the result or exception is fully initialized.
-      completed.store(true, std::memory_order_release);
+      when_flag_set(completed);
       if (parent_handle) {
         lock.unlock();
         detail::post_resume_via(parent_exec, parent_handle);
@@ -622,11 +658,11 @@ struct when_any_state_impl<true, Ts...> {
 
   template <size_t Index>
   void set_completed_at() {
-    std::unique_lock<std::mutex> lock(mtx);
-    if (!completed.load(std::memory_order_relaxed)) {
+    std::unique_lock<when_mutex> lock(mtx);
+    if (!when_flag_is_set(completed)) {
       completed_index = Index;
       // Publish completion only after the result or exception is fully initialized.
-      completed.store(true, std::memory_order_release);
+      when_flag_set(completed);
       if (parent_handle) {
         lock.unlock();
         detail::post_resume_via(parent_exec, parent_handle);
@@ -640,7 +676,7 @@ struct when_any_state : when_any_state_impl<all_void<Ts...>::value, Ts...> {};
 
 // Individual task wrapper for when_any
 template <size_t Index, typename T, typename State>
-awaitable<void> when_any_task(awaitable<T> task, std::shared_ptr<State> state) {
+awaitable<void> when_any_task(awaitable<T> task, shared_ptr<State> state) {
 #ifndef CORO_DISABLE_EXCEPTION
   std::exception_ptr failure;
   try {
@@ -702,7 +738,7 @@ struct when_any_result : when_any_result_impl_selector<all_void<Ts...>::value, T
 // Awaiter for getting executor in when_any
 template <typename State>
 struct when_any_init_state_awaiter {
-  std::shared_ptr<State> state_;
+  shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
     return false;
@@ -711,7 +747,7 @@ struct when_any_init_state_awaiter {
   template <typename Promise>
   bool await_suspend(std::coroutine_handle<Promise> h) {
     {
-      std::lock_guard<std::mutex> lock(state_->mtx);
+      std::lock_guard<when_mutex> lock(state_->mtx);
       state_->parent_exec = h.promise().executor_;
 #ifdef CORO_DEBUG_ASYNC_STACK
       state_->debug_parent_id_ = h.promise().debug_node_.id_;
@@ -731,14 +767,14 @@ struct when_any_init_state_awaiter {
 // Awaiter for waiting any task to complete (with values)
 template <typename State, typename ResultType, bool AllVoid>
 struct when_any_awaiter_impl {
-  std::shared_ptr<State> state_;
+  shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
     return state_->completed;
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
-    std::lock_guard<std::mutex> lock(state_->mtx);
+    std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return !state_->completed;
   }
@@ -757,14 +793,14 @@ struct when_any_awaiter_impl {
 // Awaiter for waiting any task to complete (all void)
 template <typename State, typename ResultType>
 struct when_any_awaiter_impl<State, ResultType, true> {
-  std::shared_ptr<State> state_;
+  shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
     return state_->completed;
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
-    std::lock_guard<std::mutex> lock(state_->mtx);
+    std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
     return !state_->completed;
   }
@@ -784,7 +820,7 @@ struct when_any_awaiter : when_any_awaiter_impl<State, ResultType, all_void<Ts..
   using base = when_any_awaiter_impl<State, ResultType, all_void<Ts...>::value>;
   using base::state_;
 
-  explicit when_any_awaiter(std::shared_ptr<State> state) : base{state} {}
+  explicit when_any_awaiter(shared_ptr<State> state) : base{state} {}
 };
 
 // Helper for expanding parameter pack
@@ -792,7 +828,7 @@ template <typename... Awaitables, size_t... Is>
 awaitable<when_any_result<awaitable_result_t<Awaitables>...>> when_any_impl(std::index_sequence<Is...>, Awaitables... awaitables) {
   using result_type = when_any_result<awaitable_result_t<Awaitables>...>;
   using state_type = when_any_state<awaitable_result_t<Awaitables>...>;
-  auto state = std::make_shared<state_type>();
+  auto state = make_shared<state_type>();
 
   // Init state from current coroutine context
   co_await when_any_init_state_awaiter<state_type>{state};

@@ -55,6 +55,18 @@ class shared_ptr_st {
   T* operator->() const noexcept {
     return ptr_;
   }
+
+  T* get() const noexcept {
+    return ptr_;
+  }
+
+  explicit operator bool() const noexcept {
+    return ptr_ != nullptr;
+  }
+
+  std::size_t use_count() const noexcept {
+    return storage_ ? storage_->count_ : 0;
+  }
 };
 
 }  // namespace coro::detail

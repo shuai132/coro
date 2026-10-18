@@ -168,7 +168,8 @@ GCC 10.3 无法通过协程回归测试：部分左值 awaiter 无法编译，�
 
 在没有 `std::mutex` 的裸机标准库上，按需包含组件头文件（例如 `coro/channel.hpp`），使用 `_st` 别名或显式传入互斥锁模板参数。
 这些工具链不提供依赖原生互斥锁的默认类型和 `_mt` 别名。需要提供平台执行器，并在禁用异常编译时定义 `CORO_DISABLE_EXCEPTION`。
-总入口 `coro.hpp`、内置执行器、`when_*` 和协程泄漏追踪目前仍要求标准线程支持。
+总入口 `coro.hpp`、内置执行器和协程泄漏追踪仍要求标准线程支持。启用 `CORO_SINGLE_THREAD` 后，
+`when_*` 也可以用于无线程标准库。
 
 标准库提供 `std::mutex` 且允许链接探测时，CMake 目标会传递检测到的原生线程依赖。
 无线程组件构建不引入原生线程库。直接使用头文件或仅允许编译探测的交叉工具链，需自行提供平台
@@ -1271,6 +1272,32 @@ FreeRTOS 等 RTOS 则更适合需要任务优先级、抢占调度，或依赖�
 
 配置宏和调试宏必须在包含任何 coro 头文件前定义，并在所有使用该库的编译单元中保持一致。建议通过公共配置头文件或作用于整个构建目标的宏定义统一设置。混用 `CORO_DISABLE_EXCEPTION` 等配置可能改变 promise 的内存布局，违反单一定义规则，即使 Debug 构建看似正常也不安全。
 
+### 单线程协程状态
+
+所有协程内部共享状态的访问、复制和销毁都在唯一执行器线程完成时，可以定义 `CORO_SINGLE_THREAD`：
+
+```cpp
+#define CORO_SINGLE_THREAD
+#include "coro/coro.hpp"
+#include "coro/when.hpp"
+```
+
+默认关闭。CMake 使用 `-DCORO_SINGLE_THREAD=ON`，`coro` 目标会导出该宏。
+`when_*` 和协程本地存储通过统一的内部指针别名与工厂函数使用 `shared_ptr_st`；
+组合器同时使用空互斥锁、普通完成计数器和标记。显式 `_mt` / `_st` 同步原语保持原有行为。
+
+其他线程可以通过线程安全的执行器投递工作，但不能直接操作协程内部共享状态。
+`detach()` 的启动回调和 Asio 适配器在投递边界仍使用标准共享所有权。
+裸机应用需要提供平台执行器；中断仅通过平台提供的 ISR 安全接口投递数据或通知，由主循环创建和操作协程，
+该宏不会让任意 `post()` 实现或同步原语自动具备 ISR 安全性。
+
+默认测试构建同时包含常规测试和 `single_thread` 专用 CTest 目标。
+CMake 全局启用该选项时，测试部分仅构建单线程目标；示例仍由原有构建选项控制：
+
+```bash
+ctest --test-dir build -L single_thread --output-on-failure
+```
+
 ### 禁用异常
 
 定义 `CORO_DISABLE_EXCEPTION` 宏可以禁用异常支持，减少开销：
@@ -1489,6 +1516,7 @@ ctest --test-dir build_wasm --output-on-failure
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF         | 启用 AddressSanitizer |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF         | 启用 ThreadSanitizer  |
 | `CORO_DISABLE_EXCEPTION`       | 未设置时自动探测 | 禁用异常支持              |
+| `CORO_SINGLE_THREAD`           | OFF         | 协程内部共享状态限定在唯一执行器线程 |
 | `CORO_DEBUG_ASYNC_STACK`       | OFF         | 启用异步调用链诊断信息 |
 
 macOS GitHub Actions runner 会自动启用 `CORO_TEST_RUNNER_VERY_SLOW`。

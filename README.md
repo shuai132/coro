@@ -186,8 +186,8 @@ GCC 10.3 does not pass the coroutine regression suite: some lvalue awaiters fail
 On bare-metal standard libraries without `std::mutex`, include individual component headers (for example,
 `coro/channel.hpp`) and use `_st` aliases or supply an explicit mutex template argument. Native-mutex defaults and
 `_mt` aliases are unavailable on these toolchains. Provide a platform executor and define `CORO_DISABLE_EXCEPTION`
-when compiling without exceptions. The umbrella `coro.hpp`, bundled executors, `when_*`, and promise leak tracing
-currently require standard threading support.
+when compiling without exceptions. The umbrella `coro.hpp`, bundled executors, and promise leak tracing
+require standard threading support. `when_*` can use a threadless standard library with `CORO_SINGLE_THREAD` enabled.
 
 The CMake target links detected native thread support when `std::mutex` is available and link probes are enabled.
 Threadless component builds keep no native thread dependency. For direct header use or compile-only cross toolchains,
@@ -1308,6 +1308,33 @@ facilities; for bare-metal deployment, verify toolchain support or use a platfor
 
 Define configuration and debug macros before including any coro header, with the same definitions in every translation unit that uses the library. Prefer a shared configuration header or target-wide build definitions. Mixing settings such as `CORO_DISABLE_EXCEPTION` can change promise layouts and violates the one-definition rule, even if a debug build appears to work.
 
+### Single-Thread Coroutine State
+
+Define `CORO_SINGLE_THREAD` when all coroutine-owned state is accessed, copied, and destroyed on one executor thread:
+
+```cpp
+#define CORO_SINGLE_THREAD
+#include "coro/coro.hpp"
+#include "coro/when.hpp"
+```
+
+The default is off. CMake users can enable it with `-DCORO_SINGLE_THREAD=ON`; the `coro` target exports the macro.
+Internal `when_*` and coroutine-local storage ownership uses `shared_ptr_st` through one shared-state alias and factory.
+Combiners also use a dummy mutex and plain completion counters and flags. Explicit `_mt` / `_st` primitives retain their existing behavior.
+
+Other threads may post work through a thread-safe executor, but must not directly access the coroutine-owned state.
+Launch callbacks in `detach()` and the Asio adapter retain standard shared ownership across their submission boundaries.
+Bare-metal applications supply a platform executor; interrupts only enqueue data or notifications through an ISR-safe path,
+while the main loop creates and operates on coroutines.
+The macro does not make arbitrary `post()` implementations or synchronization primitives ISR-safe.
+
+The default test build includes `single_thread` CTest targets alongside the normal suite.
+With the CMake option enabled globally, the test suite includes only these single-thread targets; examples retain their normal build option:
+
+```bash
+ctest --test-dir build -L single_thread --output-on-failure
+```
+
 ### Disable Exceptions
 
 Define `CORO_DISABLE_EXCEPTION` macro to disable exception support and reduce overhead:
@@ -1556,6 +1583,7 @@ For the no-exception configuration, use `-DCMAKE_CXX_FLAGS=-fno-exceptions -DCOR
 | `CORO_ENABLE_SANITIZE_ADDRESS` | OFF                  | Enable AddressSanitizer   |
 | `CORO_ENABLE_SANITIZE_THREAD`  | OFF                  | Enable ThreadSanitizer    |
 | `CORO_DISABLE_EXCEPTION`       | Detected if unset    | Disable exception support |
+| `CORO_SINGLE_THREAD`           | OFF                  | Confine coroutine-owned state to one executor thread |
 | `CORO_DEBUG_ASYNC_STACK`       | OFF                  | Enable async debugger metadata |
 
 `CORO_TEST_RUNNER_VERY_SLOW` is automatically enabled on macOS GitHub Actions runners.

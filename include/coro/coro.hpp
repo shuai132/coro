@@ -13,6 +13,7 @@
 
 #include "coro/detail/async_debug.hpp"
 #include "coro/detail/resume.hpp"
+#include "coro/detail/shared_ptr.hpp"
 #include "executor.hpp"
 
 #ifdef CORO_ENABLE_FRAME_CACHE
@@ -294,7 +295,7 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
 
 #ifdef CORO_ENABLE_LOCAL_STORAGE
   // Local storage support (lazily created, inherits from parent via parent pointer in coro_local_map)
-  std::shared_ptr<detail::coro_local_map> local_storage_;
+  detail::shared_ptr<detail::coro_local_map> local_storage_;
 #endif
 };
 
@@ -367,7 +368,7 @@ struct awaitable {
 #ifdef CORO_ENABLE_LOCAL_STORAGE
     // inherit local storage from parent coroutine (lazily, just save parent reference)
     if (h.promise().local_storage_) {
-      current_coro_handle_.promise().local_storage_ = std::make_shared<detail::coro_local_map>();
+      current_coro_handle_.promise().local_storage_ = detail::make_shared<detail::coro_local_map>();
       current_coro_handle_.promise().local_storage_->parent = h.promise().local_storage_;
     }
 #endif

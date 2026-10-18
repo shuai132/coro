@@ -2,11 +2,19 @@
 
 #include <cstdint>
 #include <limits>
+#include <type_traits>
 
 #include "assert_def.h"
 #include "coro/coro.hpp"
 #include "log.h"
 #include "utils.hpp"
+
+#ifdef CORO_TEST_EXPECT_SINGLE_THREAD
+#ifndef CORO_SINGLE_THREAD
+#error The coro target must export CORO_SINGLE_THREAD
+#endif
+static_assert(std::is_same_v<decltype(coro::detail::make_shared<int>()), coro::detail::shared_ptr_st<int>>);
+#endif
 
 extern "C" int c_value(void);
 

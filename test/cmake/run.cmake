@@ -184,25 +184,28 @@ test_asio_configuration(asio-updated-without-env "${asio_path_two}" OFF --unset=
 test_asio_configuration(asio-cleared "" OFF ASIO_PATH=)
 test_asio_configuration(asio-still-cleared "" OFF --unset=ASIO_PATH)
 
-configure_project(consumer "${CMAKE_CURRENT_LIST_DIR}/consumer")
-execute_process(
-    COMMAND "${CMAKE_COMMAND}" --build "${CORO_REGRESSION_BINARY_DIR}/consumer" --config Release
-    RESULT_VARIABLE result
-    OUTPUT_VARIABLE output
-    ERROR_VARIABLE error
-)
-if (NOT result EQUAL 0)
-    message(FATAL_ERROR "Consumer build failed:\n${output}\n${error}")
-endif ()
-check_output_warnings("Consumer build" "${output}\n${error}")
-execute_process(
-    COMMAND "${CMAKE_CTEST_COMMAND}" -C Release --output-on-failure
-    WORKING_DIRECTORY "${CORO_REGRESSION_BINARY_DIR}/consumer"
-    RESULT_VARIABLE result
-    OUTPUT_VARIABLE output
-    ERROR_VARIABLE error
-)
-if (NOT result EQUAL 0)
-    message(FATAL_ERROR "Consumer test failed:\n${output}\n${error}")
-endif ()
+foreach (single_thread OFF ON)
+    set(consumer_name "consumer-single-thread-${single_thread}")
+    configure_project(${consumer_name} "${CMAKE_CURRENT_LIST_DIR}/consumer" -DCORO_SINGLE_THREAD=${single_thread})
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" --build "${CORO_REGRESSION_BINARY_DIR}/${consumer_name}" --config Release
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE output
+        ERROR_VARIABLE error
+    )
+    if (NOT result EQUAL 0)
+        message(FATAL_ERROR "Consumer build failed:\n${output}\n${error}")
+    endif ()
+    check_output_warnings("Consumer build" "${output}\n${error}")
+    execute_process(
+        COMMAND "${CMAKE_CTEST_COMMAND}" -C Release --output-on-failure
+        WORKING_DIRECTORY "${CORO_REGRESSION_BINARY_DIR}/${consumer_name}"
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE output
+        ERROR_VARIABLE error
+    )
+    if (NOT result EQUAL 0)
+        message(FATAL_ERROR "Consumer test failed:\n${output}\n${error}")
+    endif ()
+endforeach ()
 message(STATUS "CMake integration regressions passed")
