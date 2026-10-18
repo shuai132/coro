@@ -117,3 +117,19 @@ python3 benchmark/resources.py \
   ./build_release/benchmark_no_frame_cache/benchmark/coro_benchmark \
   ./build_release/benchmark_no_frame_cache/benchmark/coro_benchmark_allocations 1000000
 ```
+
+## channel_st 引用计数优化
+
+Apple M1 Pro、macOS 27.0、Apple Clang 21.0.0，Release `-O3 -DNDEBUG`，关闭帧缓存。
+单线程使用 `executor_poll`；每轮 1000000 条消息、21 轮取中位数，每条包含发送和接收，单位 ns/条。
+标准共享指针基线与实际 `channel_st` 使用相同通道算法，仅状态所有权实现不同。
+
+| 用例 | std::shared_ptr 基线 | channel_st 非原子计数 | 耗时降低 |
+|---|---:|---:|---:|
+| 容量 1，交替收发 | 52.84 | 13.21 | 75.00% |
+| 容量 64，批量收发 | 53.43 | 13.25 | 75.20% |
+| 无缓冲，挂起唤醒 | 55.51 | 32.74 | 41.02% |
+| 容量 64，生产消费流水线 | 47.16 | 13.80 | 70.75% |
+
+两次独立运行中，缓冲收发耗时降低约 71%–75%，无缓冲降低约 41%–44%。
+数据仅代表本机的小消息测试，包含业务处理后的整体收益会降低。

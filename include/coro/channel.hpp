@@ -6,10 +6,12 @@
 #include <mutex>
 #include <optional>
 #include <queue>
+#include <type_traits>
 #include <utility>
 
 #include "coro/coro.hpp"
 #include "coro/detail/resume.hpp"
+#include "coro/detail/shared_ptr_st.hpp"
 #include "coro/detail/thread_support.hpp"
 #include "coro/dummy_mutex.hpp"
 
@@ -47,8 +49,18 @@ struct channel {
     std::atomic<bool> closed_{false};
   };
 
+  using state_ptr = std::conditional_t<std::is_same_v<MUTEX, dummy_mutex>, detail::shared_ptr_st<state>, std::shared_ptr<state>>;
+
+  static state_ptr make_state(size_t capacity) {
+    if constexpr (std::is_same_v<MUTEX, dummy_mutex>) {
+      return state_ptr::make(capacity);
+    } else {
+      return std::make_shared<state>(capacity);
+    }
+  }
+
  public:
-  explicit channel(size_t capacity = 0) : state_(std::make_shared<state>(capacity)) {}
+  explicit channel(size_t capacity = 0) : state_(make_state(capacity)) {}
 
   ~channel() {
     close();
@@ -60,14 +72,14 @@ struct channel {
   channel& operator=(channel&&) = delete;
 
   struct send_awaitable {
-    std::shared_ptr<state> state_;
+    state_ptr state_;
     T value_;
     std::coroutine_handle<> handle_{};
     executor* exec_ = nullptr;
     send_awaitable* next_ = nullptr;
     bool delivered_ = false;
 
-    send_awaitable(std::shared_ptr<state> state, T value) : state_(std::move(state)), value_(std::move(value)) {}
+    send_awaitable(state_ptr state, T value) : state_(std::move(state)), value_(std::move(value)) {}
 
     bool await_ready() noexcept {
       delivered_ = false;
@@ -141,13 +153,13 @@ struct channel {
 
   // Broadcast awaitable: sends the value to ALL waiting receivers
   struct broadcast_awaitable {
-    std::shared_ptr<state> state_;
+    state_ptr state_;
     T value_;
     std::coroutine_handle<> handle_{};
     executor* exec_ = nullptr;
     size_t receivers_notified_ = 0;
 
-    broadcast_awaitable(std::shared_ptr<state> state, T value) : state_(std::move(state)), value_(std::move(value)) {}
+    broadcast_awaitable(state_ptr state, T value) : state_(std::move(state)), value_(std::move(value)) {}
 
     bool await_ready() noexcept {
       receivers_notified_ = 0;
@@ -217,13 +229,13 @@ struct channel {
   }
 
   struct recv_awaitable {
-    std::shared_ptr<state> state_;
+    state_ptr state_;
     std::coroutine_handle<> handle_;
     executor* exec_ = nullptr;
     std::optional<T> pending_value_ = std::nullopt;
     recv_awaitable* next_ = nullptr;
 
-    explicit recv_awaitable(std::shared_ptr<state> state) noexcept : state_(std::move(state)) {}
+    explicit recv_awaitable(state_ptr state) noexcept : state_(std::move(state)) {}
 
     bool await_ready() noexcept(noexcept(std::declval<MUTEX&>().lock())) {
       // A previous await_suspend may have reserved a value before a buffer refill failed.
@@ -407,7 +419,7 @@ struct channel {
   }
 
  private:
-  std::shared_ptr<state> state_;
+  state_ptr state_;
 };
 
 #if CORO_DETAIL_HAS_STD_MUTEX

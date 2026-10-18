@@ -700,6 +700,8 @@ Go-style channel implementation for inter-coroutine communication:
 Waiting senders and receivers bound to an executor resume through its queue, including when the channel closes.
 This keeps channel pipelines from growing the native call stack. Unbound waiters resume inline.
 
+`channel_st<T>` is intended for single-threaded use. The channel and its awaiters must be used and destroyed on the same thread.
+
 #### Unbuffered Channel
 
 ```cpp

@@ -7,8 +7,10 @@
 #include <functional>
 #include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include "log.h"
@@ -23,6 +25,130 @@
 #include "utils.hpp"
 
 using namespace coro;
+
+template <typename T>
+struct is_standard_channel_owner : std::false_type {};
+
+template <typename T>
+struct is_standard_channel_owner<std::shared_ptr<T>> : std::true_type {};
+
+void test_channel_owner_selection() {
+  // Keep the optimization limited to the exact dummy_mutex specialization.
+  static_assert(!is_standard_channel_owner<decltype(std::declval<channel_st<int>>().recv().state_)>::value);
+  static_assert(is_standard_channel_owner<decltype(std::declval<channel_mt<int>>().recv().state_)>::value);
+  static_assert(is_standard_channel_owner<decltype(std::declval<channel<int, registration_lifetime_mutex>>().recv().state_)>::value);
+  static_assert(std::is_same_v<channel_st<int>, channel<int, dummy_mutex>>);
+}
+
+struct channel_lifetime_value {
+  int& live_;
+
+  explicit channel_lifetime_value(int& live) : live_(live) {
+    ++live_;
+  }
+  ~channel_lifetime_value() {
+    --live_;
+  }
+};
+
+void test_shared_ptr_st_lifetime() {
+  using owner = detail::shared_ptr_st<channel_lifetime_value>;
+  static_assert(std::is_nothrow_copy_constructible_v<owner>);
+  static_assert(std::is_nothrow_move_constructible_v<owner>);
+  static_assert(std::is_nothrow_copy_assignable_v<owner>);
+  static_assert(std::is_nothrow_move_assignable_v<owner>);
+  int live = 0;
+  int replaced_live = 0;
+  {
+    auto first = owner::make(live);
+    auto copy = first;
+    auto moved = std::move(copy);
+    auto* alias = &moved;
+    moved = *alias;
+    moved = std::move(*alias);
+    auto replacement = owner::make(replaced_live);
+    replacement = first;
+    ASSERT(replaced_live == 0);
+    first = {};
+    replacement = std::move(moved);
+    ASSERT(live == 1);
+    ASSERT(replacement->live_ == 1);
+  }
+  ASSERT(live == 0);
+}
+
+void test_channel_unstarted_awaiter_lifetime(bool drain) {
+  using channel_type = channel_st<std::shared_ptr<channel_lifetime_value>>;
+  int live = 0;
+  std::optional<channel_type::recv_awaitable> last_receiver;
+  {
+    auto ch = std::make_unique<channel_type>(1);
+    auto frame = []() -> async<void> {
+      co_return;
+    }();
+    {
+      auto seed = ch->send(std::make_shared<channel_lifetime_value>(live));
+      ASSERT(!seed.await_ready());
+      ASSERT(!seed.await_suspend(frame.current_coro_handle_));
+      ASSERT(seed.await_resume());
+    }
+    last_receiver.emplace(ch->recv());
+    auto sending = ch->send(nullptr);
+    auto broadcasting = ch->broadcast(nullptr);
+    ch.reset();
+    ASSERT(live == 1);
+    ASSERT(sending.await_ready());
+    ASSERT(!sending.await_resume());
+    ASSERT(broadcasting.await_ready());
+    ASSERT(broadcasting.await_resume() == 0);
+  }
+  ASSERT(live == 1);
+  if (drain) {
+    auto frame = []() -> async<void> {
+      co_return;
+    }();
+    ASSERT(!last_receiver->await_ready());
+    ASSERT(!last_receiver->await_suspend(frame.current_coro_handle_));
+    auto value = last_receiver->await_resume();
+    ASSERT(value && *value);
+    ASSERT(live == 1);
+  }
+  last_receiver.reset();
+  ASSERT(live == 0);
+  check_coro_leak();
+}
+
+async<void> channel_destroyed_waiter(channel_st<std::unique_ptr<channel_lifetime_value>>* ch, bool sending, int& live, int& completed) {
+  if (sending) {
+    ASSERT(!(co_await ch->send(std::make_unique<channel_lifetime_value>(live))));
+  } else {
+    ASSERT(!(co_await ch->recv()));
+  }
+  ++completed;
+}
+
+void test_channel_pending_awaiter_lifetime(bool sending) {
+  executor_poll exec;
+  int live = 0;
+  int completed = 0;
+  auto ch = std::make_unique<channel_st<std::unique_ptr<channel_lifetime_value>>>();
+  for (int i = 0; i < 3; ++i) {
+    channel_destroyed_waiter(ch.get(), sending, live, completed).detach(exec);
+  }
+  for (int i = 0; i < 3; ++i) {
+    exec.poll();
+  }
+  ASSERT(completed == 0);
+  ASSERT(live == (sending ? 3 : 0));
+  ch.reset();
+  ASSERT(completed == 0);
+  for (int i = 0; i < 3; ++i) {
+    exec.poll();
+  }
+  ASSERT(completed == 3);
+  ASSERT(live == 0);
+  check_coro_leak();
+}
 
 void test_channel_lock_failure() {
   static_assert(!noexcept(std::declval<channel_mt<int>&>().recv().await_ready()));
@@ -254,6 +380,13 @@ CORO_TEST_NOINLINE void operator delete(void* memory, std::size_t) noexcept {
 }
 
 template <typename CHANNEL>
+CORO_TEST_NOINLINE void construct_channel_allocation_probe(std::optional<CHANNEL>& ch) {
+  // Isolate construction from the allocation counter: GCC 14 otherwise reports a
+  // spurious uninitialized reference count when optimizing the large-value probe.
+  ch.emplace();
+}
+
+template <typename CHANNEL>
 size_t empty_channel_allocation_bytes() {
   size_t bytes = 0;
   channel_allocation_bytes = &bytes;
@@ -263,10 +396,11 @@ size_t empty_channel_allocation_bytes() {
     }
   } cleanup;
   {
-    CHANNEL ch;
-    ASSERT(ch.empty());
-    ASSERT(!ch.full());
-    ASSERT(ch.size() == 0);
+    std::optional<CHANNEL> ch;
+    construct_channel_allocation_probe(ch);
+    ASSERT(ch->empty());
+    ASSERT(!ch->full());
+    ASSERT(ch->size() == 0);
   }
   return bytes;
 }
@@ -384,18 +518,25 @@ void test_receive_result_reentrancy() {
         ch.close();
         ++calls;
       };
-      std::atomic<bool> completed{false};
-      std::thread worker([&] {
+      auto consume = [&] {
         auto result = receiving.await_resume();
         ASSERT(result && result->state == &state);
-        completed.store(true, std::memory_order_release);
-      });
-      auto deadline = std::chrono::steady_clock::now() + 5s;
-      while (!completed.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(1ms);
+      };
+      if constexpr (std::is_same_v<CHANNEL, channel_st<reentrant_channel_value>>) {
+        consume();
+      } else {
+        std::atomic<bool> completed{false};
+        std::thread worker([&] {
+          consume();
+          completed.store(true, std::memory_order_release);
+        });
+        auto deadline = std::chrono::steady_clock::now() + 5s;
+        while (!completed.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+          std::this_thread::sleep_for(1ms);
+        }
+        ASSERT(completed.load(std::memory_order_acquire));
+        worker.join();
       }
-      ASSERT(completed.load(std::memory_order_acquire));
-      worker.join();
       ASSERT(calls > 0);
       ASSERT(ch.is_closed());
       ASSERT(!receiving.pending_value_);
@@ -1234,6 +1375,12 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_channel_owner_selection();
+  test_shared_ptr_st_lifetime();
+  for (bool option : {false, true}) {
+    test_channel_unstarted_awaiter_lifetime(option);
+    test_channel_pending_awaiter_lifetime(option);
+  }
   test_channel_lock_failure();
   check_registration_lifetime(channel_receiver_registration_lifetime);
   check_registration_lifetime(channel_sender_registration_lifetime);
