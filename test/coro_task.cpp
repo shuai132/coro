@@ -1052,7 +1052,30 @@ void test_time_count_duration() {
   ASSERT(before / 1000 <= microseconds && microseconds <= after / 1000);
 }
 
+template <typename EXECUTOR>
+void test_empty_queued_callbacks() {
+  EXECUTOR exec;
+  bool completed = false;
+  exec.post({});
+  exec.post_delayed_ns({}, 0);
+  exec.post_continuation({});
+  exec.post([&] {
+    completed = true;
+    exec.stop();
+  });
+  if constexpr (std::is_same_v<EXECUTOR, executor_loop>) {
+    exec.run_loop();
+  } else {
+    for (int i = 0; i < 4; ++i) {
+      exec.poll();
+    }
+  }
+  ASSERT(completed);
+}
+
 int main() {
+  test_empty_queued_callbacks<executor_poll>();
+  test_empty_queued_callbacks<executor_loop>();
 #if defined(CORO_ENABLE_FRAME_CACHE) && !defined(CORO_DISABLE_EXCEPTION)
   test_frame_cache_bound_and_reuse();
 #endif

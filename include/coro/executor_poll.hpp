@@ -20,7 +20,7 @@ class executor_poll : public executor_base {
     }
 
     auto task = get_next_task();
-    if (task) {
+    if (task.callable()) {
       task();
     }
   }
