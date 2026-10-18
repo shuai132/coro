@@ -227,6 +227,53 @@ void test_receive_lock_count_and_close() {
   ASSERT(!receiving.await_resume());
 }
 
+struct channel_move_count {
+  int moves = 0;
+  int copies = 0;
+  int live = 0;
+};
+
+struct counted_channel_value {
+  channel_move_count* counts_;
+
+  explicit counted_channel_value(channel_move_count& counts) : counts_(&counts) {
+    ++counts_->live;
+  }
+  counted_channel_value(const counted_channel_value& other) : counts_(other.counts_) {
+    ++counts_->copies;
+    ++counts_->live;
+  }
+  counted_channel_value(counted_channel_value&& other) noexcept : counts_(other.counts_) {
+    ++counts_->moves;
+    ++counts_->live;
+  }
+  ~counted_channel_value() {
+    --counts_->live;
+  }
+};
+
+template <typename CHANNEL>
+void test_channel_awaiter_value_moves() {
+  CHANNEL ch;
+  channel_move_count counts;
+  {
+    auto sending = ch.send(counted_channel_value{counts});
+    ASSERT(counts.moves == 1 && counts.copies == 0 && counts.live == 1);
+    // Direct construction from an lvalue remains supported.
+    typename CHANNEL::send_awaitable copy{sending.state_, sending.value_};
+    ASSERT(counts.copies == 1 && counts.live == 2);
+  }
+  ASSERT(counts.live == 0);
+  counts = {};
+  {
+    auto broadcasting = ch.broadcast(counted_channel_value{counts});
+    ASSERT(counts.moves == 1 && counts.copies == 0 && counts.live == 1);
+    typename CHANNEL::broadcast_awaitable copy{broadcasting.state_, broadcasting.value_};
+    ASSERT(counts.copies == 1 && counts.live == 2);
+  }
+  ASSERT(counts.live == 0);
+}
+
 async<void> channel_receiver_registration_lifetime(registration_lifetime_state& state) {
   channel<int, registration_lifetime_mutex> channel;
   auto handle_owner = channel_registration_handle();
@@ -1422,6 +1469,8 @@ async<void> run_all_tests() {
 
 int main() {
   test_receive_lock_count_and_close();
+  test_channel_awaiter_value_moves<channel_mt<counted_channel_value>>();
+  test_channel_awaiter_value_moves<channel_st<counted_channel_value>>();
   test_channel_owner_selection();
   test_shared_ptr_st_lifetime();
   for (bool option : {false, true}) {

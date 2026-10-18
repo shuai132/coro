@@ -79,7 +79,10 @@ struct channel {
     send_awaitable* next_ = nullptr;
     bool delivered_ = false;
 
-    send_awaitable(state_ptr state, T value) : state_(std::move(state)), value_(std::move(value)) {}
+    send_awaitable(state_ptr state, T&& value) : state_(std::move(state)), value_(std::move(value)) {}
+    send_awaitable(state_ptr state, const T& value)
+      requires std::is_copy_constructible_v<T>
+        : state_(std::move(state)), value_(value) {}
 
     bool await_ready() noexcept {
       delivered_ = false;
@@ -159,7 +162,10 @@ struct channel {
     executor* exec_ = nullptr;
     size_t receivers_notified_ = 0;
 
-    broadcast_awaitable(state_ptr state, T value) : state_(std::move(state)), value_(std::move(value)) {}
+    broadcast_awaitable(state_ptr state, T&& value) : state_(std::move(state)), value_(std::move(value)) {}
+    broadcast_awaitable(state_ptr state, const T& value)
+      requires std::is_copy_constructible_v<T>
+        : state_(std::move(state)), value_(value) {}
 
     bool await_ready() noexcept {
       receivers_notified_ = 0;
