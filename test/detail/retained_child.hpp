@@ -87,6 +87,19 @@ void run(bool reject, bool worker) {
   ASSERT(live == 1);
   ASSERT(starts == (reject ? 0 : 1));
 
+#ifndef CORO_DISABLE_EXCEPTION
+  if (reject) {
+    // Reusing the retained child must not retain any of the failed parents.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      bool retried = false;
+      coro::spawn(parent_executor, parent(task, retried, true));
+      parent_executor.poll();
+      ASSERT(retried);
+      ASSERT(live == 1 && starts == 0);
+    }
+  }
+#endif
+
   // The first parent has finished and released its frame; the retained child still belongs to task.
   child_executor.reject_ = false;
   task.detach(child_executor);

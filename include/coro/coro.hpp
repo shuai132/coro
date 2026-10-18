@@ -116,6 +116,32 @@ struct callback_awaiter;
 
 namespace coro {
 
+namespace detail {
+
+// Keep submission and rollback out of the same-executor transfer path, shared by all result types.
+#if defined(_MSC_VER)
+__declspec(noinline)
+#elif defined(__GNUC__)
+[[gnu::noinline]]
+#endif
+    inline void post_child(executor* exec, std::coroutine_handle<> child, [[maybe_unused]] std::coroutine_handle<>& parent_handle,
+                           [[maybe_unused]] executor*& parent_executor) {
+#ifndef CORO_DISABLE_EXCEPTION
+  try {
+#endif
+    exec->post(resume_task{child});
+#ifndef CORO_DISABLE_EXCEPTION
+  } catch (...) {
+    // A rejected start keeps the child owned by its awaitable, with no suspended parent to resume.
+    parent_handle = {};
+    parent_executor = nullptr;
+    throw;
+  }
+#endif
+}
+
+}  // namespace detail
+
 template <typename T>
 struct awaitable_promise_value {
   template <typename R = T>
@@ -392,22 +418,10 @@ struct awaitable {
     current_coro_handle_.promise().parent_handle_ = h;
     current_coro_handle_.promise().parent_executor_ = h.promise().executor_;
     auto* child_exec = current_coro_handle_.promise().executor_;
-    if (child_exec && child_exec != h.promise().executor_) {
+    if (child_exec != h.promise().executor_) {
       // Distinct executors may share a thread; queue nested starts to keep the native stack bounded.
-#ifndef CORO_DISABLE_EXCEPTION
-      try {
-#endif
-        child_exec->post([handle = current_coro_handle_]() {
-          handle.resume();
-        });
-#ifndef CORO_DISABLE_EXCEPTION
-      } catch (...) {
-        // A rejected start leaves the child owned by its awaitable, without a suspended parent to resume.
-        current_coro_handle_.promise().parent_handle_ = {};
-        current_coro_handle_.promise().parent_executor_ = nullptr;
-        throw;
-      }
-#endif
+      detail::post_child(child_exec, current_coro_handle_, current_coro_handle_.promise().parent_handle_,
+                         current_coro_handle_.promise().parent_executor_);
       return std::noop_coroutine();
     }
     return current_coro_handle_;
