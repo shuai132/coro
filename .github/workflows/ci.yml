@@ -281,6 +281,11 @@ jobs:
         working-directory: build
         run: ctest -C ${{ matrix.build_type }} -L examples --output-on-failure
 
+      - name: Test single-thread coroutine state
+        if: always()
+        working-directory: build
+        run: ctest -C ${{ matrix.build_type }} -L single_thread --output-on-failure
+
       - name: Windows-MSVC Compatible
         if: matrix.os == 'windows-latest' && matrix.compiler == 'msvc'
         working-directory: build
@@ -370,11 +375,6 @@ jobs:
         working-directory: build
         run: |
           ./coro_when${{ matrix.env.BIN_SUFFIX }}
-
-      - name: Test single-thread coroutine state
-        if: always()
-        working-directory: build
-        run: ctest -C ${{ matrix.build_type }} -L single_thread --output-on-failure
 
       - name: Test wait_group
         if: always()
