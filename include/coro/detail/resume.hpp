@@ -29,7 +29,7 @@ inline void resume_via(executor* exec, std::coroutine_handle<> handle) {
 
 inline void post_resume_via(executor* exec, std::coroutine_handle<> handle) {
   if (exec) {
-    exec->post_continuation(resume_task{handle});
+    exec->post(resume_task{handle});
   } else {
     resume_handle(handle);
   }

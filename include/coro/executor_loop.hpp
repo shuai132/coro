@@ -62,6 +62,8 @@ class executor_loop : public executor_base {
   executor_loop& operator=(const executor_loop&) = delete;
   executor_loop& operator=(executor_loop&&) = delete;
 
+  // After stop(), drain queued work, waiting for accepted timers to reach their deadlines.
+  // Queue draining does not guarantee completion of coroutines awaiting further submissions or external callbacks.
   void run_loop() {
     running_loop_context context{this};
     for (;;) {
@@ -98,27 +100,13 @@ class executor_loop : public executor_base {
     }
   }
 
+  // Invoke inline only inside this executor's active run_loop(), including nested calls and draining after stop().
+  // Outside that context, use post(); returning or throwing from run_loop() removes its context.
   void dispatch(std::function<void()> fn) override {
     if (running_loop_context::contains(this)) {
       fn();
     } else {
       post(std::move(fn));
-    }
-  }
-
-  void post_continuation(std::function<void()> fn) override {
-    if (stop_.load(std::memory_order_acquire) && !running_loop_context::contains(this)) {
-      return;
-    }
-    auto task = make_task(std::move(fn));
-    {
-      std::lock_guard<std::mutex> lock(queue_mutex_);
-      // Already accepted work may resume suspended operations while this loop drains after stop().
-      if (stop_.load(std::memory_order_acquire) && !running_loop_context::contains(this)) {
-        return;
-      }
-      task_queue_.emplace(std::move(task));
-      notify_waiters(false);
     }
   }
 };

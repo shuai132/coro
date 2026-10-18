@@ -342,13 +342,16 @@ executor_loop executor;
 
 // 启动协程...
 
-// 阻塞运行直到 stop() 被调用
+// 阻塞运行，直到 stop() 被调用并排空已入队任务
 executor.run_loop();
 ```
 
-调用 `stop()` 后，会唤醒所有空闲的 `run_loop()` 线程。循环继续处理已入队的任务（包括定时任务），直到队列清空。
+调用 `stop()` 后，会唤醒所有空闲的 `run_loop()` 线程。循环继续处理已入队的任务（包括等待定时任务原定的截止时间），直到队列清空。
+此后 `post()` 和 `post_delayed_ns()` 丢弃新提交的任务并释放其回调，包括来自该执行器活动 `run_loop()` 上下文的调用。
+协程的排队恢复统一通过 `post()`，遵循同一规则；只有 `stop()` 前已经入队的恢复任务会被继续处理。
 
 只有调用线程处于该执行器的 `run_loop()` 范围内（包括嵌套调用）时，`dispatch()` 才会直接执行。
+这一规则在 `stop()` 后排空队列期间仍然适用；其他线程的 `dispatch()` 转交给 `post()`。
 循环正常返回或因异常退出后，该线程不再被视为活动的循环执行上下文。
 
 ### executor_poll
@@ -370,6 +373,10 @@ while (!executor.stopped()) {
 }
 ```
 
+`executor_poll` 的 `poll_one()` 每次最多执行一个就绪任务，必须始终由同一个固定线程轮询。
+首次轮询后，该线程的 `dispatch()` 会直接执行，包括两次轮询之间和 `stop()` 之后；首次轮询前及其他线程的调用都转交给 `post()`。
+`stop()` 后不再取出排队任务，`post()` 和 `post_delayed_ns()` 丢弃新任务并释放其回调。
+
 `poll_one()` 返回 `std::size_t`：执行一个就绪任务时返回 `1`，没有就绪任务或执行器已停止时返回 `0`。
 它跳过空回调，不等待新任务或定时器到期；返回 `0` 不代表所有协程已完成，仍可能存在未到期的定时器。
 计数以本次从队列取出并调用的任务为单位，任务内联调用的回调不额外计数，协程的一次恢复也计为一个任务。
@@ -382,7 +389,6 @@ while (!executor.stopped()) {
 ```cpp
 struct my_executor : coro::executor {
     void dispatch(std::function<void()> fn) override;      // 立即或稍后执行
-    // 可选：重写 post_continuation(fn)，在 stop() 后排空已接收任务时保留恢复通知。
     void post(std::function<void()> fn) override;          // 稍后执行
     void post_delayed_ns(std::function<void()> fn, uint64_t delay_ns) override;  // 延迟执行
 };
@@ -390,6 +396,8 @@ struct my_executor : coro::executor {
 
 `coro::executor` 只定义调度操作。`stop()` 属于 `executor_loop`、`executor_poll` 等具体事件循环类型；
 外部事件循环由调用方通过所属上下文停止。
+`executor_base` 是内建执行器的队列共享实现，构造函数为 `protected`，派生类负责实现 `dispatch()` 和任务驱动入口。
+`dispatch()` 可能在返回前执行回调并重入调用方；需要排队时使用 `post()`，但其他执行线程仍可能在 `post()` 返回前运行回调。
 
 ## 线程安全契约
 
@@ -399,6 +407,7 @@ struct my_executor : coro::executor {
 
 子协程默认继承父执行器，也可显式绑定；已绑定的协程通过自己的执行器恢复，立即就绪的操作原地继续。
 `stop()` 不取消协程：`executor_loop` 继续处理已排队任务和定时器，`executor_poll` 不再取任务。
+排空队列不等于等待所有协程完成：执行器停止后，新提交的定时器和协程排队恢复请求，无论从哪个线程发起都会被拒绝。
 应先等待协程和外部回调完成，再停止执行器、join 线程并销毁相关对象。
 
 ### 默认名称、`_mt` 与 `_st` 的选择

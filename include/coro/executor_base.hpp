@@ -16,8 +16,11 @@
 #include "executor.hpp"
 
 namespace coro {
+// Shared queues for built-in executors; derived types provide dispatch() and task driving.
 class executor_base : public coro::executor {
  protected:
+  executor_base() = default;
+
   struct queued_task {
     std::coroutine_handle<> handle_{};
     detail::queued_callback callback_;
@@ -68,17 +71,10 @@ class executor_base : public coro::executor {
   std::mutex queue_mutex_;
   std::queue<queued_task> task_queue_;
   std::priority_queue<DelayedTask, std::vector<DelayedTask>, DelayedTaskCompare> delayed_task_queue_;
-  std::atomic<std::uintptr_t> running_thread_token_{0};
   std::atomic<bool> stop_{false};
   bool prefer_delayed_{true};  // Protected by queue_mutex_.
 
  protected:
-  static std::uintptr_t current_thread_token() noexcept {
-    // Each live thread has distinct storage; compare only its address, without hashing or dynamic initialization.
-    static thread_local unsigned char token;
-    return reinterpret_cast<std::uintptr_t>(&token);
-  }
-
   // Notify before releasing queue_mutex_, so consuming the task also observes notification completion.
   virtual void notify_waiters([[maybe_unused]] bool stopping) {}
 
@@ -117,8 +113,6 @@ class executor_base : public coro::executor {
   }
 
  public:
-  executor_base() = default;
-
   ~executor_base() override {
     executor_base::stop();
   }
@@ -128,14 +122,8 @@ class executor_base : public coro::executor {
   executor_base& operator=(const executor_base&) = delete;
   executor_base& operator=(executor_base&&) = delete;
 
-  void dispatch(std::function<void()> fn) override {
-    if (running_thread_token_.load(std::memory_order_acquire) == current_thread_token()) {
-      fn();
-    } else {
-      post(std::move(fn));
-    }
-  }
-
+  // Submissions after stop(), including coroutine resumptions, are discarded on every thread.
+  // Rejected callbacks are released without invocation.
   void post(std::function<void()> fn) override {
     if (stop_.load(std::memory_order_acquire)) {
       return;
@@ -149,6 +137,7 @@ class executor_base : public coro::executor {
     notify_waiters(false);
   }
 
+  // Like post(), reject new timers after stop(); accepted timers keep their original deadlines.
   void post_delayed_ns(std::function<void()> fn, const uint64_t delay_ns) override {
     if (stop_.load(std::memory_order_acquire)) {
       return;
@@ -164,6 +153,9 @@ class executor_base : public coro::executor {
     notify_waiters(false);
   }
 
+  // Reject new posts and timers, then notify runners. executor_loop drains queued work;
+  // executor_poll stops dequeuing. This neither cancels coroutines nor joins runner threads,
+  // and derived dispatch() implementations may still invoke callbacks inline.
   virtual void stop() {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     stop_.store(true, std::memory_order_release);

@@ -40,6 +40,8 @@
 
 using namespace coro;
 
+static_assert(!std::is_default_constructible_v<executor_base>);
+
 #ifndef CORO_DISABLE_EXCEPTION
 // Fault injection is confined to the thread performing the timer insertion.
 thread_local bool fail_next_task_allocation = false;
@@ -237,7 +239,7 @@ struct reentrant_task_target {
   }
 };
 
-enum class queued_task_kind { posted, timed, continuation };
+enum class queued_task_kind { posted, timed };
 
 void test_loop_destruction_after_published_task(queued_task_kind kind) {
   for (int i = 0; i < 32; ++i) {
@@ -253,9 +255,6 @@ void test_loop_destruction_after_published_task(queued_task_kind kind) {
           break;
         case queued_task_kind::timed:
           exec->post_delayed_ns(std::move(finish), 0);
-          break;
-        case queued_task_kind::continuation:
-          exec->post_continuation(std::move(finish));
           break;
       }
     });
@@ -281,9 +280,6 @@ void test_queued_callback_reenters_executor(queued_task_kind kind, bool reenter_
         break;
       case queued_task_kind::timed:
         exec.post_delayed_ns(std::move(callback), 0);
-        break;
-      case queued_task_kind::continuation:
-        exec.post_continuation(std::move(callback));
         break;
     }
     if constexpr (std::is_same_v<EXECUTOR, executor_loop>) {
@@ -650,6 +646,92 @@ void test_stop_wakes_all_idle_loop_threads(bool stop_from_loop) {
   ASSERT(stopped_on_time);
 }
 
+void test_poll_dispatch_context() {
+  executor_poll exec;
+  executor& scheduler = exec;
+  int called = 0;
+  auto callback = [&] {
+    ++called;
+  };
+
+  scheduler.dispatch(callback);
+  ASSERT(called == 0);
+  exec.poll_one();
+  ASSERT(called == 1);
+
+  // The fixed polling thread may dispatch inline even between poll_one() calls.
+  scheduler.dispatch(callback);
+  ASSERT(called == 2);
+  std::thread producer([&] {
+    scheduler.dispatch(callback);
+  });
+  producer.join();
+  ASSERT(called == 2);
+  exec.poll_one();
+  ASSERT(called == 3);
+
+  scheduler.post(callback);
+  ASSERT(called == 3);
+  exec.stop();
+  exec.poll_one();
+  ASSERT(called == 3);
+  scheduler.dispatch(callback);
+  ASSERT(called == 4);
+
+  auto token = std::make_shared<int>(0);
+  std::weak_ptr<int> retained = token;
+  auto rejected = [token] {
+    ASSERT(false);
+  };
+  scheduler.post(rejected);
+  scheduler.post_delayed_ns(rejected, 0);
+  std::thread stopped_producer([&] {
+    scheduler.dispatch(rejected);
+  });
+  stopped_producer.join();
+  token.reset();
+  ASSERT(retained.use_count() == 1);  // Only the local callback retains the resource.
+}
+
+void test_loop_dispatch_after_stop() {
+  executor_loop exec;
+  executor& scheduler = exec;
+  int called = 0;
+  scheduler.dispatch([&] {
+    auto callback = [&] {
+      ++called;
+    };
+    scheduler.post(callback);
+    scheduler.post_delayed_ns(callback, 0);
+    exec.stop();
+    scheduler.dispatch(callback);
+    ASSERT(called == 1);
+    scheduler.post([] {
+      ASSERT(false);
+    });
+    scheduler.post_delayed_ns(
+        [] {
+          ASSERT(false);
+        },
+        0);
+    std::thread producer([&] {
+      scheduler.dispatch([] {
+        ASSERT(false);
+      });
+      scheduler.post([] {
+        ASSERT(false);
+      });
+    });
+    producer.join();
+  });
+  ASSERT(called == 0);
+  exec.run_loop();
+  ASSERT(called == 3);
+  scheduler.dispatch([] {
+    ASSERT(false);
+  });
+}
+
 void test_loop_releases_thread_context() {
   executor_loop executor;
   executor.post([&] {
@@ -658,11 +740,11 @@ void test_loop_releases_thread_context() {
   executor.run_loop();
   auto token = std::make_shared<int>(42);
   std::weak_ptr<int> retained = token;
-  executor.post_continuation([token] {
+  executor.dispatch([token] {
     ASSERT(false);
   });
   token.reset();
-  // A loop that has finished draining must reject and release new continuations.
+  // A loop that has returned must no longer dispatch inline and must release rejected callbacks.
   ASSERT(retained.expired());
 }
 
@@ -675,9 +757,10 @@ void test_nested_loop_preserves_thread_context() {
     });
     executor.run_loop();
     // The enclosing run_loop is still executing this accepted callback.
-    executor.post_continuation([&] {
+    executor.dispatch([&] {
       ++completed;
     });
+    ASSERT(completed == 1);
     ++completed;
   });
   executor.run_loop();
@@ -719,8 +802,11 @@ void test_concurrent_loop_thread_context() {
     }
     ASSERT(entered.load(std::memory_order_acquire) == 2);
     executor.stop();
-    executor.post_continuation([&] {
+    executor.dispatch([&] {
       completed.fetch_add(1, std::memory_order_relaxed);
+    });
+    executor.post([] {
+      ASSERT(false);
     });
   };
   executor.post(task);
@@ -1065,7 +1151,6 @@ void test_poll_one_ready_tasks() {
   ASSERT(exec.poll_one() == 0);  // A future timer is pending, but is not ready.
   exec.post({});
   exec.post_delayed_ns({}, 0);
-  exec.post_continuation({});
   int called = 0;
   exec.post([&] {
     ++called;
@@ -1156,7 +1241,6 @@ void test_empty_queued_callbacks() {
   bool completed = false;
   exec.post({});
   exec.post_delayed_ns({}, 0);
-  exec.post_continuation({});
   exec.post([&] {
     completed = true;
     exec.stop();
@@ -1183,7 +1267,7 @@ int main() {
 #if defined(CORO_ENABLE_FRAME_CACHE) && !defined(CORO_DISABLE_EXCEPTION)
   test_frame_cache_bound_and_reuse();
 #endif
-  for (auto kind : {queued_task_kind::posted, queued_task_kind::timed, queued_task_kind::continuation}) {
+  for (auto kind : {queued_task_kind::posted, queued_task_kind::timed}) {
     test_loop_destruction_after_published_task(kind);
     for (bool reenter_on_copy : {false, true}) {
       test_queued_callback_reenters_executor<executor_poll>(kind, reenter_on_copy);
@@ -1214,6 +1298,8 @@ int main() {
   test_post_racing_with_stop(true);
   test_stop_wakes_all_idle_loop_threads(false);
   test_stop_wakes_all_idle_loop_threads(true);
+  test_poll_dispatch_context();
+  test_loop_dispatch_after_stop();
   test_loop_releases_thread_context();
   test_nested_loop_preserves_thread_context();
   test_nested_distinct_loop_context();

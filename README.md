@@ -362,13 +362,16 @@ executor_loop executor;
 
 // Launch coroutines...
 
-// Block until stop() is called
+// Block until stop() is called and queued work is drained
 executor.run_loop();
 ```
 
-After `stop()`, all idle `run_loop()` threads are woken. The loops keep servicing already queued tasks, including timers, until the queues are empty.
+After `stop()`, all idle `run_loop()` threads are woken. The loops keep servicing already queued tasks, waiting for timers to reach their original deadlines, until the queues are empty.
+Subsequent `post()` and `post_delayed_ns()` calls discard new tasks and release their callbacks, including calls from this executor's active `run_loop()` context.
+Queued coroutine resumptions use `post()` and follow the same rule; only resumptions already queued before `stop()` are drained.
 
 `dispatch()` runs inline only while its calling thread is inside this executor's `run_loop()`, including nested calls.
+This still applies while draining after `stop()`; calls from other threads go through `post()`.
 After the loop returns or throws, that thread is no longer treated as an active loop context.
 
 ### executor_poll
@@ -390,6 +393,10 @@ while (!executor.stopped()) {
 }
 ```
 
+Each `executor_poll::poll_one()` executes at most one ready task and must always be called from the same fixed thread.
+After polling starts, `dispatch()` runs inline on that thread, including between polls and after `stop()`; calls before the first poll or from other threads go through `post()`.
+After `stop()`, polling stops dequeuing tasks, and `post()` and `post_delayed_ns()` discard new tasks and release their callbacks.
+
 `poll_one()` returns `std::size_t`: `1` after invoking one ready task, or `0` when no task is ready or the executor has stopped.
 It skips empty callbacks and does not wait for new tasks or timers to expire. A return value of `0` does not mean all coroutines
 have completed; future timers may still be pending. The count covers tasks dequeued and invoked by this call, including a coroutine
@@ -403,7 +410,6 @@ Inherit from `coro::executor` interface to implement custom executors:
 ```cpp
 struct my_executor : coro::executor {
     void dispatch(std::function<void()> fn) override;      // Execute immediately or later
-    // Optional: override post_continuation(fn) to queue already accepted work while draining after stop().
     void post(std::function<void()> fn) override;          // Execute later
     void post_delayed_ns(std::function<void()> fn, uint64_t delay_ns) override;  // Delayed execution
 };
@@ -411,6 +417,8 @@ struct my_executor : coro::executor {
 
 `coro::executor` only defines scheduling operations. `stop()` belongs to concrete event-loop types such as
 `executor_loop` and `executor_poll`; stop an external event loop through its owning context.
+`executor_base` shares the built-in executors' queue implementation and has a `protected` constructor; derived classes provide `dispatch()` and task-driving entry points.
+`dispatch()` may invoke a callback before returning and reenter its caller. Use `post()` to queue work, although another execution thread may still run the callback before `post()` returns.
 
 ## Thread Safety Contract
 
@@ -420,6 +428,7 @@ Use `_mt` primitives across threads; keep all `_st` operations and notifications
 
 Children inherit the parent's executor unless explicitly bound; bound coroutines resume through their executors, while immediately ready operations continue inline.
 `stop()` does not cancel coroutines: `executor_loop` drains queued tasks and timers, while `executor_poll` stops dequeuing.
+Draining queues does not wait for every coroutine to finish: after the executor stops, new timers and queued coroutine resumptions are rejected regardless of the calling thread.
 Wait for coroutines and external callbacks to finish before stopping executors, joining threads, and destroying related objects.
 
 ### Choosing Default Names, `_mt`, and `_st`

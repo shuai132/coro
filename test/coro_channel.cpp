@@ -425,29 +425,48 @@ void test_channel_wakeup_chain() {
   }
 }
 
-async<void> stopped_loop_channel_sender(channel<int>& ch) {
+template <typename CHANNEL>
+async<void> stopped_loop_channel_sender(CHANNEL& ch) {
   co_await sleep(1ms);
   ASSERT(co_await ch.send(42));
 }
 
-void test_stopped_loop_channel_continuation() {
-  executor_loop executor;
-  channel<int> ch;
-  int completed = 0;
-  auto on_completed = [&] {
-    ++completed;
-  };
-  stopped_loop_channel_sender(ch).detach(executor, on_completed);
-  channel_chain_endpoint(ch, false, false).detach(executor, on_completed);
-  executor.post([&] {
-    executor.stop();
-    // Ordinary new work is still rejected while the accepted timer drains.
-    executor.post([] {
-      ASSERT(false);
+template <typename CHANNEL>
+void test_stopped_loop_channel_resumption(bool stop_before_send) {
+  std::weak_ptr<int> retained;
+  {
+    executor_loop executor;
+    CHANNEL ch;
+    bool resumed = false;
+    bool sender_completed = false;
+    auto token = std::make_shared<int>(42);
+    retained = token;
+    // Keep the frame unstarted and owned so a rejected wakeup can be released safely.
+    auto make_receiver = [](bool& called, std::shared_ptr<int> resource) -> async<void> {
+      ASSERT(*resource == 42);
+      called = true;
+      co_return;
+    };
+    auto receiver = make_receiver(resumed, std::move(token)).bind_executor(executor);
+    auto receiving = ch.recv();
+    ASSERT(!receiving.await_ready());
+    ASSERT(receiving.await_suspend(receiver.current_coro_handle_));
+    executor.post([&] {
+      stopped_loop_channel_sender(ch).detach(executor, [&] {
+        ASSERT(!resumed);  // Waking a receiver must queue it rather than dispatch inline.
+        sender_completed = true;
+        executor.stop();
+      });
+      if (stop_before_send) {
+        executor.stop();
+      }
     });
-  });
-  executor.run_loop();
-  ASSERT(completed == 2);
+    executor.run_loop();
+    ASSERT(sender_completed);
+    ASSERT(resumed == !stop_before_send);
+    ASSERT(receiving.await_resume() == 42);
+  }
+  ASSERT(retained.expired());
   check_coro_leak();
 }
 
@@ -1483,7 +1502,10 @@ int main() {
   test_channel_lock_failure();
   check_registration_lifetime(channel_receiver_registration_lifetime);
   check_registration_lifetime(channel_sender_registration_lifetime);
-  test_stopped_loop_channel_continuation();
+  for (bool stopped : {false, true}) {
+    test_stopped_loop_channel_resumption<channel_mt<int>>(stopped);
+    test_stopped_loop_channel_resumption<channel_st<int>>(stopped);
+  }
   test_channel_wakeup_chain<channel_mt<int>>();
   test_channel_wakeup_chain<channel_st<int>>();
   test_unbuffered_channel_does_not_allocate_message_storage<channel_mt>();
