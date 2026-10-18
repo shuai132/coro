@@ -1046,7 +1046,7 @@ int main() {
   test_deep_local_storage_lookup_and_cleanup();
   LOG("Local Storage test init");
   executor_loop executor;
-  run_all_tests().detach_with_callback(executor, [&] {
+  run_all_tests().detach(executor, [&] {
     executor.stop();
   });
   executor.run_loop();

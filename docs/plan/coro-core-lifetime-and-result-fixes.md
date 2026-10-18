@@ -83,7 +83,7 @@
   - Replaced the exception-enabled result variant initial state with `std::monostate`.
   - Prevented callback awaiter re-entry by returning `false` from `await_suspend()` when the callback completes inline.
   - Kept asynchronous callback completion on `dispatch()` so executor-loop shutdown can still drain already-scheduled delayed work.
-  - Removed the exception-handler overload from `with_callback()` and `detach_with_callback()` when `CORO_DISABLE_EXCEPTION` is defined.
+  - Removed the exception-handler overload from `with_callback()` and `detach()` when `CORO_DISABLE_EXCEPTION` is defined.
   - Made `spawn_local()` directly await its child when there is no current executor.
   - Made debug promise allocation failure explicit: throw `std::bad_alloc` with exceptions, abort without exceptions.
 - Verified with the local CLT toolchain:

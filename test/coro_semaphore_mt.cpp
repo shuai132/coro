@@ -111,7 +111,7 @@ void run_basic_test() {
       executor_loop& executor = executors[i];
 
       for (int j = 0; j < TASKS_PER_THREAD; j++) {
-        semaphore_mt_basic_test(sem, counter).detach_with_callback(executor, [&]() {
+        semaphore_mt_basic_test(sem, counter).detach(executor, [&]() {
           if (++completed == TOTAL_TASKS) {
             for (auto& exec : executors) {
               exec.stop();
@@ -156,7 +156,7 @@ void run_resource_pool_test() {
 
       for (int j = 0; j < TASKS_PER_THREAD; j++) {
         int task_id = i * TASKS_PER_THREAD + j;
-        semaphore_mt_resource_pool_test(sem, max_concurrent, current_using, task_id).detach_with_callback(executor, [&]() {
+        semaphore_mt_resource_pool_test(sem, max_concurrent, current_using, task_id).detach(executor, [&]() {
           if (++completed == TOTAL_TASKS) {
             for (auto& exec : executors) {
               exec.stop();
@@ -199,7 +199,7 @@ void run_producer_consumer_test() {
   threads.emplace_back([&, idx = 0]() {
     executor_loop& executor = executors[idx];
 
-    producer(empty_slots, filled_slots, produced, ITEM_COUNT).detach_with_callback(executor, [&]() {
+    producer(empty_slots, filled_slots, produced, ITEM_COUNT).detach(executor, [&]() {
       executor.stop();
     });
 
@@ -210,7 +210,7 @@ void run_producer_consumer_test() {
   threads.emplace_back([&, idx = 1]() {
     executor_loop& executor = executors[idx];
 
-    consumer(empty_slots, filled_slots, consumed, ITEM_COUNT).detach_with_callback(executor, [&]() {
+    consumer(empty_slots, filled_slots, consumed, ITEM_COUNT).detach(executor, [&]() {
       executor.stop();
     });
 
@@ -247,7 +247,7 @@ void run_binary_semaphore_test() {
     threads.emplace_back([&, i]() {
       executor_loop& executor = executors[i];
 
-      semaphore_mt_binary_test(sem, counter, max_concurrent, ITERATIONS).detach_with_callback(executor, [&]() {
+      semaphore_mt_binary_test(sem, counter, max_concurrent, ITERATIONS).detach(executor, [&]() {
         if (++completed == THREAD_COUNT) {
           for (auto& exec : executors) {
             exec.stop();

@@ -249,7 +249,7 @@ int main() {
     executor_loop executor;
 
     // Launch the task and stop the event loop when it finishes
-    process().detach_with_callback(executor, [&executor] {
+    process().detach(executor, [&executor] {
         executor.stop();
     });
     
@@ -266,6 +266,14 @@ async<void> main_task() {
 
 ### Launch Coroutine with Callback
 
+`detach(executor)` launches a detached task; `detach(executor, on_success)` and, with exceptions enabled,
+`detach(executor, on_success, on_error)` also support result and exception callbacks. All overloads consume the task and return `void`.
+The success callback receives no arguments for a `void` task, or the moved result otherwise. The error callback receives exceptions
+thrown by the task or its success callback. With exceptions enabled, the callback overloads ignore these exceptions if no error callback
+is supplied. Callbacks may run before `detach()` returns when the executor dispatches inline.
+
+`with_callback(...)` still returns a lazy `async<void>` that can subsequently be awaited or detached.
+
 ```cpp
 async<int> compute() {
     co_await sleep(50ms);
@@ -273,7 +281,7 @@ async<int> compute() {
 }
 
 // Handle result with callback
-compute().detach_with_callback(
+compute().detach(
     executor,
     [](int result) {
         std::cout << "Result: " << result << std::endl;
@@ -784,11 +792,11 @@ int main() {
     };
 
     for (int id = 1; id <= 3; ++id) {
-        receive_once(ch, id).detach_with_callback(exec, on_finished);
+        receive_once(ch, id).detach(exec, on_finished);
         exec.poll();  // Ensure this receiver reaches recv() before broadcasting.
     }
 
-    broadcast_once(ch).detach_with_callback(exec, on_finished);
+    broadcast_once(ch).detach(exec, on_finished);
     while (finished != 4) {
         exec.poll();  // Keep the channel alive until all four tasks finish.
     }
@@ -1359,6 +1367,8 @@ add_definitions(-DCORO_DISABLE_EXCEPTION)
 Defining `CORO_DISABLE_EXCEPTION` removes all explicit library `try`/`catch` blocks, exception storage, rethrowing,
 and exception-dependent cleanup and rollback, even when the compiler still enables exceptions. The coroutine-required
 `unhandled_exception()` hook remains as a fail-fast `std::terminate()` path; it does not capture, store, or propagate errors.
+
+In this mode, `detach()` and `with_callback()` do not provide overloads accepting an error callback; success callbacks remain available.
 
 In this mode, logging hooks, user value operations, mutex operations, and executor callbacks used by the library must not
 throw. The library does not catch diagnostic failures or recover from failed creation, broadcast copies, or waiter unlocks.

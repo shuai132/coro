@@ -380,7 +380,7 @@ void test_channel_wakeup_chain() {
     }
     if (mode == channel_chain_mode::buffered) {
       bool filled = false;
-      fill_channel_chain(channels).detach_with_callback(executor, [&] {
+      fill_channel_chain(channels).detach(executor, [&] {
         filled = true;
       });
       executor.poll();
@@ -391,11 +391,11 @@ void test_channel_wakeup_chain() {
       ++completed;
     };
     for (int index = 0; index < stages; ++index) {
-      channel_chain_stage(*channels[index], *channels[index + 1], mode).detach_with_callback(executor, on_completed);
+      channel_chain_stage(*channels[index], *channels[index + 1], mode).detach(executor, on_completed);
     }
     const bool forward = mode == channel_chain_mode::forward || mode == channel_chain_mode::close_receivers;
     const bool closing = mode == channel_chain_mode::close_receivers || mode == channel_chain_mode::close_senders;
-    channel_chain_endpoint(forward ? *channels.back() : *channels.front(), !forward, closing).detach_with_callback(executor, on_completed);
+    channel_chain_endpoint(forward ? *channels.back() : *channels.front(), !forward, closing).detach(executor, on_completed);
     // Every stage must reach its first wait before the transfer or close begins.
     for (int index = 0; index <= stages; ++index) {
       executor.poll();
@@ -408,7 +408,7 @@ void test_channel_wakeup_chain() {
       });
     } else {
       ++expected;
-      channel_chain_endpoint(forward ? *channels.front() : *channels.back(), forward, false).detach_with_callback(executor, on_completed);
+      channel_chain_endpoint(forward ? *channels.front() : *channels.back(), forward, false).detach(executor, on_completed);
     }
     for (int attempt = 0; completed != expected && attempt < 10000; ++attempt) {
       executor.poll();
@@ -437,8 +437,8 @@ void test_stopped_loop_channel_continuation() {
   auto on_completed = [&] {
     ++completed;
   };
-  stopped_loop_channel_sender(ch).detach_with_callback(executor, on_completed);
-  channel_chain_endpoint(ch, false, false).detach_with_callback(executor, on_completed);
+  stopped_loop_channel_sender(ch).detach(executor, on_completed);
+  channel_chain_endpoint(ch, false, false).detach(executor, on_completed);
   executor.post([&] {
     executor.stop();
     // Ordinary new work is still rejected while the accepted timer drains.
@@ -1492,7 +1492,7 @@ int main() {
   test_receive_result_reentrancy<channel_st<reentrant_channel_value>>();
   LOG("Channel test init");
   executor_loop executor;
-  run_all_tests().detach_with_callback(executor, [&] {
+  run_all_tests().detach(executor, [&] {
     executor.stop();
   });
   LOG("loop...");

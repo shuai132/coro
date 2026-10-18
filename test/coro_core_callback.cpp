@@ -392,6 +392,101 @@ struct non_default_move_only_value {
   int value;
 };
 
+template <bool VALUE>
+async<std::conditional_t<VALUE, non_default_move_only_value, void>> detach_callback_task(executor& expected, bool asynchronous) {
+  ASSERT(co_await current_executor() == &expected);
+  co_await callback_awaiter<void>([asynchronous](executor* exec, auto callback) {
+    if (asynchronous) {
+      exec->post(std::move(callback));
+    } else {
+      callback();
+    }
+  });
+  if constexpr (VALUE) {
+    co_return non_default_move_only_value{42};
+  }
+}
+
+template <bool VALUE>
+void test_detach_callbacks() {
+  for (bool asynchronous : {false, true}) {
+    for (bool inline_start : {false, true}) {
+      for (bool bound_child : {false, true}) {
+        executor_poll exec;
+        executor_poll child_exec;
+        if (inline_start) {
+          exec.poll();
+        }
+        int completed = 0;
+        auto token = std::make_unique<std::shared_ptr<int>>(std::make_shared<int>(7));
+        std::weak_ptr<int> retained = *token;
+        auto on_success = [token = std::move(token), &completed](auto... values) {
+          ASSERT(**token == 7);
+          ((ASSERT(values.value == 42)), ...);
+          ++completed;
+        };
+        auto task = detach_callback_task<VALUE>(bound_child ? child_exec : exec, asynchronous);
+        if (bound_child) {
+          task = task.bind_executor(child_exec);
+        }
+        task.detach(exec, std::move(on_success));
+        ASSERT(!task.current_coro_handle_);
+        ASSERT(completed == (inline_start && !asynchronous && !bound_child ? 1 : 0));
+        for (int turn = 0; turn < 8; ++turn) {
+          exec.poll();
+          child_exec.poll();
+        }
+        ASSERT(completed == 1);
+        ASSERT(retained.expired());
+        check_coro_leak();
+      }
+    }
+  }
+}
+
+#ifndef CORO_DISABLE_EXCEPTION
+async<int> detach_callback_failure(bool task_fails, bool asynchronous) {
+  if (asynchronous) {
+    co_await sleep(0ns);
+  }
+  if (task_fails) {
+    throw std::runtime_error("task failed");
+  }
+  co_return 42;
+}
+
+void test_detach_error_callbacks() {
+  for (bool asynchronous : {false, true}) {
+    for (bool task_fails : {false, true}) {
+      executor_poll exec;
+      int successes = 0;
+      int errors = 0;
+      auto on_success = [&](int value) {
+        ASSERT(value == 42);
+        ++successes;
+        throw std::runtime_error("callback failed");
+      };
+      auto on_error = [&](std::exception_ptr error) {
+        ++errors;
+        try {
+          std::rethrow_exception(error);
+        } catch (const std::runtime_error& failure) {
+          ASSERT(std::string_view(failure.what()) == (task_fails ? "task failed" : "callback failed"));
+        }
+      };
+      auto task = detach_callback_failure(task_fails, asynchronous);
+      task.detach(exec, on_success, on_error);
+      for (int turn = 0; turn < 4; ++turn) {
+        exec.poll();
+      }
+      ASSERT(successes == (task_fails ? 0 : 1));
+      ASSERT(errors == 1);
+      check_coro_leak();
+    }
+  }
+}
+#endif
+
 static_assert(std::is_nothrow_move_constructible_v<callback_awaiter<void>>);
 static_assert(std::is_nothrow_move_constructible_v<callback_awaiter<int>>);
 static_assert(std::is_nothrow_move_constructible_v<callback_awaiter<std::unique_ptr<int>>>);
@@ -701,6 +796,11 @@ async<void> run_callback_tests(std::shared_ptr<callback_state> state, int& void_
 }
 
 int main() {
+  test_detach_callbacks<false>();
+  test_detach_callbacks<true>();
+#ifndef CORO_DISABLE_EXCEPTION
+  test_detach_error_callbacks();
+#endif
   test_callback_uses_prestart_binding<false, false>();
   test_callback_uses_prestart_binding<false, true>();
   test_callback_uses_prestart_binding<true, false>();
@@ -735,7 +835,7 @@ int main() {
   int non_default_result = 0;
 
   run_callback_tests(state, void_completed_count, observed_exec, async_result, async_callback_started, move_only_result, non_default_result)
-      .detach_with_callback(loop, [&] {
+      .detach(loop, [&] {
         loop.stop();
       });
   loop.run_loop();

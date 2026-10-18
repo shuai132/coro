@@ -112,7 +112,7 @@ int main() {
     exec.run_loop();
   });
   // All coroutine state stays on worker, while ownership of the launch callback crosses threads.
-  test_runtime(worker.get_id()).detach_with_callback(exec, [&] {
+  test_runtime(worker.get_id()).detach(exec, [&] {
     exec.stop();
   });
   worker.join();

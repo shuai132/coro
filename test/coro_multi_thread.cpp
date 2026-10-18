@@ -349,7 +349,7 @@ int main() {
     LOG("All tests completed");
   }(exec1, exec2, exec1_tid, exec2_tid);
 
-  test_coro.detach_with_callback(exec3, [&] {
+  test_coro.detach(exec3, [&] {
     LOG("Test completed, stopping executors");
     exec1.stop();
     exec2.stop();

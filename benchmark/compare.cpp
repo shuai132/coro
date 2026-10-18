@@ -161,7 +161,7 @@ constexpr std::array workload_names{"immediate", "nested_8", "post", "executor_p
 template <typename EXECUTOR>
 void start_coro(EXECUTOR& executor, value_type count, workload work, value_type& sum, bool& completed, std::exception_ptr& error) {
   coro_work(count, work)
-      .detach_with_callback(
+      .detach(
           executor,
           [&](value_type result) {
             sum = result;

@@ -248,7 +248,7 @@ void test_callback_child_frame_cleanup() {
       };
       auto task = child_with_frame_parameter<T>(frame_parameter{live}, delayed, fail);
 #ifndef CORO_DISABLE_EXCEPTION
-      task.detach_with_callback(executor, completion, [&](std::exception_ptr error) {
+      task.detach(executor, completion, [&](std::exception_ptr error) {
         ASSERT(fail);
         ASSERT(live == 0);
         bool caught = false;
@@ -262,7 +262,7 @@ void test_callback_child_frame_cleanup() {
         completed = true;
       });
 #else
-      task.detach_with_callback(executor, completion);
+      task.detach(executor, completion);
 #endif
       while (!completed) {
         executor.poll();

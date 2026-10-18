@@ -24,7 +24,7 @@ async<void> example() {
 
 int main() {
   executor_loop executor;
-  example().detach_with_callback(executor, [&] {
+  example().detach(executor, [&] {
     executor.stop();
   });
   executor.run_loop();

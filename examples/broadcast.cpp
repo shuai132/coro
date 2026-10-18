@@ -23,10 +23,10 @@ int main() {
     ++finished;
   };
   for (int id = 1; id <= 2; ++id) {
-    receive(ch, id).detach_with_callback(executor, on_finished);
+    receive(ch, id).detach(executor, on_finished);
     executor.poll();  // 广播只发给当前等待者，先让接收协程进入等待。
   }
-  broadcast(ch).detach_with_callback(executor, on_finished);
+  broadcast(ch).detach(executor, on_finished);
   while (finished != 3) {
     executor.poll();  // 适合由应用自己的循环驱动协程。
   }

@@ -421,7 +421,7 @@ int main() {
   int mixed_result = 0;
   int when_any_result = 0;
 
-  run_all_tests(unique_result, when_all_sum, mixed_result, when_any_result).detach_with_callback(executor, [&] {
+  run_all_tests(unique_result, when_all_sum, mixed_result, when_any_result).detach(executor, [&] {
     executor.stop();
   });
   executor.run_loop();

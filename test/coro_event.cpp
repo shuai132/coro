@@ -277,7 +277,7 @@ int main() {
   check_registration_lifetime(event_registration_lifetime);
   LOG("Event test init");
   executor_loop executor;
-  run_all_tests().detach_with_callback(executor, [&] {
+  run_all_tests().detach(executor, [&] {
     executor.stop();
   });
   executor.run_loop();

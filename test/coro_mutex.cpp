@@ -256,7 +256,7 @@ int main() {
   LOG("Mutex test init");
   mutex_guard_reentrant_destruction_test();
   executor_loop executor;
-  run_all_tests().detach_with_callback(executor, [&] {
+  run_all_tests().detach(executor, [&] {
     executor.stop();
   });
   LOG("loop...");

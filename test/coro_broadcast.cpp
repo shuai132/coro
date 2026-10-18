@@ -384,7 +384,7 @@ void run_multithread_tests() {
       co_return;
     };
 
-    broadcaster(ch, executors, waiting_count, receiver_count).detach_with_callback(exec_broadcast, [&exec_broadcast]() {
+    broadcaster(ch, executors, waiting_count, receiver_count).detach(exec_broadcast, [&exec_broadcast]() {
       exec_broadcast.stop();
     });
 
@@ -469,7 +469,7 @@ void run_multithread_tests() {
       co_return;
     };
 
-    broadcaster(ch, executors, waiting_count, total_received).detach_with_callback(exec_broadcast, [&exec_broadcast]() {
+    broadcaster(ch, executors, waiting_count, total_received).detach(exec_broadcast, [&exec_broadcast]() {
       exec_broadcast.stop();
     });
 
@@ -516,7 +516,7 @@ async<void> run_all_tests() {
 int main() {
   LOG("Broadcast channel test init");
   executor_loop executor;
-  run_all_tests().detach_with_callback(executor, [&] {
+  run_all_tests().detach(executor, [&] {
     executor.stop();
   });
   LOG("loop...");

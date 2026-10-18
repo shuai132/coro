@@ -246,7 +246,7 @@ int main() {
   check_registration_lifetime(wait_group_registration_lifetime);
   LOG("Wait Group test init");
   executor_loop executor;
-  run_all_tests().detach_with_callback(executor, [&] {
+  run_all_tests().detach(executor, [&] {
     executor.stop();
   });
   LOG("loop...");

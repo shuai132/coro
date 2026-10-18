@@ -396,20 +396,20 @@ void test_coro(executor& executor) {
   /// test: coro_task_int
   coro_task_int().detach(executor);
   // or
-  coro_task().detach_with_callback(executor, [&] {
+  coro_task().detach(executor, [&] {
     LOG("coro_task finished");
   });
   // or:
   coro_task_int().with_callback([](int) {}).detach(executor);
 
   /// test: coro_task_exception
-  coro_task_exception().detach_with_callback(executor, [&](int v) {
+  coro_task_exception().detach(executor, [&](int v) {
     LOG("coro_task_exception finished: %d", v);
     ASSERT(v == 2);
   });
   // or:
 #ifndef CORO_DISABLE_EXCEPTION
-  coro_task_exception(true).detach_with_callback(
+  coro_task_exception(true).detach(
       executor,
       [&](int) {
         ASSERT(false);
@@ -993,7 +993,7 @@ void test_executors_sharing_loop() {
         executor& parent = reverse ? static_cast<executor&>(alias) : loop;
         executor& child = reverse ? static_cast<executor&>(loop) : alias;
         bool completed = false;
-        await_shared_loop_children<T>(&parent, child, delayed, fail).detach_with_callback(parent, [&] {
+        await_shared_loop_children<T>(&parent, child, delayed, fail).detach(parent, [&] {
           completed = true;
           loop.stop();
         });

@@ -83,7 +83,7 @@ async<void> example() {
 
 int main() {
     executor_loop executor;
-    example().detach_with_callback(executor, [&executor] {
+    example().detach(executor, [&executor] {
         executor.stop(); // Stop the executor only after application tasks exit.
     });
     executor.run_loop(); // Run on this thread only, as required by the _st primitives.

@@ -262,7 +262,7 @@ void test_nested_when() {
       nested_when_executor executor;
       auto frame_token = std::make_shared<int>(0);
       bool completed = false;
-      await_nested_when<ANY, T>(delayed, fail, frame_token).detach_with_callback(executor, [&] {
+      await_nested_when<ANY, T>(delayed, fail, frame_token).detach(executor, [&] {
         completed = true;
       });
       for (int attempt = 0; !completed && attempt < 10000; ++attempt) {
@@ -406,7 +406,7 @@ async<void> await_reentrant_any_result(reentrant_result_state& state, bool delay
 void run_reentrant_test(async<void> task) {
   executor_loop executor;
   std::atomic<bool> completed{false};
-  task.detach_with_callback(executor, [&] {
+  task.detach(executor, [&] {
     completed.store(true, std::memory_order_release);
     executor.stop();
   });
@@ -1105,7 +1105,7 @@ template <typename EVENT, typename GROUP>
 void test_cooperative_when_stop(bool fail) {
   executor_poll executor;
   bool completed = false;
-  await_cooperative_when_stop<EVENT, GROUP>(fail).detach_with_callback(executor, [&] {
+  await_cooperative_when_stop<EVENT, GROUP>(fail).detach(executor, [&] {
     completed = true;
   });
   // Drain the nested combiner's completion after the branch cleanup notifications.
@@ -1180,7 +1180,7 @@ int main() {
   test_cooperative_when_stop<event_mt, wait_group_mt>(true);
 #endif
   executor_loop executor;
-  run_all_tests().detach_with_callback(executor, [&] {
+  run_all_tests().detach(executor, [&] {
     executor.stop();
   });
   LOG("loop...");

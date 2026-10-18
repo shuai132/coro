@@ -230,7 +230,7 @@ int main() {
     executor_loop executor;
 
     // 启动任务，并在任务完成时停止事件循环
-    process().detach_with_callback(executor, [&executor] {
+    process().detach(executor, [&executor] {
         executor.stop();
     });
 
@@ -247,6 +247,13 @@ async<void> main_task() {
 
 ### 使用回调启动协程
 
+`detach(executor)` 启动分离任务；`detach(executor, on_success)` 和启用异常时的
+`detach(executor, on_success, on_error)` 还支持结果与异常回调。这些重载均消费任务对象并返回 `void`。
+成功回调在 `void` 任务完成时不带参数，否则接收移出的结果；异常回调接收任务或成功回调抛出的异常。
+启用异常但未提供异常回调时，回调重载忽略这些异常。执行器内联调度时，回调可能在 `detach()` 返回前执行。
+
+`with_callback(...)` 仍返回尚未启动的 `async<void>`，可以随后等待或分离启动。
+
 ```cpp
 async<int> compute() {
     co_await sleep(50ms);
@@ -254,7 +261,7 @@ async<int> compute() {
 }
 
 // 使用回调处理结果
-compute().detach_with_callback(
+compute().detach(
     executor,
     [](int result) {
         std::cout << "Result: " << result << std::endl;
@@ -758,11 +765,11 @@ int main() {
     };
 
     for (int id = 1; id <= 3; ++id) {
-        receive_once(ch, id).detach_with_callback(exec, on_finished);
+        receive_once(ch, id).detach(exec, on_finished);
         exec.poll();  // 确保此接收者已进入 recv()，再进行广播。
     }
 
-    broadcast_once(ch).detach_with_callback(exec, on_finished);
+    broadcast_once(ch).detach(exec, on_finished);
     while (finished != 4) {
         exec.poll();  // 等待全部四个任务结束，再销毁 channel。
     }
@@ -1320,6 +1327,8 @@ add_definitions(-DCORO_DISABLE_EXCEPTION)
 定义 `CORO_DISABLE_EXCEPTION` 后，即使编译器仍支持异常，也会移除库内所有显式 `try`/`catch`、异常保存、
 重新抛出以及依赖异常的清理和回滚代码。协程标准要求的 `unhandled_exception()` 钩子保留为
 `std::terminate()` 失败终止路径，不捕获、保存或传播错误。
+
+该模式下，`detach()` 与 `with_callback()` 不提供接收异常回调的重载；成功回调仍可正常使用。
 
 该模式下，库使用的日志钩子、用户值操作、互斥锁操作和执行器回调不得抛异常。库不会捕获诊断日志错误，
 也不再提供创建失败、广播复制失败或等待者解锁失败的异常恢复。异常逃出协程体、该模式下的 promise 构造、

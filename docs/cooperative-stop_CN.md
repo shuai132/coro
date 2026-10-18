@@ -81,7 +81,7 @@ async<void> example() {
 
 int main() {
     executor_loop executor;
-    example().detach_with_callback(executor, [&executor] {
+    example().detach(executor, [&executor] {
         executor.stop(); // 业务任务退出后才停止执行器。
     });
     executor.run_loop(); // 只在这个线程运行，适用 _st 原语。

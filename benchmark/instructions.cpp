@@ -267,7 +267,7 @@ constexpr std::array scenarios{
   value_type sum = 0;
   bool done = false;
   selected.work_(count, sum)
-      .detach_with_callback(
+      .detach(
           executor,
           [&] {
             done = true;
@@ -318,7 +318,7 @@ int check() {
   }
   executor_poll executor;
   bool done = false;
-  check_callbacks().detach_with_callback(executor, [&] {
+  check_callbacks().detach(executor, [&] {
     done = true;
   });
   while (!done) {

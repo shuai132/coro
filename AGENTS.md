@@ -193,7 +193,7 @@ async<void> test_feature() {
 int main() {
   LOG("Test init");
   executor_loop executor;
-  test_feature().detach_with_callback(executor, [&] {
+  test_feature().detach(executor, [&] {
     executor.stop();
   });
   executor.run_loop();

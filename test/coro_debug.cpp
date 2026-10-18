@@ -240,7 +240,7 @@ int main() {
       loop.post([] {
         debug_leaf_handle.resume();
       });
-    }).detach_with_callback(loop, [&loop] {
+    }).detach(loop, [&loop] {
       loop.stop();
     });
     loop.run_loop();
@@ -249,7 +249,7 @@ int main() {
   ASSERT(detail::async_debug_registry::head_ == nullptr);
   {
     executor_loop loop;
-    debug_any().detach_with_callback(loop, [&loop] {
+    debug_any().detach(loop, [&loop] {
       // The winning branch has destroyed when_any_impl; the loser is still alive.
       auto* node = detail::async_debug_registry::head_;
       while (node && node->frame_ != debug_leaf_handle.address()) {

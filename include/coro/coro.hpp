@@ -479,9 +479,9 @@ struct awaitable {
   }
 
   template <typename Function>
-  auto detach_with_callback(auto& executor, Function completion_handler, std::function<void(std::exception_ptr)> exception_handler = nullptr) {
+  void detach(auto& executor, Function completion_handler, std::function<void(std::exception_ptr)> exception_handler = nullptr) {
     auto coro = with_callback(std::move(completion_handler), std::move(exception_handler));
-    return coro.detach(executor);  // launched here
+    coro.detach(executor);
   }
 #else
   template <typename Function>
@@ -499,9 +499,9 @@ struct awaitable {
   }
 
   template <typename Function>
-  auto detach_with_callback(auto& executor, Function completion_handler) {
+  void detach(auto& executor, Function completion_handler) {
     auto coro = with_callback(std::move(completion_handler));
-    return coro.detach(executor);  // launched here
+    coro.detach(executor);
   }
 #endif
 

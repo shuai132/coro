@@ -243,7 +243,7 @@ void test_concurrent_with_stalled_loop() {
   asio::io_context context;
   asio_executor exec(context);
   bool completed = false;
-  test_concurrent().detach_with_callback(exec, [&] {
+  test_concurrent().detach(exec, [&] {
     completed = true;
   });
   asio::steady_timer stall(context);
@@ -724,7 +724,7 @@ void test_thread_pool_executor(int worker_count) {
   asio::thread_pool pool(worker_count);
   asio_executor exec(asio::any_io_executor{pool.get_executor()});
   std::atomic<int> completed{0};
-  pool_child().detach_with_callback(exec, [&completed] {
+  pool_child().detach(exec, [&completed] {
     completed.fetch_add(1, std::memory_order_relaxed);
   });
   asio::co_spawn(pool, await_pool_coro(completed), [](std::exception_ptr error) {
