@@ -364,11 +364,16 @@ executor_poll executor;
 
 // 在你的主循环中调用
 while (!executor.stopped()) {
-    executor.poll();
+    executor.poll_one();
     // 其他工作...
     std::this_thread::sleep_for(10ms);
 }
 ```
+
+`poll_one()` 返回 `std::size_t`：执行一个就绪任务时返回 `1`，没有就绪任务或执行器已停止时返回 `0`。
+它跳过空回调，不等待新任务或定时器到期；返回 `0` 不代表所有协程已完成，仍可能存在未到期的定时器。
+计数以本次从队列取出并调用的任务为单位，任务内联调用的回调不额外计数，协程的一次恢复也计为一个任务。
+普通回调抛出的异常会向调用方传播；单个任务的执行时间不受 `poll_one()` 限制。
 
 ### 自定义执行器
 
@@ -766,12 +771,12 @@ int main() {
 
     for (int id = 1; id <= 3; ++id) {
         receive_once(ch, id).detach(exec, on_finished);
-        exec.poll();  // 确保此接收者已进入 recv()，再进行广播。
+        exec.poll_one();  // 确保此接收者已进入 recv()，再进行广播。
     }
 
     broadcast_once(ch).detach(exec, on_finished);
     while (finished != 4) {
-        exec.poll();  // 等待全部四个任务结束，再销毁 channel。
+        exec.poll_one();  // 等待全部四个任务结束，再销毁 channel。
     }
     return 0;
 }

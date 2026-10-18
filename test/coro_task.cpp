@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdlib>
 #include <ctime>
 #include <functional>
@@ -129,13 +130,13 @@ void test_repeated_post_reuses_callback_storage() {
     exec.post([resource = std::move(resource)] {
       ASSERT(*resource == 42);
     });
-    exec.poll();
+    exec.poll_one();
     ASSERT(released.expired());
     auto post_one = [&] {
       exec.post([&completed] {
         ++completed;
       });
-      exec.poll();
+      exec.poll_one();
     };
     for (int i = 0; i < 8; ++i) {
       post_one();
@@ -191,7 +192,7 @@ void test_failed_timer_cleanup_reenters_executor(int allocations_before_failure 
   worker.join();
   ASSERT(allocation_failed);
   if constexpr (std::is_same_v<EXECUTOR, executor_poll>) {
-    exec.poll();
+    exec.poll_one();
   } else {
     exec.post([&exec] {
       exec.stop();
@@ -296,7 +297,7 @@ void test_queued_callback_reenters_executor(queued_task_kind kind, bool reenter_
       exec.run_loop();
     } else {
       for (int i = 0; i < 16; ++i) {
-        exec.poll();
+        exec.poll_one();
       }
     }
     finished.store(true, std::memory_order_release);
@@ -473,7 +474,7 @@ void test_large_delayed_post() {
           called = true;
         },
         delay);
-    executor.poll();
+    executor.poll_one();
     ASSERT(!called);
   }
 }
@@ -512,7 +513,7 @@ void test_poll_moves_delayed_callback() {
 #ifndef CORO_DISABLE_EXCEPTION
   try {
 #endif
-    executor.poll();
+    executor.poll_one();
 #ifndef CORO_DISABLE_EXCEPTION
   } catch (const std::runtime_error&) {
     copy_failed = true;
@@ -548,7 +549,7 @@ void test_delay_stop_finishes_with_executor(int wait_ms) {
     executor.run_loop();
   } else {
     while (!executor.stopped()) {
-      executor.poll();
+      executor.poll_one();
       std::this_thread::yield();
     }
   }
@@ -865,7 +866,7 @@ void test_executor_queue_fairness() {
         !delayed_chain);
     if constexpr (std::is_same_v<EXECUTOR, executor_poll>) {
       for (int turn = 0; turn < limit * 2 && !exec.stopped(); ++turn) {
-        exec.poll();
+        exec.poll_one();
       }
     } else {
       exec.run_loop();
@@ -1052,6 +1053,103 @@ void test_time_count_duration() {
   ASSERT(before / 1000 <= microseconds && microseconds <= after / 1000);
 }
 
+void test_poll_one_ready_tasks() {
+  static_assert(std::is_same_v<decltype(std::declval<executor_poll&>().poll_one()), std::size_t>);
+  executor_poll exec;
+  ASSERT(exec.poll_one() == 0);
+  exec.post_delayed_ns(
+      [] {
+        ASSERT(false);
+      },
+      std::numeric_limits<uint64_t>::max());
+  ASSERT(exec.poll_one() == 0);  // A future timer is pending, but is not ready.
+  exec.post({});
+  exec.post_delayed_ns({}, 0);
+  exec.post_continuation({});
+  int called = 0;
+  exec.post([&] {
+    ++called;
+    exec.dispatch([&] {
+      ++called;
+    });
+    exec.post([&] {
+      ++called;
+    });
+  });
+  exec.post([&] {
+    ++called;
+  });
+  ASSERT(exec.poll_one() == 1);
+  ASSERT(called == 2);  // Inline dispatch is part of the same queued task.
+  ASSERT(exec.poll_one() == 1);
+  ASSERT(called == 3);
+  ASSERT(exec.poll_one() == 1);
+  ASSERT(called == 4);
+  exec.post({});
+  ASSERT(exec.poll_one() == 0);
+}
+
+void test_poll_one_after_stop() {
+  std::weak_ptr<int> retained;
+  {
+    executor_poll exec;
+    auto token = std::make_shared<int>(42);
+    retained = token;
+    exec.post([token = std::move(token)] {
+      ASSERT(false);
+    });
+    exec.stop();
+    ASSERT(exec.poll_one() == 0);
+    ASSERT(!retained.expired());
+  }
+  ASSERT(retained.expired());
+}
+
+async<void> poll_one_suspended_task(bool& completed) {
+  co_await sleep(0ns);
+  completed = true;
+}
+
+void test_poll_one_coroutine_steps() {
+  executor_poll exec;
+  bool completed = false;
+  poll_one_suspended_task(completed).detach(exec);
+  ASSERT(exec.poll_one() == 1);
+  ASSERT(!completed);
+  ASSERT(exec.poll_one() == 1);
+  ASSERT(completed);
+  ASSERT(exec.poll_one() == 0);
+  check_coro_leak();
+}
+
+#ifndef CORO_DISABLE_EXCEPTION
+void test_poll_one_callback_exception() {
+  executor_poll exec;
+  auto token = std::make_shared<int>(42);
+  std::weak_ptr<int> retained = token;
+  exec.post([token = std::move(token)] {
+    ASSERT(*token == 42);
+    throw std::runtime_error("poll callback failed");
+  });
+  bool completed = false;
+  exec.post([&] {
+    completed = true;
+  });
+  bool caught = false;
+  try {
+    (void)exec.poll_one();
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "poll callback failed");
+    caught = true;
+  }
+  ASSERT(caught && !completed);
+  ASSERT(retained.expired());
+  ASSERT(exec.poll_one() == 1);
+  ASSERT(completed);
+  ASSERT(exec.poll_one() == 0);
+}
+#endif
+
 template <typename EXECUTOR>
 void test_empty_queued_callbacks() {
   EXECUTOR exec;
@@ -1067,13 +1165,19 @@ void test_empty_queued_callbacks() {
     exec.run_loop();
   } else {
     for (int i = 0; i < 4; ++i) {
-      exec.poll();
+      exec.poll_one();
     }
   }
   ASSERT(completed);
 }
 
 int main() {
+  test_poll_one_ready_tasks();
+  test_poll_one_after_stop();
+  test_poll_one_coroutine_steps();
+#ifndef CORO_DISABLE_EXCEPTION
+  test_poll_one_callback_exception();
+#endif
   test_empty_queued_callbacks<executor_poll>();
   test_empty_queued_callbacks<executor_loop>();
 #if defined(CORO_ENABLE_FRAME_CACHE) && !defined(CORO_DISABLE_EXCEPTION)
@@ -1136,7 +1240,7 @@ int main() {
   executor.run_loop();
 #elif defined(CORO_EXECUTOR_POLL)
   while (!executor.stopped()) {
-    executor.poll();
+    executor.poll_one();
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 #endif

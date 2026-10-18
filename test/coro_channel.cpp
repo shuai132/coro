@@ -139,14 +139,14 @@ void test_channel_pending_awaiter_lifetime(bool sending) {
     channel_destroyed_waiter(ch.get(), sending, live, completed).detach(exec);
   }
   for (int i = 0; i < 3; ++i) {
-    exec.poll();
+    exec.poll_one();
   }
   ASSERT(completed == 0);
   ASSERT(live == (sending ? 3 : 0));
   ch.reset();
   ASSERT(completed == 0);
   for (int i = 0; i < 3; ++i) {
-    exec.poll();
+    exec.poll_one();
   }
   ASSERT(completed == 3);
   ASSERT(live == 0);
@@ -383,7 +383,7 @@ void test_channel_wakeup_chain() {
       fill_channel_chain(channels).detach(executor, [&] {
         filled = true;
       });
-      executor.poll();
+      executor.poll_one();
       ASSERT(filled);
     }
     int completed = 0;
@@ -398,7 +398,7 @@ void test_channel_wakeup_chain() {
     channel_chain_endpoint(forward ? *channels.back() : *channels.front(), !forward, closing).detach(executor, on_completed);
     // Every stage must reach its first wait before the transfer or close begins.
     for (int index = 0; index <= stages; ++index) {
-      executor.poll();
+      executor.poll_one();
     }
     ASSERT(completed == 0);
     int expected = stages + 1;
@@ -411,7 +411,7 @@ void test_channel_wakeup_chain() {
       channel_chain_endpoint(forward ? *channels.front() : *channels.back(), forward, false).detach(executor, on_completed);
     }
     for (int attempt = 0; completed != expected && attempt < 10000; ++attempt) {
-      executor.poll();
+      executor.poll_one();
     }
     ASSERT(completed == expected);
     ASSERT(executor.max_depth <= 8);

@@ -384,11 +384,17 @@ executor_poll executor;
 
 // Call in your main loop
 while (!executor.stopped()) {
-    executor.poll();
+    executor.poll_one();
     // Other work...
     std::this_thread::sleep_for(10ms);
 }
 ```
+
+`poll_one()` returns `std::size_t`: `1` after invoking one ready task, or `0` when no task is ready or the executor has stopped.
+It skips empty callbacks and does not wait for new tasks or timers to expire. A return value of `0` does not mean all coroutines
+have completed; future timers may still be pending. The count covers tasks dequeued and invoked by this call, including a coroutine
+resumption; callbacks invoked inline within that task are not counted separately. Exceptions from ordinary callbacks propagate to
+the caller. `poll_one()` does not bound the execution time of an individual task.
 
 ### Custom Executor
 
@@ -793,12 +799,12 @@ int main() {
 
     for (int id = 1; id <= 3; ++id) {
         receive_once(ch, id).detach(exec, on_finished);
-        exec.poll();  // Ensure this receiver reaches recv() before broadcasting.
+        exec.poll_one();  // Ensure this receiver reaches recv() before broadcasting.
     }
 
     broadcast_once(ch).detach(exec, on_finished);
     while (finished != 4) {
-        exec.poll();  // Keep the channel alive until all four tasks finish.
+        exec.poll_one();  // Keep the channel alive until all four tasks finish.
     }
     return 0;
 }

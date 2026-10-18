@@ -65,9 +65,9 @@ void test_callback_uses_prestart_binding() {
     ASSERT(!completed);
     complete();
     ASSERT(!completed);
-    original.poll();
+    original.poll_one();
     ASSERT(!completed);
-    rebound.poll();
+    rebound.poll_one();
     ASSERT(completed);
     complete = nullptr;
   }
@@ -129,12 +129,12 @@ void test_callback_completion_during_handoff() {
   executor_poll executor;
   callback_handoff_state state;
   spawn(executor, await_callback_during_handoff<EXECUTOR_AWARE>(state));
-  executor.poll();
+  executor.poll_one();
   ASSERT(state.moving_result.load(std::memory_order_acquire));
   ASSERT(!state.completed);
   state.release_result.store(true, std::memory_order_release);
   state.worker.join();
-  executor.poll();
+  executor.poll_one();
   ASSERT(state.completed);
   check_coro_leak();
 }
@@ -245,7 +245,7 @@ void test_large_sleep_duration_conversion() {
   bool completed = false;
   spawn(exec, await_large_sleep_durations(exec, completed));
   for (int turn = 0; turn < 32 && !completed; ++turn) {
-    exec.poll();
+    exec.poll_one();
   }
   ASSERT(completed);
   check_coro_leak();
@@ -286,7 +286,7 @@ void test_wide_sleep_duration_conversion() {
   bool completed = false;
   spawn(exec, await_wide_sleep_durations<REP>(exec, completed));
   for (int turn = 0; turn < 16 && !completed; ++turn) {
-    exec.poll();
+    exec.poll_one();
   }
   ASSERT(completed);
   check_coro_leak();
@@ -298,7 +298,7 @@ void test_sleep_duration_conversion() {
   bool completed = false;
   spawn(exec, await_sleep_durations(exec, completed));
   for (int turn = 0; turn < 16 && !completed; ++turn) {
-    exec.poll();
+    exec.poll_one();
   }
   ASSERT(completed);
   check_coro_leak();
@@ -415,7 +415,7 @@ void test_detach_callbacks() {
         executor_poll exec;
         executor_poll child_exec;
         if (inline_start) {
-          exec.poll();
+          exec.poll_one();
         }
         int completed = 0;
         auto token = std::make_unique<std::shared_ptr<int>>(std::make_shared<int>(7));
@@ -433,8 +433,8 @@ void test_detach_callbacks() {
         ASSERT(!task.current_coro_handle_);
         ASSERT(completed == (inline_start && !asynchronous && !bound_child ? 1 : 0));
         for (int turn = 0; turn < 8; ++turn) {
-          exec.poll();
-          child_exec.poll();
+          exec.poll_one();
+          child_exec.poll_one();
         }
         ASSERT(completed == 1);
         ASSERT(retained.expired());
@@ -477,7 +477,7 @@ void test_detach_error_callbacks() {
       auto task = detach_callback_failure(task_fails, asynchronous);
       task.detach(exec, on_success, on_error);
       for (int turn = 0; turn < 4; ++turn) {
-        exec.poll();
+        exec.poll_one();
       }
       ASSERT(successes == (task_fails ? 0 : 1));
       ASSERT(errors == 1);
@@ -669,7 +669,7 @@ void test_callback_storage_failure(bool asynchronous, int fail_generation) {
   {
     auto task = await_throwing_callback_storage<EXECUTOR_AWARE>(exec, state, asynchronous).bind_executor(exec);
     task.current_coro_handle_.resume();
-    exec.poll();
+    exec.poll_one();
     completed = task.current_coro_handle_.done();
   }
   ASSERT(state.live == 0);

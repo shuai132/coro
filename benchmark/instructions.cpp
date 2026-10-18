@@ -276,7 +276,7 @@ constexpr std::array scenarios{
             std::abort();
           });
   while (!done) {
-    executor.poll();
+    executor.poll_one();
   }
   return sum;
 }
@@ -322,7 +322,7 @@ int check() {
     done = true;
   });
   while (!done) {
-    executor.poll();
+    executor.poll_one();
   }
   check_coro_leak();
   return 0;

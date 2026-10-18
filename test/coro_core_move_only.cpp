@@ -202,7 +202,7 @@ async<void> launch_completed_task(bool delayed, bool fail, completed_launch mode
       release_completed_task(std::move(task)).bind_executor(target).detach(target);
       if (mode == completed_launch::queued_detach) {
         ASSERT(frame_token.use_count() == 2);
-        target.poll();
+        target.poll_one();
       }
       ASSERT(frame_token.use_count() == 1);
       break;

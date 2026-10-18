@@ -266,7 +266,7 @@ void test_nested_when() {
         completed = true;
       });
       for (int attempt = 0; !completed && attempt < 10000; ++attempt) {
-        executor.poll();
+        executor.poll_one();
       }
       ASSERT(completed);
       ASSERT(executor.max_dispatch_depth <= 8);
@@ -325,7 +325,7 @@ void test_rejected_when_launch() {
   bool completed = false;
   spawn(executor, await_rejected_when_launch<ANY>(executor, completed));
   for (int attempt = 0; !completed && attempt < 100; ++attempt) {
-    executor.poll();
+    executor.poll_one();
   }
   ASSERT(completed);
   check_coro_leak();
@@ -1110,7 +1110,7 @@ void test_cooperative_when_stop(bool fail) {
   });
   // Drain the nested combiner's completion after the branch cleanup notifications.
   for (int attempt = 0; attempt < 100; ++attempt) {
-    executor.poll();
+    executor.poll_one();
   }
   ASSERT(completed);
   check_coro_leak();

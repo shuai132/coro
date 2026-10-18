@@ -221,7 +221,7 @@ void test_child_frame_cleanup() {
       bool completed = false;
       spawn(executor, await_child_frame_cleanup<ANY, T>(delayed, fail, completed));
       while (!completed) {
-        executor.poll();
+        executor.poll_one();
       }
       check_coro_leak();
     }
@@ -265,7 +265,7 @@ void test_callback_child_frame_cleanup() {
       task.detach(executor, completion);
 #endif
       while (!completed) {
-        executor.poll();
+        executor.poll_one();
       }
       check_coro_leak();
     }
@@ -354,7 +354,7 @@ void test_combined_result_cleanup() {
     bool completed = false;
     spawn(executor, await_result_cleanup<ANY>(delayed, completed));
     while (!completed) {
-      executor.poll();
+      executor.poll_one();
     }
     check_coro_leak();
   }
@@ -391,7 +391,7 @@ void test_rejected_child_cleanup() {
   bool completed = false;
   spawn(parent_executor, await_rejected_child<T>(child_executor, completed));
   while (!completed) {
-    parent_executor.poll();
+    parent_executor.poll_one();
   }
   check_coro_leak();
 }
@@ -429,7 +429,7 @@ void test_partial_launch_cleanup() {
       bool completed = false;
       spawn(parent_executor, await_partial_launch_cleanup<T>(parent_executor, child_executor, rejected_index, delayed, completed));
       while (!completed) {
-        parent_executor.poll();
+        parent_executor.poll_one();
       }
       check_coro_leak();
     }
@@ -478,7 +478,7 @@ void test_partial_launch_across_threads() {
     });
     spawn(parent_executor, await_partial_launch_across_threads(child_executor, rejecting, gate, child_completed, completed));
     while (!completed) {
-      parent_executor.poll();
+      parent_executor.poll_one();
     }
     child_executor.stop();
     worker.join();
@@ -548,7 +548,7 @@ void test_partial_launch_error_cleanup() {
     bool completed = false;
     spawn(parent_executor, await_partial_launch_error_cleanup(rejecting, delayed, completed));
     while (!completed) {
-      parent_executor.poll();
+      parent_executor.poll_one();
     }
     check_coro_leak();
   }
@@ -604,7 +604,7 @@ void test_combined_exception_cleanup() {
     bool completed = false;
     spawn(executor, await_exception_cleanup<ANY, T>(delayed, completed));
     while (!completed) {
-      executor.poll();
+      executor.poll_one();
     }
     check_coro_leak();
   }
@@ -645,7 +645,7 @@ void test_frame_thread_transfer_and_teardown() {
         exec.post([&called] {
           called = true;
         });
-        exec.poll();
+        exec.poll_one();
         ASSERT(called);
 #ifdef CORO_ENABLE_FRAME_CACHE
         ASSERT(!detail::cached_frames.available_);
@@ -659,7 +659,7 @@ void test_frame_thread_transfer_and_teardown() {
     (void)late;
     executor_poll exec;
     exec.post([] {});
-    exec.poll();
+    exec.poll_one();
 #ifdef CORO_ENABLE_FRAME_CACHE
     // Initialize cleanup even when the configured limit excludes all coroutine frames.
     auto* frame = awaitable_promise<void>::operator new(1);
@@ -684,7 +684,7 @@ void test_poll_dispatch_threads() {
     ++calls;
   });
   ASSERT(calls == 0);  // The executor has not selected its polling thread yet.
-  exec.poll();
+  exec.poll_one();
   ASSERT(calls == 1);
 
   for (int iteration = 0; iteration < 4; ++iteration) {
@@ -698,7 +698,7 @@ void test_poll_dispatch_threads() {
 
     std::thread producer([&] {
       executor_poll local;
-      local.poll();
+      local.poll_one();
       bool inline_call = false;
       local.dispatch([&] {
         inline_call = true;
@@ -711,7 +711,7 @@ void test_poll_dispatch_threads() {
       ASSERT(calls == before + 1);  // This thread owns local, but not exec.
     });
     producer.join();
-    exec.poll();
+    exec.poll_one();
     ASSERT(calls == before + 2);
   }
 }
@@ -875,7 +875,7 @@ int main() {
     task.current_coro_handle_.resume();
     ASSERT(task.current_coro_handle_.done());
     ASSERT(value == 0);
-    executor.poll();
+    executor.poll_one();
     ASSERT(value == 42);
   }
   ASSERT(debug_coro_promise::debug_coro_leak.empty());

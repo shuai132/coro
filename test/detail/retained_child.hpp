@@ -78,10 +78,10 @@ void run(bool reject, bool worker) {
   auto task = child<T>(frame_owner{live}, starts).bind_executor(child_executor);
   bool completed = false;
   coro::spawn(parent_executor, parent(task, completed, reject));
-  parent_executor.poll();
+  parent_executor.poll_one();
   if (!reject) {
-    child_executor.poll();
-    parent_executor.poll();
+    child_executor.poll_one();
+    parent_executor.poll_one();
   }
   ASSERT(completed);
   ASSERT(live == 1);
@@ -93,7 +93,7 @@ void run(bool reject, bool worker) {
     for (int attempt = 0; attempt < 2; ++attempt) {
       bool retried = false;
       coro::spawn(parent_executor, parent(task, retried, true));
-      parent_executor.poll();
+      parent_executor.poll_one();
       ASSERT(retried);
       ASSERT(live == 1 && starts == 0);
     }
@@ -105,13 +105,13 @@ void run(bool reject, bool worker) {
   task.detach(child_executor);
   if (worker) {
     std::thread thread([&child_executor] {
-      child_executor.poll();
+      child_executor.poll_one();
     });
     thread.join();
   } else {
-    child_executor.poll();
+    child_executor.poll_one();
   }
-  parent_executor.poll();
+  parent_executor.poll_one();
   ASSERT(starts == 1);
   ASSERT(live == 0);
 }

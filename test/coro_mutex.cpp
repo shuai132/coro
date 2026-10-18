@@ -32,7 +32,7 @@ void mutex_guard_reentrant_destruction_test() {
     auto waiter = mutex_destroy_previous_guard(mtx, previous_guard, completed);
     if (use_executor) {
       spawn(executor, std::move(waiter));
-      executor.poll();
+      executor.poll_one();
     } else {
       waiter.current_coro_handle_.resume();
     }
@@ -40,7 +40,7 @@ void mutex_guard_reentrant_destruction_test() {
     previous_guard->unlock();
     if (use_executor) {
       ASSERT(!completed);
-      executor.poll();
+      executor.poll_one();
     }
     ASSERT(completed);
     ASSERT(!previous_guard);
