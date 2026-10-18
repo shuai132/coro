@@ -72,6 +72,12 @@ class executor_base : public coro::executor {
   bool prefer_delayed_{true};  // Protected by queue_mutex_.
 
  protected:
+  static size_t current_thread_hash() noexcept {
+    // Thread identity is stable for its lifetime; dispatch only needs the cached comparison value.
+    static thread_local const size_t value = std::hash<std::thread::id>{}(std::this_thread::get_id());
+    return value;
+  }
+
   // Notify before releasing queue_mutex_, so consuming the task also observes notification completion.
   virtual void notify_waiters([[maybe_unused]] bool stopping) {}
 
@@ -122,7 +128,7 @@ class executor_base : public coro::executor {
   executor_base& operator=(executor_base&&) = delete;
 
   void dispatch(std::function<void()> fn) override {
-    if (running_thread_id_.load(std::memory_order_acquire) == std::hash<std::thread::id>{}(std::this_thread::get_id())) {
+    if (running_thread_id_.load(std::memory_order_acquire) == current_thread_hash()) {
       fn();
     } else {
       post(std::move(fn));

@@ -672,6 +672,47 @@ void test_frame_thread_transfer_and_teardown() {
   check_coro_leak();
 }
 
+void test_poll_dispatch_threads() {
+  executor_poll exec;
+  const auto owner = std::this_thread::get_id();
+  int calls = 0;
+  exec.dispatch([&] {
+    ASSERT(std::this_thread::get_id() == owner);
+    ++calls;
+  });
+  ASSERT(calls == 0);  // The executor has not selected its polling thread yet.
+  exec.poll();
+  ASSERT(calls == 1);
+
+  for (int iteration = 0; iteration < 4; ++iteration) {
+    const int before = calls;
+    exec.dispatch([&] {
+      exec.dispatch([&] {
+        ++calls;
+      });
+    });
+    ASSERT(calls == before + 1);
+
+    std::thread producer([&] {
+      executor_poll local;
+      local.poll();
+      bool inline_call = false;
+      local.dispatch([&] {
+        inline_call = true;
+      });
+      ASSERT(inline_call);
+      exec.dispatch([&] {
+        ASSERT(std::this_thread::get_id() == owner);
+        ++calls;
+      });
+      ASSERT(calls == before + 1);  // This thread owns local, but not exec.
+    });
+    producer.join();
+    exec.poll();
+    ASSERT(calls == before + 2);
+  }
+}
+
 void test_alignment_argument() {
   for (auto alignment : {std::size_t{0}, std::size_t{64}, std::size_t{4096}, std::numeric_limits<std::size_t>::max()}) {
     auto task = alignment_argument(std::align_val_t{static_cast<std::size_t>(alignment)});
@@ -763,6 +804,7 @@ int main() {
 #endif
   test_alignment_argument();
   test_frame_thread_transfer_and_teardown();
+  test_poll_dispatch_threads();
 #ifdef CORO_TEST_ALIGNED_COROUTINE_ALLOCATION
   test_aligned_promise();
 #endif
