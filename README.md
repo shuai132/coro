@@ -1322,7 +1322,9 @@ Define `CORO_SINGLE_THREAD` when all coroutine-owned state is accessed, copied, 
 
 The default is off. CMake users can enable it with `-DCORO_SINGLE_THREAD=ON`; the `coro` target exports the macro.
 Internal `when_*` and coroutine-local storage ownership uses `shared_ptr_st` through one shared-state alias and factory.
-Combiners also use a dummy mutex and plain completion counters and flags. Explicit `_mt` / `_st` primitives retain their existing behavior.
+Combiners also use a dummy mutex and plain completion counters and flags. The internal `detail::atomic<T>` alias selects
+`atomic_st<T>` in this mode and `std::atomic<T>` otherwise, keeping one access interface without a runtime mode check.
+Explicit `_mt` / `_st` primitives retain their threading contracts; executor state and external callback handoffs remain atomic.
 
 Other threads may post work through a thread-safe executor, but must not directly access the coroutine-owned state.
 Launch callbacks in `detach()` and the Asio adapter retain standard shared ownership across their submission boundaries.

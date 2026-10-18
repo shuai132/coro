@@ -13,6 +13,7 @@
 #include <variant>
 
 #include "coro/coro.hpp"
+#include "coro/detail/atomic.hpp"
 #include "coro/detail/resume.hpp"
 #include "coro/dummy_mutex.hpp"
 
@@ -26,29 +27,11 @@ namespace detail {
 
 #ifdef CORO_SINGLE_THREAD
 using when_mutex = dummy_mutex;
-using when_counter = size_t;
-using when_flag = bool;
 #else
 using when_mutex = std::mutex;
-using when_counter = std::atomic<size_t>;
-using when_flag = std::atomic<bool>;
 #endif
-
-inline bool when_flag_is_set(const when_flag& flag) noexcept {
-#ifdef CORO_SINGLE_THREAD
-  return flag;
-#else
-  return flag.load(std::memory_order_relaxed);
-#endif
-}
-
-inline void when_flag_set(when_flag& flag) noexcept {
-#ifdef CORO_SINGLE_THREAD
-  flag = true;
-#else
-  flag.store(true, std::memory_order_release);
-#endif
-}
+using when_counter = atomic<size_t>;
+using when_flag = atomic<bool>;
 
 // Helper to extract awaitable result type
 template <typename T>
@@ -177,13 +160,9 @@ struct when_all_state {
 
   void increment_completed() {
     std::unique_lock<when_mutex> lock(mtx);
-#ifdef CORO_SINGLE_THREAD
-    size_t count = ++completed_count;
-#else
     // Writers are serialized by mtx. Publish their results to the lock-free readiness check.
     size_t count = completed_count.load(std::memory_order_relaxed) + 1;
     completed_count.store(count, std::memory_order_release);
-#endif
     if (count == total_count) {
       if (parent_handle) {
         lock.unlock();
@@ -254,21 +233,13 @@ struct when_all_awaiter {
   shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
-#ifdef CORO_SINGLE_THREAD
-    return state_->completed_count >= state_->total_count;
-#else
     return state_->completed_count.load(std::memory_order_acquire) >= state_->total_count;
-#endif
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
-#ifdef CORO_SINGLE_THREAD
-    return state_->completed_count < state_->total_count;
-#else
     return state_->completed_count.load(std::memory_order_relaxed) < state_->total_count;
-#endif
   }
 
   ResultType await_resume() {
@@ -423,7 +394,7 @@ struct when_any_state_impl {
   void publish_completion() {
     std::unique_lock<when_mutex> lock(mtx);
     // Keep winner selection separate from publication: user values may resume other branches.
-    when_flag_set(completed);
+    completed.store(true, std::memory_order_release);
     if (parent_handle) {
       lock.unlock();
       detail::post_resume_via(parent_exec, parent_handle);
@@ -489,11 +460,11 @@ struct when_any_state_impl<true, Ts...> {
 #ifndef CORO_DISABLE_EXCEPTION
   void set_exception(std::exception_ptr ex) {
     std::unique_lock<when_mutex> lock(mtx);
-    if (!when_flag_is_set(completed)) {
+    if (!completed.load(std::memory_order_relaxed)) {
       exception = std::move(ex);
       ex = nullptr;
       // Publish completion only after the result or exception is fully initialized.
-      when_flag_set(completed);
+      completed.store(true, std::memory_order_release);
       if (parent_handle) {
         lock.unlock();
         detail::post_resume_via(parent_exec, parent_handle);
@@ -505,10 +476,10 @@ struct when_any_state_impl<true, Ts...> {
   template <size_t Index>
   void set_completed_at() {
     std::unique_lock<when_mutex> lock(mtx);
-    if (!when_flag_is_set(completed)) {
+    if (!completed.load(std::memory_order_relaxed)) {
       completed_index = Index;
       // Publish completion only after the result or exception is fully initialized.
-      when_flag_set(completed);
+      completed.store(true, std::memory_order_release);
       if (parent_handle) {
         lock.unlock();
         detail::post_resume_via(parent_exec, parent_handle);
@@ -616,13 +587,13 @@ struct when_any_awaiter_impl {
   shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
-    return state_->completed;
+    return state_->completed.load();
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
-    return !state_->completed;
+    return !state_->completed.load();
   }
 
   ResultType await_resume() {
@@ -642,13 +613,13 @@ struct when_any_awaiter_impl<State, ResultType, true> {
   shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
-    return state_->completed;
+    return state_->completed.load();
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
-    return !state_->completed;
+    return !state_->completed.load();
   }
 
   ResultType await_resume() {

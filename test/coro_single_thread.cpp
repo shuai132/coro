@@ -25,8 +25,8 @@ static_assert(std::is_same_v<all_owner, detail::shared_ptr_st<all_state>>);
 static_assert(std::is_same_v<any_owner, detail::shared_ptr_st<any_state>>);
 static_assert(std::is_same_v<local_owner, detail::shared_ptr_st<detail::coro_local_map>>);
 static_assert(std::is_same_v<detail::when_mutex, dummy_mutex>);
-static_assert(std::is_same_v<detail::when_counter, size_t>);
-static_assert(std::is_same_v<detail::when_flag, bool>);
+static_assert(std::is_same_v<detail::when_counter, detail::atomic_st<size_t>>);
+static_assert(std::is_same_v<detail::when_flag, detail::atomic_st<bool>>);
 
 // A callback copy may be destroyed on the posting thread after the worker consumes it.
 struct copying_executor : executor_loop {

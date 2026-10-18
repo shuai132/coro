@@ -14,6 +14,7 @@
 
 #include "TimeCount.hpp"
 #include "assert_def.h"
+#include "atomic_state.hpp"
 #include "coro.hpp"
 #include "log.h"
 #include "utils.hpp"
@@ -1147,6 +1148,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  atomic_state_test::run();
   test_when_all_result_extraction();
 #ifndef CORO_SINGLE_THREAD
   test_when_all_result_publication(false);
