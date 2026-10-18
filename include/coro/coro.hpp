@@ -382,7 +382,6 @@ struct awaitable {
       current_coro_handle_.promise().owns_local_storage_ = false;
     }
 #endif
-    current_coro_handle_.promise().parent_handle_ = h;
 #ifdef CORO_DEBUG_ASYNC_STACK
     if constexpr (requires { h.promise().debug_node_.id_; }) {
       current_coro_handle_.promise().debug_node_.set_parent(h.promise().debug_node_.id_);
@@ -390,13 +389,25 @@ struct awaitable {
       current_coro_handle_.promise().debug_node_.set_parent(0, h.address());
     }
 #endif
+    current_coro_handle_.promise().parent_handle_ = h;
     current_coro_handle_.promise().parent_executor_ = h.promise().executor_;
     auto* child_exec = current_coro_handle_.promise().executor_;
     if (child_exec && child_exec != h.promise().executor_) {
       // Distinct executors may share a thread; queue nested starts to keep the native stack bounded.
-      child_exec->post([handle = current_coro_handle_]() {
-        handle.resume();
-      });
+#ifndef CORO_DISABLE_EXCEPTION
+      try {
+#endif
+        child_exec->post([handle = current_coro_handle_]() {
+          handle.resume();
+        });
+#ifndef CORO_DISABLE_EXCEPTION
+      } catch (...) {
+        // A rejected start leaves the child owned by its awaitable, without a suspended parent to resume.
+        current_coro_handle_.promise().parent_handle_ = {};
+        current_coro_handle_.promise().parent_executor_ = nullptr;
+        throw;
+      }
+#endif
       return std::noop_coroutine();
     }
     return current_coro_handle_;

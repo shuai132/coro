@@ -8,6 +8,7 @@
 #include "assert_def.h"
 #include "coro.hpp"
 #include "log.h"
+#include "retained_child.hpp"
 #include "utils.hpp"
 
 #ifndef CORO_SINGLE_THREAD
@@ -97,6 +98,15 @@ async<void> test_runtime(std::thread::id worker) {
 }
 
 int main() {
+  for (bool worker : {false, true}) {
+    retained_child_test::run<int>(false, worker);
+    retained_child_test::run<void>(false, worker);
+#ifndef CORO_DISABLE_EXCEPTION
+    retained_child_test::run<int>(true, worker);
+    retained_child_test::run<void>(true, worker);
+#endif
+    check_coro_leak();
+  }
   copying_executor exec;
   std::thread worker([&] {
     exec.run_loop();

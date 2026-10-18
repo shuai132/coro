@@ -22,6 +22,7 @@ void test_leak_log(const char*, ...) noexcept;
 #include "coro/time.hpp"
 #include "coro/when.hpp"
 #include "log.h"
+#include "retained_child.hpp"
 #include "utils.hpp"
 
 using namespace coro;
@@ -718,6 +719,15 @@ void test_aligned_promise() {
 #endif
 
 int main() {
+  for (bool worker : {false, true}) {
+    retained_child_test::run<int>(false, worker);
+    retained_child_test::run<void>(false, worker);
+#ifndef CORO_DISABLE_EXCEPTION
+    retained_child_test::run<int>(true, worker);
+    retained_child_test::run<void>(true, worker);
+#endif
+    check_coro_leak();
+  }
   for (bool use_spawn_local : {false, true}) {
     for (bool replace : {false, true}) {
       test_manually_started_pending_task<void>(use_spawn_local, replace, false);
