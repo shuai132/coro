@@ -11,6 +11,27 @@ on:
       - 'docs/**'
 
 jobs:
+  instructions:
+    name: ARM64 Cachegrind and heap record (Release)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install measurement tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++-13 valgrind
+      - name: Record scoped Cachegrind and allocation counters
+        run: python3 benchmark/record_instructions.py --output build_release/instructions/record.json
+      - name: Preserve record and source profiles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: instructions-arm64
+          path: |
+            build_release/instructions/record.json
+            build_release/instructions/*.cgout
+            build_release/instructions/*.allocations.json
+          if-no-files-found: warn
+
   single-thread:
     name: Global single-thread configuration (Release)
     runs-on: ubuntu-24.04
