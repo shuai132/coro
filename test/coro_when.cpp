@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
@@ -18,6 +19,71 @@
 #include "utils.hpp"
 
 using namespace coro;
+
+struct initializer_list_when_result {
+  int value_;
+
+  explicit initializer_list_when_result(int value) : value_(value) {}
+  initializer_list_when_result(std::initializer_list<int>) : value_(-1) {}
+  initializer_list_when_result(const initializer_list_when_result&) = delete;
+  initializer_list_when_result(initializer_list_when_result&&) = default;
+
+  operator int() const noexcept {
+    return value_;
+  }
+};
+
+async<void> test_when_all_single_result_construction() {
+  auto result = co_await when_all(
+      []() -> async<void> {
+        co_return;
+      }(),
+      []() -> async<initializer_list_when_result> {
+        co_return initializer_list_when_result(42);
+      }());
+  // Brace initialization would select the initializer_list overload instead of moving.
+  ASSERT(result.value_ == 42);
+
+  auto tuple = co_await when_all([]() -> async<std::tuple<std::unique_ptr<int>, int>> {
+    co_return std::make_tuple(std::make_unique<int>(17), 23);
+  }());
+  ASSERT(*std::get<0>(tuple) == 17 && std::get<1>(tuple) == 23);
+}
+
+struct counted_when_result {
+  int* moves_;
+  int value_;
+
+  counted_when_result(int& moves, int value) : moves_(&moves), value_(value) {}
+  counted_when_result(const counted_when_result&) = delete;
+  counted_when_result(counted_when_result&& other) noexcept : moves_(other.moves_), value_(other.value_) {
+    ++*moves_;
+  }
+};
+
+void test_when_all_result_extraction() {
+  using state_type = detail::when_all_state<void, counted_when_result, void, counted_when_result, void>;
+  using result_type = std::tuple<counted_when_result, counted_when_result>;
+  auto state = detail::make_shared<state_type>();
+  int first_moves = 0;
+  int second_moves = 0;
+  std::get<1>(state->results).emplace(first_moves, 42);
+  std::get<3>(state->results).emplace(second_moves, 17);
+  for (int i = 0; i < 5; ++i) {
+    state->increment_completed();
+  }
+  detail::when_all_awaiter<state_type, result_type> waiter{state};
+  ASSERT(waiter.await_ready());
+  auto result = waiter.await_resume();
+  ASSERT(std::get<0>(result).value_ == 42 && std::get<1>(result).value_ == 17);
+  ASSERT(first_moves == 1 && second_moves == 1);
+  ASSERT(!std::get<1>(state->results) && !std::get<3>(state->results));
+
+  static_assert(std::is_same_v<decltype(when_all()), async<std::tuple<>>>);
+  static_assert(std::is_same_v<decltype(when_all(std::declval<async<void>>())), async<std::tuple<>>>);
+  static_assert(
+      std::is_same_v<decltype(when_all(std::declval<async<void>>(), std::declval<async<std::tuple<int, int>>>())), async<std::tuple<int, int>>>);
+}
 
 #ifndef CORO_SINGLE_THREAD
 void test_when_all_result_publication([[maybe_unused]] bool fail) {
@@ -64,13 +130,54 @@ void test_when_all_result_publication([[maybe_unused]] bool fail) {
 }
 #endif
 
+#ifndef CORO_DISABLE_EXCEPTION
+struct extraction_failure_value {
+  std::shared_ptr<int> token_;
+  bool fail_;
+
+  extraction_failure_value(std::shared_ptr<int> token, bool fail) : token_(std::move(token)), fail_(fail) {}
+  extraction_failure_value(const extraction_failure_value&) = delete;
+  extraction_failure_value(extraction_failure_value&& other) : fail_(other.fail_) {
+    if (fail_) {
+      throw std::runtime_error("extraction failed");
+    }
+    token_ = std::move(other.token_);
+  }
+};
+
+void test_when_all_extraction_failure_cleanup() {
+  for (bool fail_first : {false, true}) {
+    using state_type = detail::when_all_state<extraction_failure_value, void, extraction_failure_value>;
+    using result_type = std::tuple<extraction_failure_value, extraction_failure_value>;
+    auto token = std::make_shared<int>(42);
+    auto state = detail::make_shared<state_type>();
+    std::get<0>(state->results).emplace(token, fail_first);
+    std::get<2>(state->results).emplace(token, !fail_first);
+    for (int i = 0; i < 3; ++i) {
+      state->increment_completed();
+    }
+    detail::when_all_awaiter<state_type, result_type> waiter{state};
+    ASSERT(waiter.await_ready());
+    bool caught = false;
+    try {
+      (void)waiter.await_resume();
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == "extraction failed");
+      caught = true;
+    }
+    ASSERT(caught);
+    ASSERT(token.use_count() == 1);
+    ASSERT(!std::get<0>(state->results) && !std::get<2>(state->results));
+  }
+}
+#endif
+
 using all_lock_state = detail::when_all_state<int>;
 using any_lock_state = detail::when_any_state<int>;
 using any_void_lock_state = detail::when_any_state<void>;
 static_assert(!noexcept(std::declval<detail::when_all_awaiter<all_lock_state, std::tuple<>>&>().await_suspend(std::noop_coroutine())));
 static_assert(!noexcept(std::declval<detail::when_all_awaiter<all_lock_state, std::tuple<int, int>>&>().await_suspend(std::noop_coroutine())));
-static_assert(!noexcept(std::declval<detail::when_all_single_awaiter<all_lock_state, int>&>().await_suspend(std::noop_coroutine())));
-static_assert(!noexcept(std::declval<detail::when_all_void_awaiter<all_lock_state>&>().await_suspend(std::noop_coroutine())));
+static_assert(!noexcept(std::declval<detail::when_all_awaiter<all_lock_state, int>&>().await_suspend(std::noop_coroutine())));
 static_assert(
     !noexcept(std::declval<detail::when_any_awaiter<any_lock_state, detail::when_any_result<int>, int>&>().await_suspend(std::noop_coroutine())));
 static_assert(!noexcept(
@@ -1009,6 +1116,7 @@ void test_cooperative_when_stop(bool fail) {
 }
 
 async<void> run_all_tests() {
+  co_await test_when_all_single_result_construction();
   co_await test_when_all_values();
   co_await test_when_all_void();
   co_await test_when_any_values();
@@ -1039,11 +1147,15 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_when_all_result_extraction();
 #ifndef CORO_SINGLE_THREAD
   test_when_all_result_publication(false);
 #ifndef CORO_DISABLE_EXCEPTION
   test_when_all_result_publication(true);
 #endif
+#endif
+#ifndef CORO_DISABLE_EXCEPTION
+  test_when_all_extraction_failure_cleanup();
 #endif
   LOG("when_all/when_any test init");
 #ifndef CORO_DISABLE_EXCEPTION

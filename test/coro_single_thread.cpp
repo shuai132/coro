@@ -16,7 +16,7 @@
 
 using namespace coro;
 using all_state = detail::when_all_state<int>;
-using all_owner = decltype(std::declval<detail::when_all_single_awaiter<all_state, int>>().state_);
+using all_owner = decltype(std::declval<detail::when_all_awaiter<all_state, int>>().state_);
 using any_state = detail::when_any_state<int>;
 using any_owner = decltype(std::declval<detail::when_any_awaiter<any_state, detail::when_any_result<int>, int>>().state_);
 using local_owner = decltype(std::declval<async<void>::promise_type>().local_storage_);

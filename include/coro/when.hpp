@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <coroutine>
@@ -90,9 +91,34 @@ struct when_all_storage<void> {
 template <typename T>
 using when_all_storage_t = typename when_all_storage<T>::type;
 
+// Compute the non-void positions once; use them for both the return type and extraction.
+template <typename... Ts>
+struct when_all_results {
+  static constexpr auto indices = [] {
+    constexpr std::array<bool, sizeof...(Ts)> present{!std::is_void_v<Ts>...};
+    std::array<size_t, (size_t{0} + ... + size_t{!std::is_void_v<Ts>})> selected{};
+    size_t count = 0;
+    for (size_t i = 0; i < present.size(); ++i) {
+      if (present[i]) {
+        selected[count++] = i;
+      }
+    }
+    return selected;
+  }();
+
+  template <size_t... Is>
+  static auto select_indices(std::index_sequence<Is...>) -> std::index_sequence<indices[Is]...>;
+  using index_type = decltype(select_indices(std::make_index_sequence<indices.size()>{}));
+
+  template <size_t... Is>
+  static auto select_types(std::index_sequence<Is...>) -> std::tuple<std::tuple_element_t<Is, std::tuple<Ts...>>...>;
+  using tuple_type = decltype(select_types(index_type{}));
+};
+
 // Storage for when_all results
 template <typename... Ts>
 struct when_all_state {
+  using result_indices = typename when_all_results<Ts...>::index_type;
   std::tuple<when_all_storage_t<Ts>...> results;
   when_counter completed_count{0};
   size_t total_count = sizeof...(Ts);
@@ -222,128 +248,9 @@ struct when_all_init_state_awaiter {
   void await_resume() noexcept {}
 };
 
-// Forward declaration
-template <typename State, typename ResultTuple, typename = void>
-struct when_all_awaiter;
-
-// Awaiter for waiting all tasks to complete (empty tuple case)
-template <typename State>
-struct when_all_awaiter<State, std::tuple<>> {
-  shared_ptr<State> state_;
-
-  bool await_ready() const noexcept {
-#ifdef CORO_SINGLE_THREAD
-    return state_->completed_count >= state_->total_count;
-#else
-    return state_->completed_count.load(std::memory_order_acquire) >= state_->total_count;
-#endif
-  }
-
-  bool await_suspend(std::coroutine_handle<> h) {
-    std::lock_guard<when_mutex> lock(state_->mtx);
-    state_->parent_handle = h;
-#ifdef CORO_SINGLE_THREAD
-    return state_->completed_count < state_->total_count;
-#else
-    return state_->completed_count.load(std::memory_order_relaxed) < state_->total_count;
-#endif
-  }
-
-  std::tuple<> await_resume() {
-    typename State::result_cleanup cleanup{state_.get()};
-#ifndef CORO_DISABLE_EXCEPTION
-    if (auto error = std::exchange(state_->exception, {})) {
-      std::rethrow_exception(error);
-    }
-#endif
-    return std::tuple<>{};
-  }
-};
-
-// Helper to extract non-void values from storage tuple
-template <typename ResultTuple, typename StorageTuple>
-struct result_extractor {
-  static ResultTuple extract(StorageTuple& storage) {
-    return extract_impl(storage, std::make_index_sequence<std::tuple_size_v<ResultTuple>>{});
-  }
-
- private:
-  template <size_t... ResultIs>
-  static ResultTuple extract_impl(StorageTuple& storage, std::index_sequence<ResultIs...>) {
-    return ResultTuple{get_nth_non_void<ResultIs>(storage)...};
-  }
-
-  template <size_t N>
-  static auto get_nth_non_void(StorageTuple& storage) {
-    return get_nth_non_void_impl<N, 0>(storage, std::make_index_sequence<std::tuple_size_v<StorageTuple>>{});
-  }
-
-  template <size_t TargetIndex, size_t CurrentNonVoidCount, size_t... Is>
-  static auto get_nth_non_void_impl(StorageTuple& storage, std::index_sequence<Is...>) {
-    return get_nth_non_void_recursive<TargetIndex, 0, 0>(storage);
-  }
-
-  template <size_t TargetIndex, size_t CurrentIndex, size_t CurrentNonVoidCount>
-  static auto get_nth_non_void_recursive(StorageTuple& storage) {
-    if constexpr (CurrentIndex >= std::tuple_size_v<StorageTuple>) {
-      // Should never reach here
-      return std::tuple_element_t<TargetIndex, ResultTuple>{};
-    } else {
-      using current_type = std::tuple_element_t<CurrentIndex, StorageTuple>;
-      if constexpr (std::is_same_v<current_type, void_placeholder>) {
-        // Skip void placeholder
-        return get_nth_non_void_recursive<TargetIndex, CurrentIndex + 1, CurrentNonVoidCount>(storage);
-      } else {
-        // Found a non-void value
-        if constexpr (CurrentNonVoidCount == TargetIndex) {
-          assert(std::get<CurrentIndex>(storage).has_value());
-          return std::move(*std::get<CurrentIndex>(storage));
-        } else {
-          return get_nth_non_void_recursive<TargetIndex, CurrentIndex + 1, CurrentNonVoidCount + 1>(storage);
-        }
-      }
-    }
-  }
-};
-
-// Awaiter for waiting all tasks to complete (non-empty tuple)
-template <typename State, typename... ResultTypes>
-struct when_all_awaiter<State, std::tuple<ResultTypes...>> {
-  shared_ptr<State> state_;
-
-  bool await_ready() const noexcept {
-#ifdef CORO_SINGLE_THREAD
-    return state_->completed_count >= state_->total_count;
-#else
-    return state_->completed_count.load(std::memory_order_acquire) >= state_->total_count;
-#endif
-  }
-
-  bool await_suspend(std::coroutine_handle<> h) {
-    std::lock_guard<when_mutex> lock(state_->mtx);
-    state_->parent_handle = h;
-#ifdef CORO_SINGLE_THREAD
-    return state_->completed_count < state_->total_count;
-#else
-    return state_->completed_count.load(std::memory_order_relaxed) < state_->total_count;
-#endif
-  }
-
-  std::tuple<ResultTypes...> await_resume() {
-    typename State::result_cleanup cleanup{state_.get()};
-#ifndef CORO_DISABLE_EXCEPTION
-    if (auto error = std::exchange(state_->exception, {})) {
-      std::rethrow_exception(error);
-    }
-#endif
-    using storage_tuple = decltype(state_->results);
-    return result_extractor<std::tuple<ResultTypes...>, storage_tuple>::extract(state_->results);
-  }
-};
-
-// Awaiter for waiting all tasks to complete (one non-void child result)
+// One waiter handles empty, single-value and tuple results with the same publication protocol.
 template <typename State, typename ResultType>
-struct when_all_single_awaiter {
+struct when_all_awaiter {
   shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
@@ -371,30 +278,19 @@ struct when_all_single_awaiter {
       std::rethrow_exception(error);
     }
 #endif
-    // For single value, we need to extract the first (and only) non-void value
-    return get_first_non_void<0>(state_->results);
+    return extract(typename State::result_indices{});
   }
 
  private:
-  template <size_t Index, typename StorageTuple>
-  static ResultType get_first_non_void_impl(StorageTuple& storage) {
-    if constexpr (Index >= std::tuple_size_v<StorageTuple>) {
-      // Should never happen
-      return ResultType{};
+  template <size_t... Is>
+  ResultType extract(std::index_sequence<Is...>) {
+    assert((std::get<Is>(state_->results).has_value() && ...));
+    if constexpr (sizeof...(Is) == 1) {
+      // Preserve the child's type, including tuple and initializer-list-aware value types.
+      return (std::move(*std::get<Is>(state_->results)), ...);
     } else {
-      using current_type = std::tuple_element_t<Index, StorageTuple>;
-      if constexpr (std::is_same_v<current_type, void_placeholder>) {
-        return get_first_non_void_impl<Index + 1>(storage);
-      } else {
-        assert(std::get<Index>(storage).has_value());
-        return std::move(*std::get<Index>(storage));
-      }
+      return ResultType{std::move(*std::get<Is>(state_->results))...};
     }
-  }
-
-  template <size_t Index>
-  static ResultType get_first_non_void(decltype(state_->results)& storage) {
-    return get_first_non_void_impl<Index>(storage);
   }
 };
 
@@ -411,93 +307,19 @@ struct all_void<void, Ts...> : all_void<Ts...> {};
 template <typename T, typename... Ts>
 struct all_void<T, Ts...> : std::false_type {};
 
-// Filter out void types from a type list
-template <typename... Ts>
-struct filter_void;
-
-template <>
-struct filter_void<> {
-  using type = std::tuple<>;
+// A single non-void child returns its value directly; zero/multiple values return a tuple.
+template <typename Tuple, size_t Size = std::tuple_size_v<Tuple>>
+struct when_all_result_type_from_tuple {
+  using type = Tuple;
 };
 
-template <typename... Rest>
-struct filter_void<void, Rest...> {
-  using type = typename filter_void<Rest...>::type;
-};
-
-template <typename T, typename... Rest>
-struct filter_void<T, Rest...> {
-  using type = decltype(std::tuple_cat(std::declval<std::tuple<T>>(), std::declval<typename filter_void<Rest...>::type>()));
+template <typename Tuple>
+struct when_all_result_type_from_tuple<Tuple, 1> {
+  using type = std::tuple_element_t<0, Tuple>;
 };
 
 template <typename... Ts>
-using filter_void_t = typename filter_void<Ts...>::type;
-
-// Helper to get result type based on filtered tuple size
-template <typename Filtered, size_t Size>
-struct when_all_result_type_from_filtered;
-
-template <typename Filtered>
-struct when_all_result_type_from_filtered<Filtered, 0> {
-  using type = std::tuple<>;
-};
-
-template <typename Filtered>
-struct when_all_result_type_from_filtered<Filtered, 1> {
-  using type = std::tuple_element_t<0, Filtered>;
-};
-
-template <typename Filtered, size_t Size>
-struct when_all_result_type_from_filtered {
-  using type = Filtered;
-};
-
-// Helper to determine result type
-template <typename... Ts>
-struct when_all_result_type {
-  using filtered = filter_void_t<Ts...>;
-  using type = typename when_all_result_type_from_filtered<filtered, std::tuple_size_v<filtered>>::type;
-};
-
-template <>
-struct when_all_result_type<> {
-  using type = std::tuple<>;
-};
-
-template <typename... Ts>
-using when_all_result_type_t = typename when_all_result_type<Ts...>::type;
-
-// Void awaiter for when all tasks return void
-template <typename State>
-struct when_all_void_awaiter {
-  shared_ptr<State> state_;
-
-  bool await_ready() const noexcept {
-#ifdef CORO_SINGLE_THREAD
-    return state_->completed_count >= state_->total_count;
-#else
-    return state_->completed_count.load(std::memory_order_acquire) >= state_->total_count;
-#endif
-  }
-
-  bool await_suspend(std::coroutine_handle<> h) {
-    std::lock_guard<when_mutex> lock(state_->mtx);
-    state_->parent_handle = h;
-#ifdef CORO_SINGLE_THREAD
-    return state_->completed_count < state_->total_count;
-#else
-    return state_->completed_count.load(std::memory_order_relaxed) < state_->total_count;
-#endif
-  }
-
-  void await_resume() {
-#ifndef CORO_DISABLE_EXCEPTION
-    if (auto error = std::exchange(state_->exception, {})) {
-      std::rethrow_exception(error);
-    }
-#endif
-  }
-};
+using when_all_result_type_t = typename when_all_result_type_from_tuple<typename when_all_results<Ts...>::tuple_type>::type;
 
 // Helper for expanding parameter pack
 template <typename... Awaitables, size_t... Is>
@@ -545,11 +367,7 @@ awaitable<when_all_result_type_t<awaitable_result_t<Awaitables>...>> when_all_im
 #endif
 
   // Wait for all to complete
-  if constexpr (std::tuple_size_v<filter_void_t<awaitable_result_t<Awaitables>...>> == 1) {
-    co_return co_await when_all_single_awaiter<state_type, result_tuple>{state};
-  } else {
-    co_return co_await when_all_awaiter<state_type, result_tuple>{state};
-  }
+  co_return co_await when_all_awaiter<state_type, result_tuple>{state};
 }
 
 }  // namespace detail
