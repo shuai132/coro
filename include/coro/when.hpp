@@ -103,7 +103,7 @@ struct when_all_state {
 #endif
   mutable when_mutex mtx;  // Mutex to protect shared state access
 #ifndef CORO_DISABLE_EXCEPTION
-  when_flag exception_set{false};
+  bool exception_set = false;
   std::exception_ptr exception;  // Add exception support
 #endif
 
@@ -130,13 +130,7 @@ struct when_all_state {
   void set_exception(std::exception_ptr ex) {
     {
       std::lock_guard<when_mutex> lock(mtx);
-#ifdef CORO_SINGLE_THREAD
-      bool first = !std::exchange(exception_set, true);
-#else
-      bool expected = false;
-      bool first = exception_set.compare_exchange_strong(expected, true, std::memory_order_acq_rel);
-#endif
-      if (first) {
+      if (!std::exchange(exception_set, true)) {
         exception = std::move(ex);
       }
     }
@@ -160,7 +154,9 @@ struct when_all_state {
 #ifdef CORO_SINGLE_THREAD
     size_t count = ++completed_count;
 #else
-    size_t count = completed_count.fetch_add(1, std::memory_order_acq_rel) + 1;
+    // Writers are serialized by mtx. Publish their results to the lock-free readiness check.
+    size_t count = completed_count.load(std::memory_order_relaxed) + 1;
+    completed_count.store(count, std::memory_order_release);
 #endif
     if (count == total_count) {
       if (parent_handle) {
@@ -236,13 +232,21 @@ struct when_all_awaiter<State, std::tuple<>> {
   shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
+#ifdef CORO_SINGLE_THREAD
     return state_->completed_count >= state_->total_count;
+#else
+    return state_->completed_count.load(std::memory_order_acquire) >= state_->total_count;
+#endif
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
+#ifdef CORO_SINGLE_THREAD
     return state_->completed_count < state_->total_count;
+#else
+    return state_->completed_count.load(std::memory_order_relaxed) < state_->total_count;
+#endif
   }
 
   std::tuple<> await_resume() {
@@ -308,13 +312,21 @@ struct when_all_awaiter<State, std::tuple<ResultTypes...>> {
   shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
+#ifdef CORO_SINGLE_THREAD
     return state_->completed_count >= state_->total_count;
+#else
+    return state_->completed_count.load(std::memory_order_acquire) >= state_->total_count;
+#endif
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
+#ifdef CORO_SINGLE_THREAD
     return state_->completed_count < state_->total_count;
+#else
+    return state_->completed_count.load(std::memory_order_relaxed) < state_->total_count;
+#endif
   }
 
   std::tuple<ResultTypes...> await_resume() {
@@ -335,13 +347,21 @@ struct when_all_single_awaiter {
   shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
+#ifdef CORO_SINGLE_THREAD
     return state_->completed_count >= state_->total_count;
+#else
+    return state_->completed_count.load(std::memory_order_acquire) >= state_->total_count;
+#endif
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
+#ifdef CORO_SINGLE_THREAD
     return state_->completed_count < state_->total_count;
+#else
+    return state_->completed_count.load(std::memory_order_relaxed) < state_->total_count;
+#endif
   }
 
   ResultType await_resume() {
@@ -453,13 +473,21 @@ struct when_all_void_awaiter {
   shared_ptr<State> state_;
 
   bool await_ready() const noexcept {
+#ifdef CORO_SINGLE_THREAD
     return state_->completed_count >= state_->total_count;
+#else
+    return state_->completed_count.load(std::memory_order_acquire) >= state_->total_count;
+#endif
   }
 
   bool await_suspend(std::coroutine_handle<> h) {
     std::lock_guard<when_mutex> lock(state_->mtx);
     state_->parent_handle = h;
+#ifdef CORO_SINGLE_THREAD
     return state_->completed_count < state_->total_count;
+#else
+    return state_->completed_count.load(std::memory_order_relaxed) < state_->total_count;
+#endif
   }
 
   void await_resume() {

@@ -19,6 +19,51 @@
 
 using namespace coro;
 
+#ifndef CORO_SINGLE_THREAD
+void test_when_all_result_publication([[maybe_unused]] bool fail) {
+  for (int iteration = 0; iteration < 100; ++iteration) {
+    using state_type = detail::when_all_state<int, int>;
+    auto state = std::make_shared<state_type>();
+    detail::when_all_awaiter<state_type, std::tuple<int, int>> waiter{state};
+    std::thread first([state] {
+      std::optional<int> result{42};
+      state->template set_result<0>(result);
+    });
+    std::thread second([state, fail] {
+#ifndef CORO_DISABLE_EXCEPTION
+      if (fail) {
+        state->set_exception(std::make_exception_ptr(std::runtime_error("published error")));
+        return;
+      }
+#else
+      (void)fail;
+#endif
+      std::optional<int> result{17};
+      state->template set_result<1>(result);
+    });
+    while (!waiter.await_ready()) {
+      std::this_thread::yield();
+    }
+    // Consume before joining: readiness must publish both writers' non-atomic results.
+#ifndef CORO_DISABLE_EXCEPTION
+    bool caught = false;
+    try {
+#endif
+      auto values = waiter.await_resume();
+      ASSERT(std::get<0>(values) == 42 && std::get<1>(values) == 17);
+#ifndef CORO_DISABLE_EXCEPTION
+    } catch (const std::runtime_error& error) {
+      ASSERT(std::string_view(error.what()) == "published error");
+      caught = true;
+    }
+    ASSERT(caught == fail);
+#endif
+    first.join();
+    second.join();
+  }
+}
+#endif
+
 using all_lock_state = detail::when_all_state<int>;
 using any_lock_state = detail::when_any_state<int>;
 using any_void_lock_state = detail::when_any_state<void>;
@@ -994,6 +1039,12 @@ async<void> run_all_tests() {
 }
 
 int main() {
+#ifndef CORO_SINGLE_THREAD
+  test_when_all_result_publication(false);
+#ifndef CORO_DISABLE_EXCEPTION
+  test_when_all_result_publication(true);
+#endif
+#endif
   LOG("when_all/when_any test init");
 #ifndef CORO_DISABLE_EXCEPTION
   test_rejected_when_launch<false>();
