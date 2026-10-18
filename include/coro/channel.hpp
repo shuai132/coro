@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "coro/coro.hpp"
+#include "coro/detail/atomic_st.hpp"
 #include "coro/detail/resume.hpp"
 #include "coro/detail/shared_ptr_st.hpp"
 #include "coro/detail/thread_support.hpp"
@@ -46,7 +47,7 @@ struct channel {
     send_awaitable* send_queue_tail_ = nullptr;  // Tail of waiting senders linked list
     recv_awaitable* recv_queue_head_ = nullptr;  // Head of waiting receivers linked list
     recv_awaitable* recv_queue_tail_ = nullptr;  // Tail of waiting receivers linked list
-    std::atomic<bool> closed_{false};
+    std::conditional_t<std::is_same_v<MUTEX, dummy_mutex>, detail::atomic_st<bool>, std::atomic<bool>> closed_{false};
   };
 
   using state_ptr = std::conditional_t<std::is_same_v<MUTEX, dummy_mutex>, detail::shared_ptr_st<state>, std::shared_ptr<state>>;

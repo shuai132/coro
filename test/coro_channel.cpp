@@ -38,6 +38,9 @@ void test_channel_owner_selection() {
   static_assert(is_standard_channel_owner<decltype(std::declval<channel_mt<int>>().recv().state_)>::value);
   static_assert(is_standard_channel_owner<decltype(std::declval<channel<int, registration_lifetime_mutex>>().recv().state_)>::value);
   static_assert(std::is_same_v<channel_st<int>, channel<int, dummy_mutex>>);
+  static_assert(std::is_same_v<decltype(std::declval<channel_st<int>>().recv().state_->closed_), detail::atomic_st<bool>>);
+  static_assert(std::is_same_v<decltype(std::declval<channel_mt<int>>().recv().state_->closed_), std::atomic<bool>>);
+  static_assert(std::is_same_v<decltype(std::declval<channel<int, registration_lifetime_mutex>>().recv().state_->closed_), std::atomic<bool>>);
 }
 
 struct channel_lifetime_value {
