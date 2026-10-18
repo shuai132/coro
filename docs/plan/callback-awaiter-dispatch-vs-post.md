@@ -1,5 +1,8 @@
 # callback_awaiter dispatch vs post analysis
 
+The shutdown observations below describe the earlier drain-on-stop executor. Both built-in executors now stop dequeuing immediately;
+`executor_loop` inherits the fixed-thread dispatch semantics of `executor_poll`. Tests must finish losing branches before stopping.
+
 ## Question
 
 `callback_awaiter` needs to resume the suspended coroutine after a callback-style API completes. The executor offers two relevant operations:

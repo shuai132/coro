@@ -408,7 +408,10 @@ void run_reentrant_test(async<void> task) {
   std::atomic<bool> completed{false};
   task.detach(executor, [&] {
     completed.store(true, std::memory_order_release);
-    executor.stop();
+    // Closing the signal queues the losing branch; finish it before stopping.
+    executor.post([&executor] {
+      executor.stop();
+    });
   });
   std::thread worker([&executor] {
     executor.run_loop();
@@ -649,6 +652,10 @@ async<void> test_when_any_values() {
   ASSERT(result.index == 1);  // Index 1 corresponds to the second task
   ASSERT(elapsed >= 30);
   ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
+  // Finish every branch before this test can stop its executor.
+  while (*completed < 3) {
+    co_await sleep(1ms);
+  }
   // Get the value from the result
   auto value = result.template get<1>();
   LOG("Completed task value: %d", value);
@@ -675,6 +682,10 @@ async<void> test_when_any_void() {
   ASSERT(result.index == 1);  // Index 1 corresponds to task B
   ASSERT(elapsed >= 20);
   ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
+  // Finish every branch before this test can stop its executor.
+  while (*completed < 3) {
+    co_await sleep(1ms);
+  }
 
   LOG("when_any void test: PASSED");
 }
@@ -739,6 +750,10 @@ async<void> test_when_any_mixed_types() {
   ASSERT(result.index == 1);
   ASSERT(elapsed >= 15);
   ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
+  // Finish every branch before this test can stop its executor.
+  while (*completed < 3) {
+    co_await sleep(1ms);
+  }
 
   LOG("when_any mixed types test: PASSED");
 }
@@ -945,6 +960,10 @@ async<void> test_when_any_exception_first() {
   ASSERT(exception_msg.find("Task 2") != std::string::npos);  // Verify it's from task 2
   ASSERT(elapsed >= 20);
   ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
+  // Finish every branch before this test can stop its executor.
+  while (*completed < 3) {
+    co_await sleep(1ms);
+  }
   LOG("when_any exception first test: PASSED");
 }
 
@@ -967,6 +986,10 @@ async<void> test_when_any_exception_later() {
   ASSERT(result.index == 1);
   ASSERT(elapsed >= 20);
   ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
+  // Finish every branch before this test can stop its executor.
+  while (*completed < 3) {
+    co_await sleep(1ms);
+  }
 
   auto value = result.template get<1>();
   LOG("Completed task value: %d", value);
@@ -1004,6 +1027,10 @@ async<void> test_when_any_void_exception() {
   ASSERT(exception_msg.find("Task B") != std::string::npos);  // Verify it's from task B
   ASSERT(elapsed >= 20);
   ASSERT(*completed == 1);  // Returning must not wait for the slower branches.
+  // Finish every branch before this test can stop its executor.
+  while (*completed < 3) {
+    co_await sleep(1ms);
+  }
   LOG("when_any void exception test: PASSED");
 }
 

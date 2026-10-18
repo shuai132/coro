@@ -79,11 +79,10 @@ class executor_base : public coro::executor {
   virtual void notify_waiters([[maybe_unused]] bool stopping) {}
 
   queued_task get_next_task() {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
     if (stop_.load(std::memory_order_acquire)) {
       return {};
     }
-
-    std::lock_guard<std::mutex> lock(queue_mutex_);
     return get_next_task_locked();
   }
 
@@ -153,8 +152,8 @@ class executor_base : public coro::executor {
     notify_waiters(false);
   }
 
-  // Reject new posts and timers, then notify runners. executor_loop drains queued work;
-  // executor_poll stops dequeuing. This neither cancels coroutines nor joins runner threads,
+  // Reject new posts and timers, stop dequeuing, then notify runners.
+  // Queued tasks remain owned until destruction. This neither cancels coroutines nor joins runner threads,
   // and derived dispatch() implementations may still invoke callbacks inline.
   virtual void stop() {
     std::lock_guard<std::mutex> lock(queue_mutex_);

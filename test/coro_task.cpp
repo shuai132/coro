@@ -41,6 +41,7 @@
 using namespace coro;
 
 static_assert(!std::is_default_constructible_v<executor_base>);
+static_assert(std::is_base_of_v<executor_poll, executor_loop>);
 
 #ifndef CORO_DISABLE_EXCEPTION
 // Fault injection is confined to the thread performing the timer insertion.
@@ -283,8 +284,12 @@ void test_queued_callback_reenters_executor(queued_task_kind kind, bool reenter_
         break;
     }
     if constexpr (std::is_same_v<EXECUTOR, executor_loop>) {
+      // The original callback can post cleanup during destruction. Enqueue stop one turn later
+      // so that cleanup runs first; stop() no longer drains pending tasks.
       exec.post([&exec] {
-        exec.stop();
+        exec.post([&exec] {
+          exec.stop();
+        });
       });
     }
     // libc++ can retain a small target in the moved-from std::function.
@@ -592,62 +597,9 @@ void test_stop_wakes_idle_loop() {
   }
 }
 
-void test_stop_wakes_all_idle_loop_threads(bool stop_from_loop) {
-  executor_loop executor;
-  constexpr int worker_count = 4;
-  std::atomic<int> entered{0};
-  std::atomic<int> callbacks_finished{0};
-  std::atomic<int> loops_finished{0};
-  auto deadline = std::chrono::steady_clock::now() + 5s;
-  for (int i = 0; i < worker_count; ++i) {
-    executor.post([&] {
-      entered.fetch_add(1, std::memory_order_release);
-      while (entered.load(std::memory_order_acquire) != worker_count && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::yield();
-      }
-      ASSERT(entered.load(std::memory_order_acquire) == worker_count);
-      callbacks_finished.fetch_add(1, std::memory_order_release);
-    });
-  }
-  std::vector<std::thread> workers;
-  for (int i = 0; i < worker_count; ++i) {
-    workers.emplace_back([&] {
-      executor.run_loop();
-      loops_finished.fetch_add(1, std::memory_order_release);
-    });
-  }
-  while (callbacks_finished.load(std::memory_order_acquire) != worker_count && std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::yield();
-  }
-  ASSERT(callbacks_finished.load(std::memory_order_acquire) == worker_count);
-  // Let all workers enter the empty-queue wait before issuing one stop request.
-  std::this_thread::sleep_for(20ms);
-  if (stop_from_loop) {
-    executor.post([&] {
-      executor.stop();
-    });
-  } else {
-    executor.stop();
-  }
-  deadline = std::chrono::steady_clock::now() + 500ms;
-  while (loops_finished.load(std::memory_order_acquire) != worker_count && std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::yield();
-  }
-  bool stopped_on_time = loops_finished.load(std::memory_order_acquire) == worker_count;
-  if (!stopped_on_time) {
-    // Rescue workers left asleep by a single-notification implementation before asserting.
-    for (int i = 0; i < worker_count; ++i) {
-      executor.stop();
-    }
-  }
-  for (auto& worker : workers) {
-    worker.join();
-  }
-  ASSERT(stopped_on_time);
-}
-
-void test_poll_dispatch_context() {
-  executor_poll exec;
+template <typename EXECUTOR>
+void test_fixed_thread_dispatch_context() {
+  EXECUTOR exec;
   executor& scheduler = exec;
   int called = 0;
   auto callback = [&] {
@@ -726,13 +678,14 @@ void test_loop_dispatch_after_stop() {
   });
   ASSERT(called == 0);
   exec.run_loop();
-  ASSERT(called == 3);
-  scheduler.dispatch([] {
-    ASSERT(false);
+  ASSERT(called == 1);
+  scheduler.dispatch([&] {
+    ++called;
   });
+  ASSERT(called == 2);
 }
 
-void test_loop_releases_thread_context() {
+void test_loop_keeps_fixed_thread() {
   executor_loop executor;
   executor.post([&] {
     executor.stop();
@@ -740,11 +693,14 @@ void test_loop_releases_thread_context() {
   executor.run_loop();
   auto token = std::make_shared<int>(42);
   std::weak_ptr<int> retained = token;
-  executor.dispatch([token] {
-    ASSERT(false);
+  bool called = false;
+  executor.dispatch([token, &called] {
+    ASSERT(*token == 42);
+    called = true;
   });
+  ASSERT(called);
   token.reset();
-  // A loop that has returned must no longer dispatch inline and must release rejected callbacks.
+  // Inline callbacks release captures even after run_loop() returns.
   ASSERT(retained.expired());
 }
 
@@ -756,7 +712,7 @@ void test_nested_loop_preserves_thread_context() {
       executor.stop();
     });
     executor.run_loop();
-    // The enclosing run_loop is still executing this accepted callback.
+    // The enclosing run_loop() is still executing this accepted callback.
     executor.dispatch([&] {
       ++completed;
     });
@@ -790,40 +746,8 @@ void test_nested_distinct_loop_context() {
   ASSERT(dispatched == 2);
 }
 
-void test_concurrent_loop_thread_context() {
-  executor_loop executor;
-  std::atomic<int> entered{0};
-  std::atomic<int> completed{0};
-  auto deadline = std::chrono::steady_clock::now() + 5s;
-  auto task = [&] {
-    entered.fetch_add(1, std::memory_order_release);
-    while (entered.load(std::memory_order_acquire) != 2 && std::chrono::steady_clock::now() < deadline) {
-      std::this_thread::yield();
-    }
-    ASSERT(entered.load(std::memory_order_acquire) == 2);
-    executor.stop();
-    executor.dispatch([&] {
-      completed.fetch_add(1, std::memory_order_relaxed);
-    });
-    executor.post([] {
-      ASSERT(false);
-    });
-  };
-  executor.post(task);
-  executor.post(task);
-  std::thread first([&] {
-    executor.run_loop();
-  });
-  std::thread second([&] {
-    executor.run_loop();
-  });
-  first.join();
-  second.join();
-  ASSERT(completed.load(std::memory_order_relaxed) == 2);
-}
-
 #ifndef CORO_DISABLE_EXCEPTION
-void test_loop_exception_releases_thread_context() {
+void test_loop_exception_keeps_fixed_thread() {
   executor_loop executor;
   executor.post([] {
     throw std::runtime_error("queued callback failed");
@@ -839,7 +763,7 @@ void test_loop_exception_releases_thread_context() {
   executor.dispatch([&] {
     called = true;
   });
-  ASSERT(!called);
+  ASSERT(called);
   executor.post([&] {
     executor.stop();
   });
@@ -848,33 +772,83 @@ void test_loop_exception_releases_thread_context() {
 }
 #endif
 
-void test_stopped_loop_waits_for_timer() {
-  executor_loop executor;
-  bool called = false;
-  auto started = std::chrono::steady_clock::now();
-#ifndef _WIN32
-  // MSVC's std::clock measures elapsed wall time instead of process CPU time.
-  auto cpu_started = std::clock();
-#endif
-  executor.post_delayed_ns(
-      [&called] {
-        called = true;
+void test_stopped_loop_skips_queued_work(bool stop_before_run) {
+  std::weak_ptr<int> retained;
+  {
+    executor_loop exec;
+    auto token = std::make_shared<int>(42);
+    retained = token;
+    if (!stop_before_run) {
+      exec.post([&exec] {
+        exec.post_delayed_ns(
+            [] {
+              ASSERT(false);
+            },
+            0);
+        exec.stop();
+      });
+    }
+    exec.post([token] {
+      ASSERT(false);
+    });
+    if (stop_before_run) {
+      exec.post_delayed_ns(
+          [] {
+            ASSERT(false);
+          },
+          0);
+    }
+    exec.post_delayed_ns(
+        [token] {
+          ASSERT(false);
+        },
+        200000000);
+    token.reset();
+    if (stop_before_run) {
+      exec.stop();
+    }
+    exec.run_loop();
+    exec.run_loop();
+    // stop() leaves unexecuted callbacks owned by the executor until destruction.
+    ASSERT(!retained.expired());
+  }
+  ASSERT(retained.expired());
+}
+
+void test_stop_wakes_loop_with_pending_timer() {
+  executor_loop exec;
+  std::atomic<bool> started{false};
+  std::atomic<bool> finished{false};
+  exec.post([&] {
+    started.store(true, std::memory_order_release);
+  });
+  exec.post_delayed_ns(
+      [] {
+        ASSERT(false);
       },
-      200000000);
-  executor.stop();
-  executor.run_loop();
-  auto elapsed = std::chrono::steady_clock::now() - started;
-  ASSERT(called);
-  ASSERT(elapsed >= 100ms);
-#ifndef _WIN32
-  auto cpu_elapsed = std::chrono::duration<double>(static_cast<double>(std::clock() - cpu_started) / CLOCKS_PER_SEC);
-  ASSERT(cpu_elapsed < elapsed / 2);
-#endif
+      1000000000);
+  std::thread worker([&] {
+    exec.run_loop();
+    finished.store(true, std::memory_order_release);
+  });
+  while (!started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  std::this_thread::sleep_for(20ms);
+  exec.stop();
+  auto deadline = std::chrono::steady_clock::now() + 500ms;
+  while (!finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  bool stopped_on_time = finished.load(std::memory_order_acquire);
+  worker.join();
+  ASSERT(stopped_on_time);
 }
 
 void test_post_racing_with_stop(bool delayed) {
   for (int iteration = 0; iteration < 64; ++iteration) {
-    executor_loop executor;
+    auto owner = std::make_unique<executor_loop>();
+    auto& executor = *owner;
     auto token = std::make_shared<int>(42);
     std::weak_ptr<int> retained = token;
     std::atomic<int> ready{0};
@@ -912,6 +886,7 @@ void test_post_racing_with_stop(bool delayed) {
       producer.join();
     }
     token.reset();
+    owner.reset();
     ASSERT(retained.expired());
   }
 }
@@ -1255,7 +1230,44 @@ void test_empty_queued_callbacks() {
   ASSERT(completed);
 }
 
+void test_loop_waits_when_empty(bool timed) {
+  executor_loop exec;
+  std::atomic<bool> started{false};
+  std::atomic<bool> called{false};
+  std::atomic<bool> finished{false};
+  std::thread worker([&] {
+    started.store(true, std::memory_order_release);
+    exec.run_loop();
+    finished.store(true, std::memory_order_release);
+  });
+  while (!started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  std::this_thread::sleep_for(20ms);
+  ASSERT(!finished.load(std::memory_order_acquire));
+  auto callback = [&] {
+    called.store(true, std::memory_order_release);
+  };
+  if (timed) {
+    exec.post_delayed_ns(callback, 1000000);
+  } else {
+    exec.post(callback);
+  }
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (!called.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  ASSERT(called.load(std::memory_order_acquire));
+  std::this_thread::sleep_for(20ms);
+  ASSERT(!finished.load(std::memory_order_acquire));  // Exhausting the queue must keep waiting.
+  exec.stop();
+  worker.join();
+}
+
 int main() {
+  test_loop_waits_when_empty(false);
+  test_loop_waits_when_empty(true);
+  test_loop_keeps_fixed_thread();
   test_poll_one_ready_tasks();
   test_poll_one_after_stop();
   test_poll_one_coroutine_steps();
@@ -1296,18 +1308,17 @@ int main() {
   test_poll_moves_delayed_callback();
   test_post_racing_with_stop(false);
   test_post_racing_with_stop(true);
-  test_stop_wakes_all_idle_loop_threads(false);
-  test_stop_wakes_all_idle_loop_threads(true);
-  test_poll_dispatch_context();
+  test_fixed_thread_dispatch_context<executor_poll>();
+  test_fixed_thread_dispatch_context<executor_loop>();
   test_loop_dispatch_after_stop();
-  test_loop_releases_thread_context();
   test_nested_loop_preserves_thread_context();
   test_nested_distinct_loop_context();
-  test_concurrent_loop_thread_context();
 #ifndef CORO_DISABLE_EXCEPTION
-  test_loop_exception_releases_thread_context();
+  test_loop_exception_keeps_fixed_thread();
 #endif
-  test_stopped_loop_waits_for_timer();
+  test_stopped_loop_skips_queued_work(true);
+  test_stopped_loop_skips_queued_work(false);
+  test_stop_wakes_loop_with_pending_timer();
   test_stop_wakes_idle_loop();
   test_large_delayed_post();
   test_delayed_post_wakes_loop(false);

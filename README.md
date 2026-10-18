@@ -363,17 +363,30 @@ executor_loop executor;
 
 // Launch coroutines...
 
-// Block until stop() is called and queued work is drained
+// Block until stop() is called
 executor.run_loop();
 ```
 
-After `stop()`, all idle `run_loop()` threads are woken. The loops keep servicing already queued tasks, waiting for timers to reach their original deadlines, until the queues are empty.
-Subsequent `post()` and `post_delayed_ns()` calls discard new tasks and release their callbacks, including calls from this executor's active `run_loop()` context.
-Queued coroutine resumptions use `post()` and follow the same rule; only resumptions already queued before `stop()` are drained.
+`executor_loop` inherits from `executor_poll` and adds condition-variable waiting when no task is ready.
 
-`dispatch()` runs inline only while its calling thread is inside this executor's `run_loop()`, including nested calls.
-This still applies while draining after `stop()`; calls from other threads go through `post()`.
-After the loop returns or throws, that thread is no longer treated as an active loop context.
+| Entry point | Behavior | Return value |
+|-------------|----------|--------------|
+| `poll_one()` | Execute at most one ready task without waiting | `0` or `1` |
+| `run_loop()` | Keep executing tasks and waiting until stopped | `void` |
+
+No work guard is needed to keep an idle executor running.
+`run_loop()` waits for new tasks or timer deadlines when the queue is empty, and keeps waiting between tasks until `stop()`.
+Calls after stopping return immediately. Empty callbacks are skipped. Ordinary callback exceptions propagate to the caller
+without stopping the executor.
+
+Call all driving entry points only from the same fixed thread; multiple runner threads are not supported.
+The first driving call binds the executor to that thread. Afterwards, `dispatch()` runs inline on that thread,
+including between calls, after a driving call returns or throws, and after `stop()`. Other threads and calls before binding use `post()`.
+
+`stop()` wakes an idle loop and prevents further dequeues without waiting for queued timers to expire.
+A task already dequeued may finish; pending callbacks remain owned by the executor until its destruction.
+Subsequent `post()` and `post_delayed_ns()` calls discard new tasks and release their callbacks, including queued coroutine resumptions.
+Finish required work before calling `stop()`.
 
 ### executor_poll
 
@@ -424,12 +437,13 @@ struct my_executor : coro::executor {
 ## Thread Safety Contract
 
 Prefer one fixed thread per executor, with external threads submitting work, balancing performance and ease of reasoning.
-`executor_loop` also supports multiple runner threads, but resumptions may switch threads and shared data needs synchronization; `executor_poll` requires a fixed polling thread.
+Both `executor_loop` and `executor_poll` require one fixed driving thread; external threads may submit work or call `stop()`.
 Use `_mt` primitives across threads; keep all `_st` operations and notifications on one thread. Do not concurrently operate on the same task or awaiter.
 
 Children inherit the parent's executor unless explicitly bound; bound coroutines resume through their executors, while immediately ready operations continue inline.
-`stop()` does not cancel coroutines: `executor_loop` drains queued tasks and timers, while `executor_poll` stops dequeuing.
-Draining queues does not wait for every coroutine to finish: after the executor stops, new timers and queued coroutine resumptions are rejected regardless of the calling thread.
+`stop()` does not cancel or complete coroutines: both built-in executors stop dequeuing tasks and timers.
+Pending callbacks are released when the executor is destroyed; destroying queued coroutine handles does not destroy their coroutine frames.
+After stopping, new timers and queued coroutine resumptions are rejected regardless of the calling thread.
 Wait for coroutines and external callbacks to finish before stopping executors, joining threads, and destroying related objects.
 
 ### Choosing Default Names, `_mt`, and `_st`

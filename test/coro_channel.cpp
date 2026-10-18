@@ -426,8 +426,11 @@ void test_channel_wakeup_chain() {
 }
 
 template <typename CHANNEL>
-async<void> stopped_loop_channel_sender(CHANNEL& ch) {
+async<void> stopped_loop_channel_sender(CHANNEL& ch, executor_loop& executor, bool stop_before_send) {
   co_await sleep(1ms);
+  if (stop_before_send) {
+    executor.stop();
+  }
   ASSERT(co_await ch.send(42));
 }
 
@@ -452,14 +455,16 @@ void test_stopped_loop_channel_resumption(bool stop_before_send) {
     ASSERT(!receiving.await_ready());
     ASSERT(receiving.await_suspend(receiver.current_coro_handle_));
     executor.post([&] {
-      stopped_loop_channel_sender(ch).detach(executor, [&] {
+      stopped_loop_channel_sender(ch, executor, stop_before_send).detach(executor, [&] {
         ASSERT(!resumed);  // Waking a receiver must queue it rather than dispatch inline.
         sender_completed = true;
-        executor.stop();
+        if (!stop_before_send) {
+          // Let the accepted receiver wakeup run before stopping.
+          executor.post([&] {
+            executor.stop();
+          });
+        }
       });
-      if (stop_before_send) {
-        executor.stop();
-      }
     });
     executor.run_loop();
     ASSERT(sender_completed);
