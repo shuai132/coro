@@ -1,12 +1,13 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <coroutine>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <queue>
-#include <thread>
 #include <utility>
 
 #include "coro/detail/callback_cache.hpp"
@@ -67,15 +68,15 @@ class executor_base : public coro::executor {
   std::mutex queue_mutex_;
   std::queue<queued_task> task_queue_;
   std::priority_queue<DelayedTask, std::vector<DelayedTask>, DelayedTaskCompare> delayed_task_queue_;
-  std::atomic<size_t> running_thread_id_{0};
+  std::atomic<std::uintptr_t> running_thread_token_{0};
   std::atomic<bool> stop_{false};
   bool prefer_delayed_{true};  // Protected by queue_mutex_.
 
  protected:
-  static size_t current_thread_hash() noexcept {
-    // Thread identity is stable for its lifetime; dispatch only needs the cached comparison value.
-    static thread_local const size_t value = std::hash<std::thread::id>{}(std::this_thread::get_id());
-    return value;
+  static std::uintptr_t current_thread_token() noexcept {
+    // Each live thread has distinct storage; compare only its address, without hashing or dynamic initialization.
+    static thread_local unsigned char token;
+    return reinterpret_cast<std::uintptr_t>(&token);
   }
 
   // Notify before releasing queue_mutex_, so consuming the task also observes notification completion.
@@ -128,7 +129,7 @@ class executor_base : public coro::executor {
   executor_base& operator=(executor_base&&) = delete;
 
   void dispatch(std::function<void()> fn) override {
-    if (running_thread_id_.load(std::memory_order_acquire) == current_thread_hash()) {
+    if (running_thread_token_.load(std::memory_order_acquire) == current_thread_token()) {
       fn();
     } else {
       post(std::move(fn));

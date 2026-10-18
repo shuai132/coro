@@ -15,8 +15,9 @@ class executor_poll : public executor_base {
   executor_poll& operator=(executor_poll&&) = delete;
 
   void poll() {
-    if (!running_thread_id_.load(std::memory_order_acquire)) {
-      running_thread_id_.store(current_thread_hash(), std::memory_order_release);
+    // Only this fixed polling thread initializes the token; the check needs no acquire ordering.
+    if (!running_thread_token_.load(std::memory_order_relaxed)) {
+      running_thread_token_.store(current_thread_token(), std::memory_order_release);
     }
 
     auto task = get_next_task();
