@@ -25,6 +25,8 @@ Apple M2 / Apple Clang 21 / Release；每轮 100 万次，11 轮中位数。单�
 
 帧缓存开关同时应用于 coro 和 Asio；coro 默认关闭，async_simple 保持默认无帧缓存。100 万次 post 中，coro 与 Asio 均仅发生 **9 次 C++ 分配**，async_simple 为 1,000,007 次。完整资源数据、原生执行器对比与复现方法见 [benchmark](benchmark/README.md)。
 
+常规组件另提供 [ARM64 Linux Cachegrind 与堆分配记录](benchmark/arm64.md)，结果保存为 JSON。
+
 除异步任务外，coro 还提供 `when_all` / `when_any`、channel、互斥锁、条件变量、信号量、event、latch、wait_group、定时器和协程本地存储，配合 RAII、回调转协程与 Asio 互操作，用简洁一致的 API 组合异步流程。纯头文件、可选无异常模式，兼顾桌面、服务端与 MCU 场景。
 
 ## 目录

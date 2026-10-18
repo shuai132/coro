@@ -25,6 +25,8 @@ Apple M2 / Apple Clang 21 / Release. Median of 11 rounds with 1 million operatio
 
 The frame cache setting applies to both coro and Asio; coro defaults to off, and async_simple uses its default allocator without a frame cache. For 1 million posts, coro and Asio each make just **9 C++ allocations**, compared with 1,000,007 for async_simple. See [benchmark](benchmark/README.md) for full resource measurements, native executor comparisons, and reproduction steps.
 
+Common component workloads also have [ARM64 Linux Cachegrind and heap records](benchmark/arm64.md), saved as JSON.
+
 Beyond async tasks, coro provides `when_all` / `when_any`, channels, mutexes, condition variables, semaphores, events, latches, wait groups, timers, and coroutine-local storage. RAII, callback-to-coroutine conversion, and Asio interoperability help compose asynchronous workflows through simple, consistent APIs. The library is header-only and supports builds without exceptions, from desktop and server applications to MCUs.
 
 ## Table of Contents

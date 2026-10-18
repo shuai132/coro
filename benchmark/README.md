@@ -1,5 +1,7 @@
 # Benchmark
 
+## 第三方库对比环境
+
 Apple M2，macOS 27.0.1，Apple Clang 21.0.0，Release `-O3 -DNDEBUG`。
 依赖固定为 async_simple `0c7a12b`、Asio 1.36.0，完整提交见 CMakeLists.txt。
 主表统一使用单线程 Asio io_context。
@@ -133,3 +135,14 @@ Apple M1 Pro、macOS 27.0、Apple Clang 21.0.0，Release `-O3 -DNDEBUG`，关闭
 
 两次独立运行中，缓冲收发耗时降低约 71%–75%，无缓冲降低约 41%–44%。
 数据仅代表本机的小消息测试，包含业务处理后的整体收益会降低。
+
+## ARM64 Linux Cachegrind 记录
+
+14 个常规组件场景记录指令数、缓存 miss、分支预测及 C++ 堆分配，结果保存为 JSON。
+在已安装依赖的 ARM64 Linux 环境中，于仓库根目录执行：
+
+```bash
+python3 benchmark/record_instructions.py
+```
+
+结果见 [instructions-arm64.json](instructions-arm64.json)；环境准备、指标含义及 CI 行为见 [使用说明](arm64.md)。
