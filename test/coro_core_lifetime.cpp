@@ -632,10 +632,12 @@ void test_frame_thread_transfer_and_teardown() {
   });
   consumer.join();
 
-  int completed = 0;
-  std::thread teardown([&] {
+  // MinGW emutls can free TLS storage before calling its destructor. Keep this guard stateless:
+  // allocations during teardown must not invalidate the completion state used by the test.
+  static int completed = 0;
+  completed = 0;
+  std::thread teardown([] {
     struct late_task {
-      int& completed_;
       ~late_task() {
         ASSERT(!detail::cached_callbacks.available_);
         executor_poll exec;
@@ -648,12 +650,12 @@ void test_frame_thread_transfer_and_teardown() {
 #ifdef CORO_ENABLE_FRAME_CACHE
         ASSERT(!detail::cached_frames.available_);
 #endif
-        auto task = child_without_executor(completed_);
+        auto task = child_without_executor(completed);
         task.current_coro_handle_.resume();
       }
     };
     // Initialized before the frame cache, so its destructor runs after the cache's destructor.
-    thread_local late_task late{completed};
+    thread_local late_task late;
     (void)late;
     executor_poll exec;
     exec.post([] {});
@@ -666,6 +668,7 @@ void test_frame_thread_transfer_and_teardown() {
     auto task = lazy_value();
     task.current_coro_handle_.resume();
     ASSERT(task.await_resume() == 42);
+    ASSERT(completed == 0);
   });
   teardown.join();
   ASSERT(completed == 42);
