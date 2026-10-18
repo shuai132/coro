@@ -240,9 +240,12 @@ struct channel {
     bool await_ready() noexcept(noexcept(std::declval<MUTEX&>().lock())) {
       // A previous await_suspend may have reserved a value before a buffer refill failed.
       pending_value_.reset();
+      if (!state_->closed_.load(std::memory_order_acquire)) {
+        return false;
+      }
       // Check if channel is closed and no data available without suspending
       std::lock_guard<MUTEX> lock(state_->mutex_);
-      return state_->closed_.load(std::memory_order_acquire) && state_->buffer_empty();
+      return state_->buffer_empty();
     }
 
     template <typename Promise>

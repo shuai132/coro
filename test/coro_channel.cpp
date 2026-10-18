@@ -159,8 +159,12 @@ void test_channel_lock_failure() {
 #ifndef CORO_DISABLE_EXCEPTION
   channel<int, exception_mutex> channel;
   auto receiving = channel.recv();
+  auto frame = []() -> async<void> {
+    co_return;
+  }();
+  ASSERT(!receiving.await_ready());
   expect_lock_failure([&] {
-    (void)receiving.await_ready();
+    (void)receiving.await_suspend(frame.current_coro_handle_);
   });
   expect_lock_failure([&] {
     (void)channel.empty();
@@ -173,6 +177,9 @@ void test_channel_lock_failure() {
   });
   ASSERT(!receiving.await_ready());
   channel.close();
+  expect_lock_failure([&] {
+    (void)receiving.await_ready();
+  });
   ASSERT(receiving.await_ready());
   ASSERT(!receiving.await_resume());
 #endif
@@ -180,6 +187,44 @@ void test_channel_lock_failure() {
 
 async<void> channel_registration_handle() {
   co_return;
+}
+
+struct counted_channel_mutex {
+  inline static int locks = 0;
+  std::mutex mutex_;
+
+  void lock() {
+    ++locks;
+    mutex_.lock();
+  }
+  void unlock() noexcept {
+    mutex_.unlock();
+  }
+};
+
+void test_receive_lock_count_and_close() {
+  channel<int, counted_channel_mutex> ch(1);
+  auto frame = channel_registration_handle();
+  auto sending = ch.send(42);
+  ASSERT(!sending.await_suspend(frame.current_coro_handle_));
+  ASSERT(sending.await_resume());
+  auto receiving = ch.recv();
+  counted_channel_mutex::locks = 0;
+  ASSERT(!receiving.await_ready());
+  ASSERT(counted_channel_mutex::locks == 0);
+  ASSERT(!receiving.await_suspend(frame.current_coro_handle_));
+  ASSERT(counted_channel_mutex::locks == 1);
+  ASSERT(receiving.await_resume() == 42);
+
+  // Closing between the readiness check and registration must still complete immediately.
+  ASSERT(!receiving.await_ready());
+  ch.close();
+  ASSERT(!receiving.await_suspend(frame.current_coro_handle_));
+  ASSERT(!receiving.await_resume());
+  counted_channel_mutex::locks = 0;
+  ASSERT(receiving.await_ready());
+  ASSERT(counted_channel_mutex::locks == 1);
+  ASSERT(!receiving.await_resume());
 }
 
 async<void> channel_receiver_registration_lifetime(registration_lifetime_state& state) {
@@ -192,6 +237,7 @@ async<void> channel_receiver_registration_lifetime(registration_lifetime_state& 
     }
     ASSERT(sender.await_resume());
   };
+  state.trigger_unlock = 1;
   state.armed = true;
   auto result = co_await channel.recv();
   ASSERT(result && *result == 42);
@@ -1375,6 +1421,7 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_receive_lock_count_and_close();
   test_channel_owner_selection();
   test_shared_ptr_st_lifetime();
   for (bool option : {false, true}) {
