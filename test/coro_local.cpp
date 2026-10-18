@@ -5,7 +5,9 @@
 #include <any>
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <memory>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -17,9 +19,180 @@
 #include "coro.hpp"
 #include "detail/assert_def.h"
 #include "detail/log.h"
+#include "detail/noinline.hpp"
 #include "detail/utils.hpp"
 
 using namespace coro;
+
+thread_local bool count_local_allocations = false;
+thread_local size_t local_allocations = 0;
+#ifndef CORO_DISABLE_EXCEPTION
+thread_local bool fail_local_allocation = false;
+#endif
+
+CORO_TEST_NOINLINE void* operator new(std::size_t size) {
+#ifndef CORO_DISABLE_EXCEPTION
+  if (std::exchange(fail_local_allocation, false)) {
+    throw std::bad_alloc();
+  }
+#endif
+  if (count_local_allocations) {
+    ++local_allocations;
+  }
+  if (auto* memory = std::malloc(size ? size : 1)) {
+    return memory;
+  }
+#ifndef CORO_DISABLE_EXCEPTION
+  throw std::bad_alloc();
+#else
+  std::abort();
+#endif
+}
+
+CORO_TEST_NOINLINE void operator delete(void* memory) noexcept {
+  std::free(memory);
+}
+
+CORO_TEST_NOINLINE void operator delete(void* memory, std::size_t) noexcept {
+  std::free(memory);
+}
+
+async<void> read_inherited_local(coro_local<int>& key) {
+  ASSERT(co_await key.has());
+  ASSERT((co_await key.get_optional()) == 42);
+  co_await key.erase();
+  ASSERT((co_await key.get()) == 42);
+  auto* borrowed = co_await key.get_ptr();
+  ASSERT(borrowed && *borrowed == 42);
+  *borrowed = 43;
+}
+
+async<void> forward_inherited_local(async<void>& child) {
+  co_await child;
+}
+
+async<void> await_read_only_local_chain(coro_local<int>& key, async<void>& child) {
+  co_await key.set(42);
+  local_allocations = 0;
+  count_local_allocations = true;
+  co_await child;
+  count_local_allocations = false;
+  ASSERT(local_allocations == 0);
+  ASSERT((co_await key.get()) == 43);
+}
+
+void test_read_only_local_inheritance() {
+  coro_local<int> key;
+  {
+    auto leaf = read_inherited_local(key);
+    auto middle = forward_inherited_local(leaf);
+    auto parent = await_read_only_local_chain(key, middle);
+    parent.current_coro_handle_.resume();
+    ASSERT(parent.current_coro_handle_.done());
+    parent.await_resume();
+  }
+  check_coro_leak();
+}
+
+async<void> override_inherited_local(coro_local<int>& key, bool explicit_layer) {
+  co_await key.erase();
+  ASSERT((co_await key.get()) == 42);
+  if (explicit_layer) {
+    co_await inherit_coro_local();
+    co_await key.erase();
+    ASSERT((co_await key.get()) == 42);
+  }
+  co_await key.set(17);
+  ASSERT((co_await key.get()) == 17);
+  co_await key.erase();
+  ASSERT((co_await key.get()) == 42);
+  co_await key.set(23);
+}
+
+#ifndef CORO_DISABLE_EXCEPTION
+async<void> retry_lazy_local_override(coro_local<int>& key) {
+  fail_local_allocation = true;
+  bool caught = false;
+  try {
+    co_await key.set(17);
+  } catch (const std::bad_alloc&) {
+    caught = true;
+  }
+  ASSERT(caught && !fail_local_allocation);
+  ASSERT((co_await key.get()) == 42);
+  co_await key.erase();
+  ASSERT((co_await key.get()) == 42);
+  co_await key.set(23);
+  ASSERT((co_await key.get()) == 23);
+}
+#endif
+
+async<void> test_lazy_local_overrides() {
+  coro_local<int> key;
+  co_await key.set(42);
+  for (bool explicit_layer : {false, true}) {
+    co_await override_inherited_local(key, explicit_layer);
+    ASSERT((co_await key.get()) == 42);
+  }
+#ifndef CORO_DISABLE_EXCEPTION
+  co_await retry_lazy_local_override(key);
+  ASSERT((co_await key.get()) == 42);
+#endif
+}
+
+async<void> borrow_local_resource(coro_local<std::shared_ptr<int>>& key) {
+  auto* resource = co_await key.get_ptr();
+  ASSERT(resource && **resource == 42);
+}
+
+using read_only_local_children = std::array<std::optional<async<void>>, 2>;
+
+async<void> retain_read_only_children(coro_local<std::shared_ptr<int>>& key, read_only_local_children& children, std::weak_ptr<int>& resource) {
+  co_await key.set(std::make_shared<int>(42));
+  resource = *(co_await key.get_ptr());
+  for (auto& child : children) {
+    child.emplace(borrow_local_resource(key));
+    co_await *child;
+  }
+}
+
+void test_read_only_local_lifetime([[maybe_unused]] bool concurrent_release) {
+  coro_local<std::shared_ptr<int>> key;
+  read_only_local_children children;
+  std::weak_ptr<int> resource;
+  {
+    auto parent = retain_read_only_children(key, children, resource);
+    parent.current_coro_handle_.resume();
+    ASSERT(parent.current_coro_handle_.done());
+    parent.await_resume();
+  }
+  ASSERT(!resource.expired());
+#ifndef CORO_SINGLE_THREAD
+  if (concurrent_release) {
+    std::atomic<bool> release{false};
+    std::array<std::thread, 2> workers;
+    for (size_t index = 0; index < workers.size(); ++index) {
+      workers[index] = std::thread([&, index] {
+        while (!release.load(std::memory_order_acquire)) {
+          std::this_thread::yield();
+        }
+        children[index].reset();
+      });
+    }
+    release.store(true, std::memory_order_release);
+    for (auto& worker : workers) {
+      worker.join();
+    }
+  } else
+#endif
+  {
+    children.front().reset();
+    ASSERT(!resource.expired());
+    children.back().reset();
+  }
+  ASSERT(resource.expired());
+  check_coro_leak();
+}
 
 // Define global coro_local keys for testing
 static coro_local<int> int_storage;
@@ -831,6 +1004,7 @@ async<void> coro_local_exception_test() {
 #endif
 
 async<void> run_all_tests() {
+  co_await test_lazy_local_overrides();
   co_await coro_local_key_identity_test();
   co_await coro_local_erased_type_test();
   co_await coro_local_lazy_default_test();
@@ -857,6 +1031,11 @@ async<void> run_all_tests() {
 }
 
 int main() {
+  test_read_only_local_inheritance();
+  test_read_only_local_lifetime(false);
+#ifndef CORO_SINGLE_THREAD
+  test_read_only_local_lifetime(true);
+#endif
   test_shared_inherited_local_cleanup();
   for (int depth : {1, 4}) {
     for (bool release_parents_first : {false, true}) {

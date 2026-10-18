@@ -294,8 +294,18 @@ struct awaitable_promise : awaitable_promise_value<T>, debug_coro_promise {
   bool started_ = false;
 
 #ifdef CORO_ENABLE_LOCAL_STORAGE
-  // Local storage support (lazily created, inherits from parent via parent pointer in coro_local_map)
+  bool owns_local_storage_ = false;
+  // Read-only children share the inherited map; only local writes need a new layer.
   detail::shared_ptr<detail::coro_local_map> local_storage_;
+
+  void ensure_local_storage() {
+    if (!owns_local_storage_) {
+      auto storage = detail::make_shared<detail::coro_local_map>();
+      storage->parent = local_storage_;
+      local_storage_ = std::move(storage);
+      owns_local_storage_ = true;
+    }
+  }
 #endif
 };
 
@@ -366,10 +376,10 @@ struct awaitable {
       current_coro_handle_.promise().executor_ = h.promise().executor_;
     }
 #ifdef CORO_ENABLE_LOCAL_STORAGE
-    // inherit local storage from parent coroutine (lazily, just save parent reference)
+    // Retain inherited storage without allocating an empty map for a read-only child.
     if (h.promise().local_storage_) {
-      current_coro_handle_.promise().local_storage_ = detail::make_shared<detail::coro_local_map>();
-      current_coro_handle_.promise().local_storage_->parent = h.promise().local_storage_;
+      current_coro_handle_.promise().local_storage_ = h.promise().local_storage_;
+      current_coro_handle_.promise().owns_local_storage_ = false;
     }
 #endif
     current_coro_handle_.promise().parent_handle_ = h;

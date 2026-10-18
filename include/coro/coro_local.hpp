@@ -136,10 +136,8 @@ struct coro_local {
 
     template <typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> h) {
+      h.promise().ensure_local_storage();
       auto& storage = h.promise().local_storage_;
-      if (!storage) {
-        storage = detail::make_shared<detail::coro_local_map>();
-      }
       storage->template set<T>(self_, std::forward<U>(value_));
       return false;
     }
@@ -178,7 +176,7 @@ struct coro_local {
     template <typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> h) noexcept {
       auto& storage = h.promise().local_storage_;
-      if (storage) {
+      if (h.promise().owns_local_storage_) {
         storage->erase(self_);
       }
       return false;
@@ -236,9 +234,7 @@ struct coro_local {
 
 namespace detail {
 
-// Awaiter for inheriting parent coroutine's coro_local storage
-// Note: With the simplified single-pointer design, inheritance is automatic
-// when parent has local_storage_. This function now just ensures local storage exists.
+// Inheritance is automatic; explicitly materialize a local override layer when requested.
 struct inherit_coro_local_awaiter {
   [[nodiscard]] bool await_ready() const noexcept {
     return false;
@@ -246,12 +242,7 @@ struct inherit_coro_local_awaiter {
 
   template <typename Promise>
   bool await_suspend(std::coroutine_handle<Promise> h) {
-    // With single-pointer design, parent link is already set up in await_suspend
-    // This just ensures we have our own local storage for copy-on-write
-    auto& storage = h.promise().local_storage_;
-    if (!storage) {
-      storage = make_shared<coro_local_map>();
-    }
+    h.promise().ensure_local_storage();
     return false;
   }
 
