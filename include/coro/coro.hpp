@@ -632,6 +632,7 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
 
  private:
   enum class phase { registering, suspended, completed };
+  // Keep atomic even under CORO_SINGLE_THREAD: external callbacks may run on another thread.
   std::atomic<phase> phase_{phase::registering};
 
   template <typename Promise>
