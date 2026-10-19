@@ -51,11 +51,19 @@ inline void* allocate_frame(std::size_t size, std::size_t alignment) {
       cached_frames.cleanup_registered_ = true;
     }
     bool full = true;
+    // Preserve exact-size reuse before borrowing a larger cached allocation.
+    frame_cache_state::slot* fitting = nullptr;
     for (auto& entry : cached_frames.slots_) {
       full = full && entry.frame_ != nullptr;
       if (entry.frame_ && entry.size_ == size) {
         return std::exchange(entry.frame_, nullptr);
       }
+      if (entry.frame_ && entry.size_ > size && (!fitting || entry.size_ < fitting->size_)) {
+        fitting = &entry;
+      }
+    }
+    if (fitting) {
+      return std::exchange(fitting->frame_, nullptr);
     }
     // Make room for a new size when all slots are occupied.
     if (full) {
@@ -73,6 +81,7 @@ inline void release_frame(void* frame, std::size_t size, std::size_t alignment) 
   if (size <= CORO_FRAME_CACHE_MAX_BYTES && cached_frames.available_ && cached_frames.cleanup_registered_) {
     for (auto& entry : cached_frames.slots_) {
       if (!entry.frame_) {
+        // A borrowed larger block still has at least this requested capacity.
         entry = {frame, size};
         return;
       }

@@ -110,7 +110,10 @@ void test_frame_cache_bound_and_reuse() {
       promise::operator delete(frame, size);
     }
     if constexpr (size > 1) {
+      fail_next_task_allocation = true;
       auto* different_size = promise::operator new(size - 1);
+      ASSERT(fail_next_task_allocation);
+      fail_next_task_allocation = false;
       promise::operator delete(different_size, size - 1);
       fail_next_task_allocation = true;
       auto* reused = promise::operator new(size - 1);
@@ -121,6 +124,29 @@ void test_frame_cache_bound_and_reuse() {
     }
   });
   worker.join();
+}
+
+void test_frame_cache_prefers_exact_size() {
+  if constexpr (CORO_FRAME_CACHE_SLOTS > 1 && CORO_FRAME_CACHE_MAX_BYTES > 1) {
+    std::thread worker{[] {
+      using promise = awaitable_promise<void>;
+      constexpr std::size_t size = CORO_FRAME_CACHE_MAX_BYTES;
+      auto* large = promise::operator new(size);
+      auto* small_frame = promise::operator new(size - 1);
+      promise::operator delete(large, size);
+      promise::operator delete(small_frame, size - 1);
+      fail_next_task_allocation = true;
+      auto* matched_small = promise::operator new(size - 1);
+      ASSERT(matched_small == small_frame);
+      promise::operator delete(matched_small, size - 1);
+      auto* matched_large = promise::operator new(size);
+      ASSERT(matched_large == large);
+      ASSERT(fail_next_task_allocation);
+      fail_next_task_allocation = false;
+      promise::operator delete(matched_large, size);
+    }};
+    worker.join();
+  }
 }
 #endif
 
@@ -1277,6 +1303,7 @@ int main() {
   test_empty_queued_callbacks<executor_poll>();
   test_empty_queued_callbacks<executor_loop>();
 #if defined(CORO_ENABLE_FRAME_CACHE) && !defined(CORO_DISABLE_EXCEPTION)
+  test_frame_cache_prefers_exact_size();
   test_frame_cache_bound_and_reuse();
 #endif
   for (auto kind : {queued_task_kind::posted, queued_task_kind::timed}) {
