@@ -445,11 +445,12 @@ struct awaitable {
 
   void detach(auto& executor) {
     auto* exec_to_use = current_coro_handle_.promise().executor_ ? current_coro_handle_.promise().executor_ : &executor;
-    exec_to_use->dispatch([coro = std::make_shared<awaitable<T>>(std::move(*this)), exec_to_use]() mutable {
+    auto owner = std::make_shared<awaitable<T>>(std::move(*this));
+    owner->current_coro_handle_.promise().executor_ = exec_to_use;
+    exec_to_use->dispatch([coro = std::move(owner)]() mutable {
       CORO_DEBUG_LIFECYCLE("awaitable: resume begin: %p, h: %p", coro.get(), coro->current_coro_handle_.address());
       auto handle = std::exchange(coro->current_coro_handle_, {});
       handle.promise().awaitable_ = nullptr;
-      handle.promise().executor_ = exec_to_use;
       if (handle.done()) {
         handle.destroy();
       } else {

@@ -4,6 +4,7 @@ void test_leak_log(const char*, ...) noexcept;
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <limits>
 #include <new>
@@ -114,6 +115,41 @@ struct frame_parameter {
     }
   }
 };
+
+struct retaining_start_executor : executor_poll {
+  std::function<void()> pending_;
+
+  void dispatch(std::function<void()> callback) override {
+    pending_ = callback;
+  }
+};
+
+async<void> detached_start([[maybe_unused]] frame_parameter parameter, executor& expected, bool& completed) {
+  ASSERT(co_await current_executor() == &expected);
+  completed = true;
+}
+
+void test_detach_queued_start_ownership() {
+  for (bool discard : {false, true}) {
+    retaining_start_executor selected;
+    retaining_start_executor fallback;
+    int live = 0;
+    bool completed = false;
+    auto task = detached_start(frame_parameter{live}, selected, completed).bind_executor(selected);
+    task.detach(fallback);
+    ASSERT(!task.current_coro_handle_);
+    ASSERT(selected.pending_ && !fallback.pending_);
+    ASSERT(live == 1);
+    ASSERT(!completed);
+    if (!discard) {
+      selected.pending_();
+    }
+    selected.pending_ = nullptr;
+    ASSERT(completed == !discard);
+    ASSERT(live == 0);
+    check_coro_leak();
+  }
+}
 
 async<void> gated_child_without_executor(event_st& gate) {
   co_await gate;
@@ -763,6 +799,7 @@ void test_aligned_promise() {
 #endif
 
 int main() {
+  test_detach_queued_start_ownership();
   for (bool worker : {false, true}) {
     retained_child_test::run<int>(false, worker);
     retained_child_test::run<void>(false, worker);
