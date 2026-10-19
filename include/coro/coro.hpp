@@ -622,6 +622,9 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
         }
       } break;
     }
+    if (phase_.load(std::memory_order_acquire) == phase::completed) {
+      return false;
+    }
     auto expected = phase::registering;
     return phase_.compare_exchange_strong(expected, phase::suspended, std::memory_order_acq_rel);
   }
