@@ -10,20 +10,22 @@ A lightweight C++20 coroutine library with async tasks, concurrency control, and
 
 ## Benchmark
 
-**Fast coroutine execution, low allocation overhead, and a rich set of easy-to-use coroutine components.** In the current single-threaded benchmarks, coro stands out with faster coroutine calls and nested calls than both Asio and async_simple, while matching Asio in coroutine switching performance. It outperforms async_simple across all three workloads.
+**Fast coroutine execution, low allocation overhead, and a rich set of easy-to-use coroutine components.** In the current single-threaded benchmarks, with frame caching either enabled or disabled, coro stands out with faster coroutine calls and nested calls than both Asio and async_simple, while matching Asio in coroutine switching performance. It outperforms async_simple across all three workloads.
 
 Apple M2 / Apple Clang 21 / Release. Median of 11 rounds with 1 million operations per round. Values are ns/op; lower is better.
 
-| Frame cache | Workload | coro | async_simple | Asio |
-|---|---|---:|---:|---:|
-| On | Coroutine call | **10.21** | 28.97 | 16.80 |
-| On | 8-level nesting | **222.42** | 262.86 | 256.52 |
-| On | Coroutine switch | **47.41** | 57.98 | 50.01 |
-| Off | Coroutine call | **25.01** | 28.30 | 30.17 |
-| Off | 8-level nesting | **241.11** | 258.66 | 263.01 |
-| Off | Coroutine switch | 48.88 | 55.14 | **47.33** |
+| Frame cache | Workload | coro | async_simple | Asio | coro time reduction vs async_simple | coro time reduction vs Asio |
+|---|---|---:|---:|---:|---:|---:|
+| On | Coroutine call | **10.83** | 57.80 | 16.82 | **81.26%** | **35.61%** |
+| On | 8-level nesting | **255.23** | 462.53 | 382.35 | **44.82%** | **33.25%** |
+| On | Coroutine switch | **47.08** | 71.31 | 47.24 | **33.98%** | **0.34%** |
+| Off | Coroutine call | **33.06** | 58.31 | 54.63 | **43.30%** | **39.48%** |
+| Off | 8-level nesting | **262.00** | 455.13 | 360.16 | **42.43%** | **27.25%** |
+| Off | Coroutine switch | 47.39 | 71.93 | **47.26** | **34.12%** | -0.28% |
 
-The frame cache setting applies to both coro and Asio; coro defaults to off, and async_simple uses its default allocator without a frame cache. For 1 million posts, coro and Asio each make just **9 C++ allocations**, compared with 1,000,007 for async_simple. See [benchmark](benchmark/README.md) for full resource measurements, native executor comparisons, and reproduction steps.
+Time reduction is calculated as `(reference library − coro) / reference library × 100%`; a negative value means coro takes longer.
+
+The frame cache setting applies to both coro and Asio; coro defaults to off, and async_simple uses its default allocator without a frame cache. For 1 million posts, coro and Asio make **8 and 9 C++ allocations**, respectively, compared with 1,000,007 for async_simple. See [benchmark](benchmark/README.md) for full resource measurements, native executor comparisons, and reproduction steps.
 
 Common components are also measured across 14 scenarios for instruction counts, simulated cache misses, branch prediction, and heap allocations, with reproducible scripts and JSON results. See [ARM64 Linux performance and resource measurements](benchmark/arm64.md).
 

@@ -1,0 +1,487 @@
+{
+  "schema_version": 1,
+  "platform": {
+    "cpu": "Apple M2",
+    "os": "macOS 27.0.1",
+    "compiler": "Apple Clang 21.0.0"
+  },
+  "dependencies": {
+    "async_simple": "0c7a12b5882b2c23628117966d85fa91f26abd8c",
+    "asio": "231cb29bab30f82712fcd54faaea42424cc6e710"
+  },
+  "configuration": {
+    "language_standard": "c++20",
+    "optimization": "-O3 -DNDEBUG",
+    "exceptions": true,
+    "iterations": 1000000,
+    "rounds": 11,
+    "warmup_iterations": 10000,
+    "frame_cache_slots": 2,
+    "frame_cache_max_bytes": 512,
+    "async_simple_frame_cache": false,
+    "timing_scope": "context initialization, workload and cleanup; warmup excluded",
+    "resource_scope": "CPU/RSS and C++ new counters collected in separate fresh processes",
+    "asio_frame_cache": "enabled for on; ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING for off",
+    "host_load": "concurrent compiler/test processes finished before timing; desktop background activity remains"
+  },
+  "measurements": {
+    "on": {
+      "timing": [
+        {
+          "workload": "immediate",
+          "library": "coro",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 10.83,
+          "min_ns_per_op": 10.54,
+          "max_ns_per_op": 12.72,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "immediate",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 57.8,
+          "min_ns_per_op": 56.46,
+          "max_ns_per_op": 59.61,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "immediate",
+          "library": "Asio",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 16.82,
+          "min_ns_per_op": 16.63,
+          "max_ns_per_op": 18.08,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "nested_8",
+          "library": "coro",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 255.23,
+          "min_ns_per_op": 253.89,
+          "max_ns_per_op": 261.96,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "nested_8",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 462.53,
+          "min_ns_per_op": 460.51,
+          "max_ns_per_op": 533.05,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "nested_8",
+          "library": "Asio",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 382.35,
+          "min_ns_per_op": 380.78,
+          "max_ns_per_op": 440.21,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "post",
+          "library": "coro",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 47.08,
+          "min_ns_per_op": 46.42,
+          "max_ns_per_op": 47.79,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "post",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 71.31,
+          "min_ns_per_op": 70.65,
+          "max_ns_per_op": 71.78,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "post",
+          "library": "Asio",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 47.24,
+          "min_ns_per_op": 46.75,
+          "max_ns_per_op": 48.05,
+          "checksum": 500000500000
+        }
+      ],
+      "resources": [
+        {
+          "workload": "immediate",
+          "library": "coro",
+          "iterations": 1000000,
+          "user_cpu_us": 10650,
+          "system_cpu_us": 46,
+          "peak_rss_bytes": 1753088,
+          "checksum": 500000500000,
+          "new_calls": 9,
+          "new_requested_bytes": 1046,
+          "new_peak_live_bytes": 1046
+        },
+        {
+          "workload": "immediate",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "user_cpu_us": 58303,
+          "system_cpu_us": 132,
+          "peak_rss_bytes": 1769472,
+          "checksum": 500000500000,
+          "new_calls": 1000007,
+          "new_requested_bytes": 104000782,
+          "new_peak_live_bytes": 886
+        },
+        {
+          "workload": "immediate",
+          "library": "Asio",
+          "iterations": 1000000,
+          "user_cpu_us": 16659,
+          "system_cpu_us": 25,
+          "peak_rss_bytes": 1736704,
+          "checksum": 500000500000,
+          "new_calls": 10,
+          "new_requested_bytes": 1275,
+          "new_peak_live_bytes": 1250
+        },
+        {
+          "workload": "nested_8",
+          "library": "coro",
+          "iterations": 1000000,
+          "user_cpu_us": 261591,
+          "system_cpu_us": 540,
+          "peak_rss_bytes": 1769472,
+          "checksum": 500000500000,
+          "new_calls": 7000010,
+          "new_requested_bytes": 728001150,
+          "new_peak_live_bytes": 1878
+        },
+        {
+          "workload": "nested_8",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "user_cpu_us": 463094,
+          "system_cpu_us": 1099,
+          "peak_rss_bytes": 1769472,
+          "checksum": 500000500000,
+          "new_calls": 9000007,
+          "new_requested_bytes": 936000782,
+          "new_peak_live_bytes": 1718
+        },
+        {
+          "workload": "nested_8",
+          "library": "Asio",
+          "iterations": 1000000,
+          "user_cpu_us": 383787,
+          "system_cpu_us": 853,
+          "peak_rss_bytes": 1769472,
+          "checksum": 500000500000,
+          "new_calls": 7000011,
+          "new_requested_bytes": 735001380,
+          "new_peak_live_bytes": 2066
+        },
+        {
+          "workload": "post",
+          "library": "coro",
+          "iterations": 1000000,
+          "user_cpu_us": 47450,
+          "system_cpu_us": 139,
+          "peak_rss_bytes": 1753088,
+          "checksum": 500000500000,
+          "new_calls": 8,
+          "new_requested_bytes": 942,
+          "new_peak_live_bytes": 942
+        },
+        {
+          "workload": "post",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "user_cpu_us": 71792,
+          "system_cpu_us": 263,
+          "peak_rss_bytes": 1785856,
+          "checksum": 500000500000,
+          "new_calls": 1000007,
+          "new_requested_bytes": 48000782,
+          "new_peak_live_bytes": 830
+        },
+        {
+          "workload": "post",
+          "library": "Asio",
+          "iterations": 1000000,
+          "user_cpu_us": 47070,
+          "system_cpu_us": 126,
+          "peak_rss_bytes": 1753088,
+          "checksum": 500000500000,
+          "new_calls": 9,
+          "new_requested_bytes": 1170,
+          "new_peak_live_bytes": 1145
+        }
+      ]
+    },
+    "off": {
+      "timing": [
+        {
+          "workload": "immediate",
+          "library": "coro",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 33.06,
+          "min_ns_per_op": 32.88,
+          "max_ns_per_op": 34.35,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "immediate",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 58.31,
+          "min_ns_per_op": 58.05,
+          "max_ns_per_op": 61.94,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "immediate",
+          "library": "Asio",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 54.63,
+          "min_ns_per_op": 54.23,
+          "max_ns_per_op": 58.82,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "nested_8",
+          "library": "coro",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 262.0,
+          "min_ns_per_op": 254.69,
+          "max_ns_per_op": 285.55,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "nested_8",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 455.13,
+          "min_ns_per_op": 453.23,
+          "max_ns_per_op": 570.3,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "nested_8",
+          "library": "Asio",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 360.16,
+          "min_ns_per_op": 353.92,
+          "max_ns_per_op": 500.42,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "post",
+          "library": "coro",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 47.39,
+          "min_ns_per_op": 46.94,
+          "max_ns_per_op": 47.73,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "post",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 71.93,
+          "min_ns_per_op": 70.45,
+          "max_ns_per_op": 72.49,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "post",
+          "library": "Asio",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 47.26,
+          "min_ns_per_op": 47.22,
+          "max_ns_per_op": 47.75,
+          "checksum": 500000500000
+        }
+      ],
+      "resources": [
+        {
+          "workload": "immediate",
+          "library": "coro",
+          "iterations": 1000000,
+          "user_cpu_us": 33430,
+          "system_cpu_us": 18,
+          "peak_rss_bytes": 1769472,
+          "checksum": 500000500000,
+          "new_calls": 1000008,
+          "new_requested_bytes": 104000942,
+          "new_peak_live_bytes": 1046
+        },
+        {
+          "workload": "immediate",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "user_cpu_us": 58138,
+          "system_cpu_us": 84,
+          "peak_rss_bytes": 1785856,
+          "checksum": 500000500000,
+          "new_calls": 1000007,
+          "new_requested_bytes": 104000782,
+          "new_peak_live_bytes": 886
+        },
+        {
+          "workload": "immediate",
+          "library": "Asio",
+          "iterations": 1000000,
+          "user_cpu_us": 54096,
+          "system_cpu_us": 51,
+          "peak_rss_bytes": 1753088,
+          "checksum": 500000500000,
+          "new_calls": 1000009,
+          "new_requested_bytes": 104001168,
+          "new_peak_live_bytes": 1223
+        },
+        {
+          "workload": "nested_8",
+          "library": "coro",
+          "iterations": 1000000,
+          "user_cpu_us": 259656,
+          "system_cpu_us": 283,
+          "peak_rss_bytes": 1785856,
+          "checksum": 500000500000,
+          "new_calls": 9000008,
+          "new_requested_bytes": 936000942,
+          "new_peak_live_bytes": 1878
+        },
+        {
+          "workload": "nested_8",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "user_cpu_us": 464416,
+          "system_cpu_us": 745,
+          "peak_rss_bytes": 1785856,
+          "checksum": 500000500000,
+          "new_calls": 9000007,
+          "new_requested_bytes": 936000782,
+          "new_peak_live_bytes": 1718
+        },
+        {
+          "workload": "nested_8",
+          "library": "Asio",
+          "iterations": 1000000,
+          "user_cpu_us": 356229,
+          "system_cpu_us": 449,
+          "peak_rss_bytes": 1753088,
+          "checksum": 500000500000,
+          "new_calls": 9000009,
+          "new_requested_bytes": 936001168,
+          "new_peak_live_bytes": 2055
+        },
+        {
+          "workload": "post",
+          "library": "coro",
+          "iterations": 1000000,
+          "user_cpu_us": 47142,
+          "system_cpu_us": 71,
+          "peak_rss_bytes": 1753088,
+          "checksum": 500000500000,
+          "new_calls": 8,
+          "new_requested_bytes": 942,
+          "new_peak_live_bytes": 942
+        },
+        {
+          "workload": "post",
+          "library": "async_simple",
+          "iterations": 1000000,
+          "user_cpu_us": 70413,
+          "system_cpu_us": 122,
+          "peak_rss_bytes": 1785856,
+          "checksum": 500000500000,
+          "new_calls": 1000007,
+          "new_requested_bytes": 48000782,
+          "new_peak_live_bytes": 830
+        },
+        {
+          "workload": "post",
+          "library": "Asio",
+          "iterations": 1000000,
+          "user_cpu_us": 46858,
+          "system_cpu_us": 64,
+          "peak_rss_bytes": 1753088,
+          "checksum": 500000500000,
+          "new_calls": 9,
+          "new_requested_bytes": 1168,
+          "new_peak_live_bytes": 1119
+        }
+      ]
+    },
+    "executor": {
+      "timing": [
+        {
+          "workload": "executor_post",
+          "library": "executor_loop",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 38.11,
+          "min_ns_per_op": 36.96,
+          "max_ns_per_op": 39.64,
+          "checksum": 500000500000
+        },
+        {
+          "workload": "executor_post",
+          "library": "io_context",
+          "iterations": 1000000,
+          "rounds": 11,
+          "median_ns_per_op": 31.87,
+          "min_ns_per_op": 31.17,
+          "max_ns_per_op": 32.11,
+          "checksum": 500000500000
+        }
+      ],
+      "resources": [
+        {
+          "workload": "executor_post",
+          "library": "executor_loop",
+          "iterations": 1000000,
+          "user_cpu_us": 38073,
+          "system_cpu_us": 26,
+          "peak_rss_bytes": 1703936,
+          "checksum": 500000500000,
+          "new_calls": 6,
+          "new_requested_bytes": 8280,
+          "new_peak_live_bytes": 8280
+        },
+        {
+          "workload": "executor_post",
+          "library": "io_context",
+          "iterations": 1000000,
+          "user_cpu_us": 31624,
+          "system_cpu_us": 51,
+          "peak_rss_bytes": 1703936,
+          "checksum": 500000500000,
+          "new_calls": 5,
+          "new_requested_bytes": 566,
+          "new_peak_live_bytes": 566
+        }
+      ]
+    }
+  }
+}

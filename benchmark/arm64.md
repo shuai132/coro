@@ -3,6 +3,8 @@
 使用 14 个常规组件场景记录执行和内存开销，结果写入 [instructions-arm64.json](instructions-arm64.json)。
 运行入口为 [record_instructions.py](record_instructions.py)，独立于第三方库对比，不下载 Asio 或 async_simple。
 
+当前结果使用 ARM64 Ubuntu 24.04 容器、GCC 13.3.0 和 Valgrind 3.22.0 采集。
+
 ## 运行
 
 在 ARM64 Ubuntu 24.04 中安装工具，然后从仓库根目录执行：
