@@ -9,9 +9,13 @@ namespace coro {
 class executor_loop : public executor_poll {
  private:
   std::condition_variable condition_;
+  bool waiting_ = false;  // Protected by queue_mutex_, including the transition into wait().
 
  protected:
   void notify_waiters(bool stopping) override {
+    if (!waiting_) {
+      return;
+    }
     if (stopping) {
       condition_.notify_all();
     } else {
@@ -45,12 +49,14 @@ class executor_loop : public executor_poll {
       if (!task_queue_.empty()) {
         continue;
       }
+      waiting_ = true;
       if (delayed_task_queue_.empty()) {
         condition_.wait(lock);
       } else {
         auto next_wakeup = delayed_task_queue_.top().execute_at;
         condition_.wait_until(lock, next_wakeup);
       }
+      waiting_ = false;
     }
   }
 };
