@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.15)
 
 project(coro CXX)
 
-set(CMAKE_CXX_STANDARD 20)
 if (MSVC)
     add_compile_options(/Zc:preprocessor)
     add_compile_options(/utf-8)
@@ -118,11 +117,11 @@ if (CORO_BUILD_TEST OR CORO_BUILD_EXAMPLES)
             add_compile_options(-Werror)
         endif ()
     endif ()
-    option(CORO_ENABLE_SANITIZE_ADDRESS "" OFF)
-    option(CORO_ENABLE_SANITIZE_THREAD "" OFF)
+    option(CORO_ENABLE_SANITIZE_ADDRESS "Enable AddressSanitizer for tests and examples" OFF)
+    option(CORO_ENABLE_SANITIZE_THREAD "Enable ThreadSanitizer for tests and examples" OFF)
     option(CORO_TEST_RUNNER_VERY_SLOW "Relax test timing for slow runners" OFF)
     # github actions runner of macOS is very slow
-    if ($ENV{GITHUB_ACTIONS} AND $ENV{RUNNER_OS} STREQUAL "macOS")
+    if ("$ENV{GITHUB_ACTIONS}" AND "$ENV{RUNNER_OS}" STREQUAL "macOS")
         set(CORO_TEST_RUNNER_VERY_SLOW ON)
     endif ()
     if (CORO_TEST_RUNNER_VERY_SLOW)
@@ -154,21 +153,28 @@ if (CORO_BUILD_TEST OR CORO_BUILD_EXAMPLES)
 endif ()
 
 if (CORO_BUILD_TEST AND NOT CORO_SINGLE_THREAD)
-    include_directories(test/detail)
-    link_libraries(${PROJECT_NAME})
+    enable_testing()
+
+    function(_coro_add_unit_test target)
+        add_executable(${target} ${ARGN})
+        target_link_libraries(${target} PRIVATE ${PROJECT_NAME})
+        target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/test/detail")
+        add_test(NAME ${target} COMMAND ${target})
+        set_tests_properties(${target} PROPERTIES TIMEOUT 60 LABELS unit)
+    endfunction()
 
     # test task
     set(TARGET_NAME ${PROJECT_NAME}_task)
-    add_executable(${TARGET_NAME} test/coro_task.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_task.cpp)
 
     # test task verbose
     set(TARGET_NAME ${PROJECT_NAME}_task_verbose)
-    add_executable(${TARGET_NAME} test/coro_task.cpp)
-    target_compile_definitions(${TARGET_NAME} PUBLIC CORO_DEBUG_LEAK_LOG=LOG CORO_DEBUG_LIFECYCLE=LOG)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_task.cpp)
+    target_compile_definitions(${TARGET_NAME} PRIVATE CORO_DEBUG_LEAK_LOG=LOG CORO_DEBUG_LIFECYCLE=LOG)
 
     # test core lifetime
     set(TARGET_NAME ${PROJECT_NAME}_core_lifetime)
-    add_executable(${TARGET_NAME} test/coro_core_lifetime_static.cpp test/coro_core_lifetime.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_core_lifetime_static.cpp test/coro_core_lifetime.cpp)
     include(CheckCXXCompilerFlag)
     check_cxx_compiler_flag("-fcoro-aligned-allocation" CORO_TEST_HAS_ALIGNED_COROUTINE_ALLOCATION)
     if (CORO_TEST_HAS_ALIGNED_COROUTINE_ALLOCATION)
@@ -178,79 +184,79 @@ if (CORO_BUILD_TEST AND NOT CORO_SINGLE_THREAD)
 
     # test asynchronous debugger metadata
     set(TARGET_NAME ${PROJECT_NAME}_debug)
-    add_executable(${TARGET_NAME} test/coro_debug_static.cpp test/coro_debug.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_debug_static.cpp test/coro_debug.cpp)
     target_compile_definitions(${TARGET_NAME} PRIVATE CORO_DEBUG_ASYNC_STACK)
 
     # test core callback
     set(TARGET_NAME ${PROJECT_NAME}_core_callback)
-    add_executable(${TARGET_NAME} test/coro_core_callback.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_core_callback.cpp)
     # Strict mode exposes differences in extended integer traits on some standard libraries.
     set_target_properties(${TARGET_NAME} PROPERTIES CXX_EXTENSIONS OFF)
 
     # test core move-only result
     set(TARGET_NAME ${PROJECT_NAME}_core_move_only)
-    add_executable(${TARGET_NAME} test/coro_core_move_only.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_core_move_only.cpp)
 
     # test mutex
     set(TARGET_NAME ${PROJECT_NAME}_mutex)
-    add_executable(${TARGET_NAME} test/coro_mutex.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_mutex.cpp)
 
     # test condition_variable
     set(TARGET_NAME ${PROJECT_NAME}_condition_variable)
-    add_executable(${TARGET_NAME} test/coro_condition_variable.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_condition_variable.cpp)
 
     # test condition_variable multi-threaded
     set(TARGET_NAME ${PROJECT_NAME}_condition_variable_mt)
-    add_executable(${TARGET_NAME} test/coro_condition_variable_mt.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_condition_variable_mt.cpp)
 
     # test channel
     set(TARGET_NAME ${PROJECT_NAME}_channel)
-    add_executable(${TARGET_NAME} test/coro_channel.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_channel.cpp)
 
     # test broadcast
     set(TARGET_NAME ${PROJECT_NAME}_broadcast)
-    add_executable(${TARGET_NAME} test/coro_broadcast.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_broadcast.cpp)
 
     # test when
     set(TARGET_NAME ${PROJECT_NAME}_when)
-    add_executable(${TARGET_NAME} test/coro_when.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_when.cpp)
 
     # test wait_group
     set(TARGET_NAME ${PROJECT_NAME}_wait_group)
-    add_executable(${TARGET_NAME} test/coro_wait_group.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_wait_group.cpp)
 
     # test wait_group multi-threaded
     set(TARGET_NAME ${PROJECT_NAME}_wait_group_mt)
-    add_executable(${TARGET_NAME} test/coro_wait_group_mt.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_wait_group_mt.cpp)
 
     # test latch
     set(TARGET_NAME ${PROJECT_NAME}_latch)
-    add_executable(${TARGET_NAME} test/coro_latch.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_latch.cpp)
 
     # test event
     set(TARGET_NAME ${PROJECT_NAME}_event)
-    add_executable(${TARGET_NAME} test/coro_event.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_event.cpp)
 
     # test semaphore
     set(TARGET_NAME ${PROJECT_NAME}_semaphore)
-    add_executable(${TARGET_NAME} test/coro_semaphore.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_semaphore.cpp)
 
     # test semaphore multi-threaded
     set(TARGET_NAME ${PROJECT_NAME}_semaphore_mt)
-    add_executable(${TARGET_NAME} test/coro_semaphore_mt.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_semaphore_mt.cpp)
 
     # test multi thread
     set(TARGET_NAME ${PROJECT_NAME}_multi_thread)
-    add_executable(${TARGET_NAME} test/coro_multi_thread.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_multi_thread.cpp)
 
     # test multi thread(use single thread)
     set(TARGET_NAME ${PROJECT_NAME}_multi_thread_st)
-    add_executable(${TARGET_NAME} test/coro_multi_thread.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_multi_thread.cpp)
     target_compile_definitions(${TARGET_NAME} PRIVATE CORO_USE_SINGLE_THREAD)
 
     # test coro_local (requires CORO_ENABLE_LOCAL_STORAGE)
     set(TARGET_NAME ${PROJECT_NAME}_coro_local)
-    add_executable(${TARGET_NAME} test/coro_local.cpp)
+    _coro_add_unit_test(${TARGET_NAME} test/coro_local.cpp)
     target_compile_definitions(${TARGET_NAME} PRIVATE CORO_ENABLE_LOCAL_STORAGE)
 
     # Reconfiguration can run without the environment used during the initial configure.
@@ -261,7 +267,7 @@ if (CORO_BUILD_TEST AND NOT CORO_SINGLE_THREAD)
     # test asio adaptor (optional, requires asio and exceptions enabled)
     set(TARGET_NAME ${PROJECT_NAME}_asio_adaptor)
     if (NOT "${CORO_TEST_ASIO_PATH}" STREQUAL "" AND NOT CORO_DISABLE_EXCEPTION)
-        add_executable(${TARGET_NAME} test/coro_asio_adaptor.cpp)
+        _coro_add_unit_test(${TARGET_NAME} test/coro_asio_adaptor.cpp)
         target_include_directories(${TARGET_NAME} SYSTEM PRIVATE "${CORO_TEST_ASIO_PATH}")
         target_compile_definitions(${TARGET_NAME} PRIVATE ASIO_NO_DEPRECATED)
         if (MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
@@ -280,8 +286,10 @@ if (CORO_BUILD_TEST AND NOT CORO_SINGLE_THREAD)
             target_link_libraries(${TARGET_NAME} PRIVATE ws2_32 wsock32)
         endif ()
     else ()
-        add_executable(${TARGET_NAME} test/coro_empty.cpp)
+        _coro_add_unit_test(${TARGET_NAME} test/coro_empty.cpp)
     endif ()
+
+    set_tests_properties(${PROJECT_NAME}_asio_adaptor PROPERTIES TIMEOUT 120)
 endif ()
 
 if (CORO_BUILD_TEST)
