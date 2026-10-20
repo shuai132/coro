@@ -238,34 +238,24 @@ int main() {
 
 ## 添加新功能
 
-添加新功能时需要同时更新三个文件：
-
 ### 1. CMakeLists.txt
 
-在 `if (CORO_BUILD_TEST)` 块中添加：
+在 `if (CORO_BUILD_TEST AND NOT CORO_SINGLE_THREAD)` 块中添加：
 
 ```cmake
 set(TARGET_NAME ${PROJECT_NAME}_new_feature)
-add_executable(${TARGET_NAME} test/coro_new_feature.cpp)
+_coro_add_unit_test(${TARGET_NAME} test/coro_new_feature.cpp)
 ```
 
 ### 2. .github/workflows/ci.yml
 
-在测试步骤部分添加：
-
-```yaml
-- name: Test new_feature
-  if: always()
-  working-directory: build
-  run: |
-    ./coro_new_feature${{ matrix.env.BIN_SUFFIX }}
-```
+测试由 CTest 统一执行，无需单独添加步骤。
 
 ### 3. 创建测试文件 test/coro_new_feature.cpp
 
 使用上述"测试文件结构"模板。
 
-### 4. 补充文档，更新README.md和README_CN.md，放到同类功能后面
+### 4. 更新 README.md 和 README_CN.md，放到同类功能后面
 
 ## 平台说明
 
