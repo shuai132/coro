@@ -88,8 +88,8 @@ class executor_base : public coro::executor {
 
   // Alternate ready queues so neither can starve the other by replenishing itself.
   queued_task get_next_task_locked() {
-    if (!delayed_task_queue_.empty() && delayed_task_queue_.top().execute_at <= std::chrono::steady_clock::now() &&
-        (task_queue_.empty() || prefer_delayed_)) {
+    if (!delayed_task_queue_.empty() && (prefer_delayed_ || task_queue_.empty()) &&
+        delayed_task_queue_.top().execute_at <= std::chrono::steady_clock::now()) {
       auto task = std::move(const_cast<DelayedTask&>(delayed_task_queue_.top()).task);
       delayed_task_queue_.pop();
       prefer_delayed_ = false;
