@@ -793,6 +793,58 @@ struct default_counting_local_value {
   explicit default_counting_local_value(int v) : value(v) {}
 };
 
+struct local_construction_counts {
+  int copies_ = 0;
+  int moves_ = 0;
+  int live_ = 0;
+};
+
+struct counted_local_value {
+  local_construction_counts* counts_;
+  int value_ = 42;
+
+  explicit counted_local_value(local_construction_counts& counts) : counts_(&counts) {
+    ++counts_->live_;
+  }
+  counted_local_value(const counted_local_value& other) : counts_(other.counts_), value_(other.value_) {
+    ++counts_->copies_;
+    ++counts_->live_;
+  }
+  // A potentially throwing move prevents std::any's small-object storage from adding relocations.
+  counted_local_value(counted_local_value&& other) : counts_(other.counts_), value_(other.value_) {
+    ++counts_->moves_;
+    ++counts_->live_;
+  }
+  ~counted_local_value() {
+    --counts_->live_;
+  }
+};
+
+async<void> coro_local_direct_construction_test() {
+  local_construction_counts counts;
+  {
+    coro_local<counted_local_value> storage;
+    co_await storage.set(counts);
+    ASSERT(counts.copies_ == 0 && counts.moves_ == 0 && counts.live_ == 1);
+    ASSERT((co_await storage.get_ptr())->value_ == 42);
+
+    counted_local_value source{counts};
+    source.value_ = 17;
+    co_await storage.set(source);
+    ASSERT(counts.copies_ == 1 && counts.moves_ == 0 && counts.live_ == 2);
+    ASSERT((co_await storage.get_ptr())->value_ == 17);
+
+    source.value_ = 23;
+    co_await storage.set(std::move(source));
+    // One move into the owning awaiter and one into storage.
+    ASSERT(counts.copies_ == 1 && counts.moves_ == 2 && counts.live_ == 2);
+    ASSERT((co_await storage.get_ptr())->value_ == 23);
+    co_await storage.erase();
+    ASSERT(counts.live_ == 1);
+  }
+  ASSERT(counts.live_ == 0);
+}
+
 async<void> read_inherited_without_default(coro_local<default_counting_local_value>& storage) {
   auto value = co_await storage.get();
   ASSERT(value.value == 42);
@@ -882,14 +934,13 @@ struct throwing_local_value {
 };
 
 async<void> coro_local_failed_shadow(coro_local<throwing_local_value>& storage) {
-  throwing_local_value::fail_move = true;
   bool caught = false;
   try {
-    co_await storage.set(53);
-  } catch (const std::runtime_error&) {
+    co_await storage.set(-53);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "local conversion failed");
     caught = true;
   }
-  throwing_local_value::fail_move = false;
   ASSERT(caught);
   auto* inherited = co_await storage.get_ptr();
   ASSERT(inherited && inherited->value == 42);
@@ -897,14 +948,13 @@ async<void> coro_local_failed_shadow(coro_local<throwing_local_value>& storage) 
 
 async<void> coro_local_failed_set_test() {
   static coro_local<throwing_local_value> storage;
-  throwing_local_value::fail_move = true;
   bool caught = false;
   try {
-    co_await storage.set(7);
-  } catch (const std::runtime_error&) {
+    co_await storage.set(-7);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "local conversion failed");
     caught = true;
   }
-  throwing_local_value::fail_move = false;
   ASSERT(caught);
   ASSERT(!(co_await storage.has()));
   ASSERT((co_await storage.get_ptr()) == nullptr);
@@ -912,14 +962,13 @@ async<void> coro_local_failed_set_test() {
 
   co_await storage.set(42);
   co_await coro_local_failed_shadow(storage);
-  throwing_local_value::fail_move = true;
   caught = false;
   try {
-    co_await storage.set(99);
-  } catch (const std::runtime_error&) {
+    co_await storage.set(-99);
+  } catch (const std::runtime_error& error) {
+    ASSERT(std::string_view(error.what()) == "local conversion failed");
     caught = true;
   }
-  throwing_local_value::fail_move = false;
   ASSERT(caught);
   auto* previous = co_await storage.get_ptr();
   ASSERT(previous && previous->value == 42);
@@ -1004,6 +1053,7 @@ async<void> coro_local_exception_test() {
 #endif
 
 async<void> run_all_tests() {
+  co_await coro_local_direct_construction_test();
   co_await test_lazy_local_overrides();
   co_await coro_local_key_identity_test();
   co_await coro_local_erased_type_test();
