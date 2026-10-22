@@ -93,8 +93,8 @@ struct channel {
 
     template <typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> h) {
-      // A peer can complete this coroutine during unlock; retain the mutex-owning state until registration returns.
-      auto state = state_;
+      state_ptr registration_owner;
+      auto* state = state_.get();
       std::unique_lock<MUTEX> lock(state->mutex_);
 
       if (state->closed_.load(std::memory_order_relaxed)) {
@@ -134,6 +134,8 @@ struct channel {
       }
 
       // No receiver available and buffer is full, wait in send queue
+      // A peer can destroy this awaiter during unlock. Keep the state alive until the lock is released.
+      registration_owner = state_;
       exec_ = h.promise().executor_;
       handle_ = h;
       next_ = nullptr;
@@ -255,8 +257,8 @@ struct channel {
 
     template <typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> h) {
-      // A peer can complete this coroutine during unlock; retain the mutex-owning state until registration returns.
-      auto state = state_;
+      state_ptr registration_owner;
+      auto* state = state_.get();
       std::unique_lock<MUTEX> lock(state->mutex_);
 
       // Check buffer
@@ -312,6 +314,8 @@ struct channel {
       }
 
       // No data available, wait in recv queue with our own pending value storage
+      // A peer can destroy this awaiter during unlock. Keep the state alive until the lock is released.
+      registration_owner = state_;
       handle_ = h;
       exec_ = h.promise().executor_;
       this->next_ = nullptr;
