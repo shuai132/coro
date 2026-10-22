@@ -159,8 +159,6 @@ struct channel {
   struct broadcast_awaitable {
     state_ptr state_;
     T value_;
-    std::coroutine_handle<> handle_{};
-    executor* exec_ = nullptr;
     size_t receivers_notified_ = 0;
 
     broadcast_awaitable(state_ptr state, T&& value) : state_(std::move(state)), value_(std::move(value)) {}

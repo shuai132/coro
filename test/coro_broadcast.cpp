@@ -1,6 +1,7 @@
 /// Test for broadcast channel functionality
 #define CORO_DEBUG_PROMISE_LEAK
 #include <atomic>
+#include <cstddef>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -11,6 +12,12 @@
 #include "utils.hpp"
 
 using namespace coro;
+
+// Size budget: the state owner, payload and delivery count, without suspended-sender metadata.
+using broadcast_mt = channel_mt<std::size_t>::broadcast_awaitable;
+using broadcast_st = channel_st<std::size_t>::broadcast_awaitable;
+static_assert(sizeof(broadcast_mt) <= sizeof(decltype(broadcast_mt::state_)) + 2 * sizeof(std::size_t));
+static_assert(sizeof(broadcast_st) <= sizeof(decltype(broadcast_st::state_)) + 2 * sizeof(std::size_t));
 
 template <typename CHANNEL>
 async<void> reused_broadcast_receiver(CHANNEL& ch, wait_group& receivers) {
