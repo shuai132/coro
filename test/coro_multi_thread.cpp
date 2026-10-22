@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include "TimeCount.hpp"
@@ -83,6 +84,18 @@ async<void> test_direct_executor_binding(executor& child_exec, executor& parent_
   for (bool delayed : {false, true}) {
     int result = co_await directly_bound_child(child_exec, child_tid, delayed).bind_executor(child_exec);
     ASSERT(result == 42);
+    ASSERT(co_await current_executor() == &parent_exec);
+    ASSERT(std::this_thread::get_id() == parent_tid);
+
+    // Initialize the parent executor before children can complete on another thread.
+    auto values = co_await when_all(directly_bound_child(child_exec, child_tid, delayed).bind_executor(child_exec),
+                                    directly_bound_child(parent_exec, parent_tid, delayed));
+    ASSERT(std::get<0>(values) == 42 && std::get<1>(values) == 42);
+    ASSERT(co_await current_executor() == &parent_exec);
+    ASSERT(std::this_thread::get_id() == parent_tid);
+
+    auto first = co_await when_any(directly_bound_child(child_exec, child_tid, delayed).bind_executor(child_exec));
+    ASSERT(first.index == 0 && first.get<0>() == 42);
     ASSERT(co_await current_executor() == &parent_exec);
     ASSERT(std::this_thread::get_id() == parent_tid);
   }

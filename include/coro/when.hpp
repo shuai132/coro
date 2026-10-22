@@ -209,13 +209,11 @@ struct when_all_init_state_awaiter {
 
   template <typename Promise>
   bool await_suspend(std::coroutine_handle<Promise> h) {
-    {
-      std::lock_guard<when_mutex> lock(state_->mtx);
-      state_->parent_exec = h.promise().executor_;
+    // State is still private: initialize before posting the launch or starting any children.
+    state_->parent_exec = h.promise().executor_;
 #ifdef CORO_DEBUG_ASYNC_STACK
-      state_->debug_parent_id_ = h.promise().debug_node_.id_;
+    state_->debug_parent_id_ = h.promise().debug_node_.id_;
 #endif
-    }
     if (state_->parent_exec && state_->total_count != 0) {
       // Queue the launch so nested combiners cannot recursively dispatch their children.
       detail::post_resume_via(state_->parent_exec, h);
@@ -563,13 +561,11 @@ struct when_any_init_state_awaiter {
 
   template <typename Promise>
   bool await_suspend(std::coroutine_handle<Promise> h) {
-    {
-      std::lock_guard<when_mutex> lock(state_->mtx);
-      state_->parent_exec = h.promise().executor_;
+    // State is still private: initialize before posting the launch or starting any children.
+    state_->parent_exec = h.promise().executor_;
 #ifdef CORO_DEBUG_ASYNC_STACK
-      state_->debug_parent_id_ = h.promise().debug_node_.id_;
+    state_->debug_parent_id_ = h.promise().debug_node_.id_;
 #endif
-    }
     if (state_->parent_exec) {
       // Queue the launch so nested combiners cannot recursively dispatch their children.
       detail::post_resume_via(state_->parent_exec, h);
