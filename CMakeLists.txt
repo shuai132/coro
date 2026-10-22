@@ -270,10 +270,10 @@ if (CORO_BUILD_TEST AND NOT CORO_SINGLE_THREAD)
         _coro_add_unit_test(${TARGET_NAME} test/coro_asio_adaptor.cpp)
         target_include_directories(${TARGET_NAME} SYSTEM PRIVATE "${CORO_TEST_ASIO_PATH}")
         target_compile_definitions(${TARGET_NAME} PRIVATE ASIO_NO_DEPRECATED)
-        if (MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
-            CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15 AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16)
-            # GCC 15 MinGW diagnoses ASIO's inlined coroutine-frame cleanup as use-after-free.
-            # Keep the diagnostic enabled and limit the inlining workaround to this test target.
+        if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15 AND
+                CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16 AND (MINGW OR CORO_ENABLE_SANITIZE_THREAD))
+            # GCC 15 misdiagnoses ASIO's inlined coroutine-frame cleanup on MinGW and with TSan.
+            # Keep the diagnostics enabled and limit the inlining workaround to this test target.
             target_compile_options(${TARGET_NAME} PRIVATE -fno-inline)
         endif ()
         if (CORO_ENABLE_SANITIZE_THREAD AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

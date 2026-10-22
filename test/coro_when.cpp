@@ -138,6 +138,10 @@ struct extraction_failure_value {
 
   extraction_failure_value(std::shared_ptr<int> token, bool fail) : token_(std::move(token)), fail_(fail) {}
   extraction_failure_value(const extraction_failure_value&) = delete;
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ == 15 && defined(__SANITIZE_THREAD__)
+  // GCC 15 with TSan misdiagnoses the disengaged optional's payload during emplace.
+  [[gnu::noinline]] ~extraction_failure_value() = default;
+#endif
   extraction_failure_value(extraction_failure_value&& other) : fail_(other.fail_) {
     if (fail_) {
       throw std::runtime_error("extraction failed");

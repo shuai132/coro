@@ -173,7 +173,7 @@ struct awaitable_promise_value {
   }
 
 #ifndef CORO_DISABLE_EXCEPTION
-  std::variant<std::monostate, std::exception_ptr, T> value_;
+  std::variant<std::monostate, std::exception_ptr, T> value_{std::in_place_index<0>};
 #else
   std::optional<T> value_;
 #endif
@@ -591,7 +591,12 @@ struct callback_awaiter : detail::callback_awaiter_base<T> {
   }
 
   template <typename Promise>
-  bool await_suspend(std::coroutine_handle<Promise> handle) {
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ == 15 && defined(__SANITIZE_THREAD__)
+  // GCC 15 with TSan misdiagnoses the active std::function inside the inlined coroutine frame.
+  [[gnu::noinline]]
+#endif
+  bool
+  await_suspend(std::coroutine_handle<Promise> handle) {
     auto executor = handle.promise().executor_;
     assert(executor && "executor must be set before using callback_awaiter");
     phase_.store(phase::registering, std::memory_order_relaxed);
